@@ -59,12 +59,21 @@ If the CLI path is missing, stop and report that the v3 repository is unavailabl
     node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js build --manifest "<manifest.json>" --analysis "<analysis.json>" --project-root "/Users/example/Desktop/视频素材库" --project-name "<项目名>" --json
     ```
 
-14. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs full verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`.
+14. When the user explicitly requests HyperFrames, first run
+    `hyperframes-doctor --json`. Only add `--hyperframes` when Node.js, FFmpeg,
+    FFprobe, and Chrome are available. HyperFrames remains optional: it creates
+    one independent title-card MP4 from the recommended title and theme, registers
+    it in v3, prepends it to the effective timeline, and adds it as an independent
+    FCPXML clip. Do not treat missing Docker, transcription, TTS, or BGM tools as a
+    local-render failure.
+15. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs full verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`.
 
 ## Completion rules
 
 - Require a real v3 project, registered/copied independent assets, valid FCPXML, readable preview MP4, project summary, and passing integrity verification.
 - Confirm source file collection, hashes, sizes, and mtimes are unchanged.
+- When HyperFrames is enabled, report its pinned version, check result, independent
+  MP4 path/hash/metadata, v3 registration, and FCPXML clip count.
 - Treat the preview as a review artifact only; FCPXML must reference independent managed source assets.
 - Treat timeline and preview formats independently: the formal FCPXML uses the production timeline format from the analysis, while the rough-cut preview defaults to 640×360.
 - Report theme, title candidates/recommendation, adopted/rejected assets, video ranges and confidence, shot order, markers, artifact paths, and verification result.

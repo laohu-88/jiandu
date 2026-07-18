@@ -9,6 +9,7 @@ Electron 视频项目管理与剪辑编排工具。当前新增的 Codex 视频�
 → v3 CLI 探测媒体、抽帧并生成故事板
 → Codex 查看实际画面并生成结构化分析
 → v3 共享核心创建正式项目并登记素材
+→ 可选：HyperFrames 根据现有分析生成独立标题卡 MP4
 → 独立素材组成的可编辑 FCPXML
 → 粗剪预览 MP4
 → Final Cut Pro 精修
@@ -111,6 +112,42 @@ node bin/video-skill.js build \
 node bin/video-skill.js verify --project "/path/to/v3-project" --json
 ```
 
+### 可选 HyperFrames 适配
+
+HyperFrames 不属于默认生产依赖。未启用时，现有分析、FFmpeg 粗剪和 FCPXML
+流程完全不变。需要根据 `titles.recommended` 和 `theme.summary` 生成独立标题卡
+MP4 时，先安装锁定版本到当前开发环境或 PATH：
+
+```bash
+npm install --no-save --ignore-scripts hyperframes@0.7.63
+npm run hyperframes:doctor
+```
+
+确认 Node.js、FFmpeg、FFprobe 和 Chrome 四项可用后，显式启用：
+
+```bash
+node bin/video-skill.js build \
+  --manifest "/path/to/manifest.json" \
+  --analysis "/path/to/analysis.json" \
+  --project-root "/Users/example/Desktop/视频素材库" \
+  --project-name "本期项目" \
+  --hyperframes \
+  --hyperframes-duration 2 \
+  --hyperframes-quality standard \
+  --json
+```
+
+适配层也支持 `--hyperframes-executable` 和 `--hyperframes-browser` 显式路径。
+它会关闭遥测，先运行 HyperFrames `check`，再渲染 MP4，并用 ffprobe 校验
+时长、生产分辨率和帧率。`doctor.ok` 可能因为 Docker、TTS、BGM 等非必需项
+缺失而为 false；v3 只用本地渲染必需的四项判断可用性。
+
+当前没有把 HyperFrames 固定为 Electron 生产依赖：`0.7.63` 的传递依赖
+`adm-zip<0.6.0` 命中
+[GHSA-xcpc-8h2w-3j85](https://github.com/advisories/GHSA-xcpc-8h2w-3j85)，
+npm 暂无自动修复。适配仅处理 v3 生成的可信 composition，不接收外部 ZIP。
+完整审计与 A/B 验收见 `docs/hyperframes-audit.md`。
+
 所有命令使用参数数组调用媒体工具，错误输出是结构化 JSON，并使用非零退出码区分输入/协议错误、构建错误和完整性错误。
 
 ## 正式 v3 项目产物
@@ -134,13 +171,22 @@ Codex 工作流增加的正式文件：
 ├─ Codex视频素材清单.json
 ├─ Codex视频分析.json
 ├─ Codex视频状态.json
-└─ Codex视频项目摘要.md
+├─ Codex视频项目摘要.md
+└─ HyperFrames/title-card/        # 仅显式启用时
+   ├─ index.html
+   └─ render-input.json
+01-精选素材/
+└─ HyperFrames-片头-<标题>.mp4    # 独立登记、独立校验
 03-导出/
 ├─ FCPXML/<标题>.fcpxml
 └─ 粗剪预览/<标题>-roughcut-preview.mp4
 ```
 
 `01-精选素材` 保存被时间线采用的独立素材副本，并通过现有 `assets.json` 机制登记。FCPXML 直接引用这些独立素材，因此导入 Final Cut Pro 后可以单独移动、删除、缩短、拉长、调速、裁切和调整音量。粗剪 MP4 只用于检查顺序、节奏、黑屏和错误镜头，不能替代 FCPXML。
+
+启用 HyperFrames 时，标题卡 MP4 同样位于 `01-精选素材`，拥有独立哈希、
+独立 v3 stable ID 和独立 FCPXML asset/clip；它不会被烘焙进原始录屏，也不会
+让 FCPXML 改为引用整条粗剪预览。原 marker 会按标题卡时长整体后移。
 
 ## 分析边界
 
@@ -156,6 +202,7 @@ Codex 工作流增加的正式文件：
 ```bash
 npm install
 npm test
+npm run hyperframes:doctor
 npm start
 npm run build:mac
 ```

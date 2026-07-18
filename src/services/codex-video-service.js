@@ -8,6 +8,7 @@ const {
   ASSETS_FILE,
   CODEX_VIDEO_ANALYSIS_FILE,
   CODEX_VIDEO_FCPXML_DIR,
+  CODEX_VIDEO_HYPERFRAMES_DIR,
   CODEX_VIDEO_MANIFEST_FILE,
   CODEX_VIDEO_PREVIEW_DIR,
   CODEX_VIDEO_STATUS_FILE,
@@ -25,6 +26,12 @@ const {
 const { timelineDuration, validateVideoAnalysis } = require('./video-analysis-schema');
 const { resolvePreviewFormat, resolveVideoFormats } = require('./video-format-service');
 const { validateFcpxmlStructure, writeFcpxml } = require('./fcpxml-service');
+const {
+  GENERATED_ASSET_ID,
+  addHyperframesTitleCard,
+  inspectHyperframesEnvironment,
+  renderHyperframesTitleCard,
+} = require('./hyperframes-service');
 
 const execFileAsync = promisify(execFile);
 
@@ -148,6 +155,37 @@ async function syncTimelineAssets(projectPath, manifest, analysis) {
   return mappings;
 }
 
+async function registerHyperframesAsset(projectPath, rendered, analysis) {
+  const projectRelativePath = path.relative(projectPath, rendered.outputPath);
+  const assetIndex = await scanAssets(projectPath);
+  const registered = assetIndex.assets.find((item) => item.relativePath === projectRelativePath);
+  if (!registered) throw new Error('v3 素材索引未登记 HyperFrames 独立 MP4。');
+  await updateAssetReview(projectPath, registered.stableId, {
+    reviewStatus: 'keep',
+    rating: 5,
+    tags: ['HyperFrames', '独立片头', '生成素材'],
+    note: `根据现有 Codex 分析生成：${analysis.titles.recommended}`,
+  });
+  return {
+    assetId: GENERATED_ASSET_ID,
+    type: 'video',
+    origin: 'hyperframes',
+    sourceRelativePath: null,
+    sourceSha256: rendered.sha256,
+    projectFilename: path.basename(rendered.outputPath),
+    projectRelativePath,
+    projectAbsolutePath: rendered.outputPath,
+    metadata: rendered.metadata,
+    analysis: null,
+    projectStableId: registered.stableId,
+    generator: {
+      name: 'hyperframes',
+      version: rendered.environment.version,
+      compositionRelativePath: path.relative(projectPath, rendered.compositionDirectory),
+    },
+  };
+}
+
 function previewVideoFilter(shot, width, height, fps, inputIndex) {
   const scale = shot.fitMode === 'cover'
     ? `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}`
@@ -235,15 +273,18 @@ async function generateRoughcutPreview(outputPath, analysis, assetMappings, prev
 function buildHumanSummary({
   projectPath,
   analysis,
+  timelineAnalysis = analysis,
   manifest,
   mappings,
   fcpxmlPath,
   previewPath,
   formats,
   sourceVerification,
+  hyperframes = null,
 }) {
   const analysisById = new Map(analysis.assets.map((item) => [item.assetId, item]));
   const manifestById = new Map(manifest.items.map((item) => [item.assetId, item]));
+  const mappingById = new Map(mappings.map((item) => [item.assetId, item]));
   const lines = [
     '# Codex 视频项目摘要',
     '',
@@ -267,6 +308,19 @@ function buildHumanSummary({
   if (analysis.theme.folderNameConflict) {
     lines.push('文件夹名称与素材实际内容存在差异，本次主题以素材内容为准。', '');
   }
+  if (hyperframes?.enabled) {
+    lines.push(
+      '## HyperFrames 可选生成素材',
+      '',
+      `- CLI 版本：${hyperframes.version}`,
+      `- 独立 MP4：${hyperframes.outputPath}`,
+      `- 规格：${hyperframes.metadata.displayWidth}×${hyperframes.metadata.displayHeight}`
+        + `｜${hyperframes.metadata.frameRate} fps｜${hyperframes.metadata.durationSec}s`,
+      `- SHA-256：${hyperframes.sha256}`,
+      '- 接入方式：作为独立 v3 素材登记，并作为独立镜头写入 FCPXML。',
+      '',
+    );
+  }
   lines.push('## 素材判断', '');
   for (const asset of analysis.assets) {
     const source = manifestById.get(asset.assetId);
@@ -276,17 +330,21 @@ function buildHumanSummary({
     lines.push(`- ${source?.filename || asset.assetId}｜${asset.status}｜${asset.reason}｜${ranges}`);
   }
   lines.push('', '## 镜头顺序', '');
-  analysis.timeline.shots.forEach((shot, index) => {
+  timelineAnalysis.timeline.shots.forEach((shot, index) => {
     const source = manifestById.get(shot.assetId);
+    const mapping = mappingById.get(shot.assetId);
     lines.push(
-      `${index + 1}. ${source?.filename || shot.assetId}｜${shot.inSec}-${shot.outSec}s`
+      `${index + 1}. ${source?.filename || mapping?.projectFilename || shot.assetId}`
+      + `｜${shot.inSec}-${shot.outSec}s`
       + `｜${shot.durationSec}s｜${shot.purpose}｜可信度 ${shot.confidence}`
       + `${shot.reviewRequired ? '｜需复核' : ''}`,
     );
   });
   lines.push('', '## 轻字幕 marker', '');
-  if (analysis.timeline.markers.length === 0) lines.push('- 无');
-  else analysis.timeline.markers.forEach((marker) => lines.push(`- ${marker.timeSec}s｜${marker.text}`));
+  if (timelineAnalysis.timeline.markers.length === 0) lines.push('- 无');
+  else timelineAnalysis.timeline.markers.forEach(
+    (marker) => lines.push(`- ${marker.timeSec}s｜${marker.text}`),
+  );
   lines.push('', '## v3 素材登记', '');
   mappings.forEach((mapping) => {
     const asset = analysisById.get(mapping.assetId);
@@ -312,6 +370,7 @@ async function verifyCodexVideoProject(projectPath) {
     readJson(paths.status, 'Codex 视频状态'),
   ]);
   validateVideoAnalysis(analysis, manifest);
+  const effectiveAnalysis = status.effectiveAnalysis || analysis;
   const errors = [];
   const warnings = [];
   if (project.projectPath !== resolved) errors.push('project.json 的 projectPath 与实际目录不一致。');
@@ -350,9 +409,9 @@ async function verifyCodexVideoProject(projectPath) {
     fps: status.previewMetadata?.frameRate || analysis.timeline.fps,
   });
   const fcpxmlReport = validateFcpxmlStructure(fcpxml, {
-    shotCount: analysis.timeline.shots.length,
+    shotCount: effectiveAnalysis.timeline.shots.length,
     assetCount: status.assetMappings.length,
-    markerCount: analysis.timeline.markers.length,
+    markerCount: effectiveAnalysis.timeline.markers.length,
     width: timelineFormat.width,
     height: timelineFormat.height,
     fps: timelineFormat.fps,
@@ -371,7 +430,7 @@ async function verifyCodexVideoProject(projectPath) {
   let previewMetadata = null;
   try {
     previewMetadata = await probeMedia(previewPath);
-    const expectedDuration = timelineDuration(analysis.timeline.shots);
+    const expectedDuration = timelineDuration(effectiveAnalysis.timeline.shots);
     if (!previewMetadata.hasVideo) errors.push('粗剪预览没有视频流。');
     if (!Number.isFinite(previewMetadata.durationSec)
       || Math.abs(previewMetadata.durationSec - expectedDuration) > 0.35) {
@@ -390,6 +449,34 @@ async function verifyCodexVideoProject(projectPath) {
   }
   if (!(await fs.stat(paths.summary).catch(() => null))?.isFile()) errors.push('缺少人类可读项目摘要。');
   if (fcpxml.includes(status.artifacts.preview)) errors.push('FCPXML 错误地引用了粗剪预览作为时间线素材。');
+  let hyperframes = { enabled: false };
+  if (status.hyperframes?.enabled) {
+    const generated = status.assetMappings.find(
+      (mapping) => mapping.assetId === GENERATED_ASSET_ID && mapping.origin === 'hyperframes',
+    );
+    hyperframes = {
+      enabled: true,
+      version: status.hyperframes.version,
+      assetId: generated?.assetId || null,
+      metadata: generated?.metadata || null,
+      sha256: generated?.sourceSha256 || null,
+      checkOk: status.hyperframes.check?.ok === true,
+    };
+    if (!generated) errors.push('HyperFrames 状态缺少独立素材映射。');
+    if (!status.artifacts.hyperframesMp4) errors.push('HyperFrames 状态缺少独立 MP4 路径。');
+    if (!status.artifacts.hyperframesComposition) errors.push('HyperFrames 状态缺少 composition 路径。');
+    if (!hyperframes.checkOk) errors.push('HyperFrames check 状态不是通过。');
+    if (status.artifacts.hyperframesComposition) {
+      const compositionPath = path.join(
+        resolved,
+        status.artifacts.hyperframesComposition,
+        'index.html',
+      );
+      if (!(await fs.stat(compositionPath).catch(() => null))?.isFile()) {
+        errors.push('缺少 HyperFrames composition 源文件。');
+      }
+    }
+  }
 
   const report = {
     ok: errors.length === 0,
@@ -401,6 +488,7 @@ async function verifyCodexVideoProject(projectPath) {
     fcpxml: fcpxmlReport,
     xmlSyntax,
     previewMetadata,
+    hyperframes,
     formats: { timeline: timelineFormat, preview: previewFormat },
   };
   if (!report.ok) {
@@ -419,6 +507,20 @@ async function buildCodexVideoProject(options) {
     { timeline: options.timelineFormat, preview: options.previewFormat },
   );
   const target = await assertProjectTargetAvailable(options.projectRoot, options.projectName);
+  const hyperframesOptions = options.hyperframes || {};
+  let hyperframesEnvironment = null;
+  if (hyperframesOptions.enabled) {
+    hyperframesEnvironment = await inspectHyperframesEnvironment({
+      executablePath: hyperframesOptions.executablePath,
+      browserPath: hyperframesOptions.browserPath,
+    });
+    if (!hyperframesEnvironment.available) {
+      throw Object.assign(
+        new Error(`HyperFrames 本地渲染环境不可用：${hyperframesEnvironment.errors.join('；')}`),
+        { code: 'HYPERFRAMES_UNAVAILABLE', environment: hyperframesEnvironment },
+      );
+    }
+  }
   const currentBeforeBuild = await snapshotSource(manifest.sourceDirectory);
   const preflight = compareSourceSnapshots(manifest.sourceSnapshot, currentBeforeBuild);
   if (!preflight.unchanged) {
@@ -447,15 +549,66 @@ async function buildCodexVideoProject(options) {
       writeJson(path.join(projectPath, CODEX_VIDEO_MANIFEST_FILE), manifest),
       writeJson(path.join(projectPath, CODEX_VIDEO_ANALYSIS_FILE), analysis),
     ]);
+    let effectiveAnalysis = analysis;
+    let hyperframes = null;
+    if (hyperframesOptions.enabled) {
+      const durationSec = Number(hyperframesOptions.durationSec || 2);
+      const outputFilename = `${safeFilename(
+        `HyperFrames-片头-${analysis.titles.recommended}`,
+        'HyperFrames-title-card',
+      )}.mp4`;
+      const outputPath = path.join(projectPath, ASSETS_DIR, outputFilename);
+      const compositionDirectory = path.join(
+        projectPath,
+        CODEX_VIDEO_HYPERFRAMES_DIR,
+        'title-card',
+      );
+      const rendered = await renderHyperframesTitleCard({
+        environment: hyperframesEnvironment,
+        executablePath: hyperframesOptions.executablePath,
+        browserPath: hyperframesOptions.browserPath,
+        compositionDirectory,
+        outputPath,
+        title: analysis.titles.recommended,
+        subtitle: analysis.theme.summary,
+        width: formats.timeline.width,
+        height: formats.timeline.height,
+        fps: formats.timeline.fps,
+        durationSec,
+        quality: hyperframesOptions.quality || 'standard',
+      });
+      const mapping = await registerHyperframesAsset(projectPath, rendered, analysis);
+      mappings.push(mapping);
+      effectiveAnalysis = addHyperframesTitleCard(analysis, mapping, rendered.format.durationSec);
+      mapping.analysis = effectiveAnalysis.assets.find((asset) => asset.assetId === mapping.assetId);
+      hyperframes = {
+        enabled: true,
+        version: rendered.environment.version,
+        outputPath: rendered.outputPath,
+        compositionDirectory: rendered.compositionDirectory,
+        sha256: rendered.sha256,
+        metadata: rendered.metadata,
+        format: rendered.format,
+        requiredChecks: rendered.environment.requiredChecks,
+        optionalWarnings: rendered.environment.optionalWarnings,
+        check: rendered.check,
+        commands: rendered.commands,
+      };
+    }
     const outputBase = safeFilename(analysis.titles.recommended, target.name);
     const fcpxmlPath = path.join(projectPath, CODEX_VIDEO_FCPXML_DIR, `${outputBase}.fcpxml`);
     const previewPath = path.join(projectPath, CODEX_VIDEO_PREVIEW_DIR, `${outputBase}-roughcut-preview.mp4`);
     const fcpxmlResult = await writeFcpxml(fcpxmlPath, {
       projectName: target.name,
-      analysis,
+      analysis: effectiveAnalysis,
       assetMappings: mappings,
     });
-    const previewResult = await generateRoughcutPreview(previewPath, analysis, mappings, formats.preview);
+    const previewResult = await generateRoughcutPreview(
+      previewPath,
+      effectiveAnalysis,
+      mappings,
+      formats.preview,
+    );
     const sourceCurrent = await snapshotSource(manifest.sourceDirectory);
     const sourceVerification = compareSourceSnapshots(manifest.sourceSnapshot, sourceCurrent);
     if (!sourceVerification.unchanged) {
@@ -467,24 +620,32 @@ async function buildCodexVideoProject(options) {
     await fs.writeFile(summaryPath, buildHumanSummary({
       projectPath,
       analysis,
+      timelineAnalysis: effectiveAnalysis,
       manifest,
       mappings,
       fcpxmlPath,
       previewPath,
       formats,
       sourceVerification,
+      hyperframes,
     }), 'utf8');
     status = {
       ...status,
       status: 'generated',
       generatedAt: new Date().toISOString(),
       assetMappings: mappings,
+      effectiveAnalysis,
+      hyperframes,
       artifacts: {
         manifest: CODEX_VIDEO_MANIFEST_FILE,
         analysis: CODEX_VIDEO_ANALYSIS_FILE,
         summary: CODEX_VIDEO_SUMMARY_FILE,
         fcpxml: path.relative(projectPath, fcpxmlPath),
         preview: path.relative(projectPath, previewPath),
+        ...(hyperframes ? {
+          hyperframesMp4: path.relative(projectPath, hyperframes.outputPath),
+          hyperframesComposition: path.relative(projectPath, hyperframes.compositionDirectory),
+        } : {}),
       },
       fcpxmlReport: fcpxmlResult.report,
       previewMetadata: previewResult.metadata,
@@ -509,7 +670,10 @@ async function buildCodexVideoProject(options) {
         previewPath,
         summaryPath,
         statusPath: path.join(projectPath, CODEX_VIDEO_STATUS_FILE),
+        hyperframesMp4Path: hyperframes?.outputPath || null,
+        hyperframesCompositionPath: hyperframes?.compositionDirectory || null,
       },
+      hyperframes,
       verification,
     };
   } catch (error) {
@@ -539,6 +703,7 @@ module.exports = {
   openFcpxml,
   safeFilename,
   syncTimelineAssets,
+  registerHyperframesAsset,
   validateAnalysisFile,
   verifyCodexVideoProject,
 };

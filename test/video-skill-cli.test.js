@@ -4,7 +4,11 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const cliPath = path.resolve(__dirname, '..', 'bin', 'video-skill.js');
-const { formatOptions, parseArguments } = require('../bin/video-skill');
+const {
+  formatOptions,
+  hyperframesOptions,
+  parseArguments,
+} = require('../bin/video-skill');
 
 test('CLI help 列出准备、校验、构建和验证入口', () => {
   for (const argument of ['help', '--help', '-h']) {
@@ -16,7 +20,24 @@ test('CLI help 列出准备、校验、构建和验证入口', () => {
     assert.match(result.stdout, /verify/);
     assert.match(result.stdout, /--orientation/);
     assert.match(result.stdout, /--preview-width/);
+    assert.match(result.stdout, /hyperframes-doctor/);
+    assert.match(result.stdout, /--hyperframes/);
   }
+});
+
+test('CLI 将 HyperFrames 保持为显式启用的可选适配', () => {
+  const parsed = parseArguments([
+    'build', '--hyperframes', '--hyperframes-duration', '1.5',
+    '--hyperframes-quality', 'draft', '--hyperframes-executable', '/tmp/hyperframes',
+  ]);
+  assert.deepEqual(hyperframesOptions(parsed.options), {
+    enabled: true,
+    executablePath: '/tmp/hyperframes',
+    browserPath: undefined,
+    durationSec: '1.5',
+    quality: 'draft',
+  });
+  assert.equal(hyperframesOptions({}).enabled, false);
 });
 
 test('CLI 接受可选的正式时间线和独立预览格式', () => {

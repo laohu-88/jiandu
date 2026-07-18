@@ -11,8 +11,9 @@ const {
   inspectVideoRange,
   preparePendingMedia,
 } = require('../src/services/pending-media-service');
+const { inspectHyperframesEnvironment } = require('../src/services/hyperframes-service');
 
-const BOOLEAN_OPTIONS = new Set(['json', 'open-fcpxml', 'help']);
+const BOOLEAN_OPTIONS = new Set(['json', 'open-fcpxml', 'hyperframes', 'help']);
 
 function parseArguments(argv) {
   if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) {
@@ -60,6 +61,16 @@ function formatOptions(options) {
   };
 }
 
+function hyperframesOptions(options) {
+  return {
+    enabled: options.hyperframes === true,
+    executablePath: options['hyperframes-executable'],
+    browserPath: options['hyperframes-browser'],
+    durationSec: options['hyperframes-duration'],
+    quality: options['hyperframes-quality'],
+  };
+}
+
 function helpText() {
   return `视频剪辑编排器 v3 Codex CLI
 
@@ -68,7 +79,8 @@ function helpText() {
   video-skill prepare --source <一期素材目录> [--cache-root <目录>] [--json]
   video-skill inspect-range --manifest <manifest.json> --asset-id <ID> --start <秒> --end <秒> [--interval <秒>] [--json]
   video-skill validate-analysis --manifest <manifest.json> --analysis <analysis.json> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--json]
-  video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--preview-width <像素>] [--preview-height <像素>] [--preview-fps <帧率>] [--open-fcpxml] [--json]
+  video-skill hyperframes-doctor [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--json]
+  video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--preview-width <像素>] [--preview-height <像素>] [--preview-fps <帧率>] [--hyperframes] [--hyperframes-duration <秒>] [--hyperframes-quality draft|standard|high] [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--open-fcpxml] [--json]
   video-skill verify --project <v3 正式项目目录> [--json]
 
 CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。正式时间线默认使用生产规格，粗剪预览默认保持 640×360。
@@ -94,7 +106,7 @@ function humanOutput(command, result) {
     return `协议校验通过：${result.assetCount} 个素材，${result.shotCount} 个镜头。\n`;
   }
   if (command === 'build') {
-    return [
+    const lines = [
       `v3 正式项目已创建并验证：${result.projectPath}`,
       `主题：${result.theme.summary}`,
       `建议标题：${result.titles.recommended}`,
@@ -104,8 +116,23 @@ function humanOutput(command, result) {
       `粗剪预览规格：${result.formats.preview.width}×${result.formats.preview.height} ${result.formats.preview.fps}fps`,
       `摘要：${result.artifacts.summaryPath}`,
       '原始素材未变化：是',
-      '',
-    ].join('\n');
+    ];
+    if (result.hyperframes?.enabled) {
+      lines.push(
+        `HyperFrames：${result.hyperframes.version}（check 通过）`,
+        `HyperFrames 独立 MP4：${result.artifacts.hyperframesMp4Path}`,
+      );
+    }
+    lines.push('');
+    return lines.join('\n');
+  }
+  if (command === 'hyperframes-doctor') {
+    const required = result.requiredChecks
+      .map((check) => `${check.ok ? '可用' : '不可用'} ${check.name}：${check.detail}`)
+      .join('\n');
+    return `HyperFrames 本地渲染：${result.available ? '可用' : '不可用'}`
+      + `\nCLI：${result.executable || '未找到'}\n版本：${result.version || '未知'}`
+      + `\n${required}\n`;
   }
   if (command === 'verify') {
     return `项目完整性验证通过：${result.projectPath}\nFCPXML 独立镜头：${result.fcpxml.clipCount}\n`;
@@ -158,6 +185,13 @@ async function execute(argv) {
       },
     };
   }
+  if (command === 'hyperframes-doctor') {
+    const result = await inspectHyperframesEnvironment({
+      executablePath: options['hyperframes-executable'],
+      browserPath: options['hyperframes-browser'],
+    });
+    return { command, options, result };
+  }
   if (command === 'build') {
     const result = await buildCodexVideoProject({
       manifestPath: required(options, 'manifest'),
@@ -167,6 +201,7 @@ async function execute(argv) {
       openFcpxml: options['open-fcpxml'] === true,
       timelineFormat: formatOptions(options).timeline,
       previewFormat: formatOptions(options).preview,
+      hyperframes: hyperframesOptions(options),
     });
     return { command, options, result };
   }
@@ -208,6 +243,7 @@ module.exports = {
   execute,
   exitCodeFor,
   formatOptions,
+  hyperframesOptions,
   humanOutput,
   parseArguments,
 };
