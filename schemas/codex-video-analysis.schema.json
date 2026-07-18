@@ -42,8 +42,9 @@
     "timeline": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["width", "height", "fps", "shots", "markers"],
+      "required": ["shots", "markers"],
       "properties": {
+        "orientation": { "enum": ["horizontal", "vertical"] },
         "width": { "type": "integer", "minimum": 320, "multipleOf": 2 },
         "height": { "type": "integer", "minimum": 320, "multipleOf": 2 },
         "fps": { "type": "number", "minimum": 1, "maximum": 120 },

@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { resolveTimelineFormat } = require('./video-format-service');
 
 const FCPXML_TIMESCALE = 60000;
 
@@ -53,6 +54,18 @@ function getShotAtTime(shots, timeSec) {
 }
 
 function buildFcpxml({ projectName, analysis, assetMappings }) {
+  const manifest = {
+    items: assetMappings.map((mapping) => ({
+      assetId: mapping.assetId,
+      type: mapping.type,
+      metadata: mapping.metadata,
+    })),
+  };
+  const timelineFormat = resolveTimelineFormat(analysis, manifest);
+  analysis = {
+    ...analysis,
+    timeline: { ...analysis.timeline, ...timelineFormat },
+  };
   const mappingById = new Map(assetMappings.map((mapping) => [mapping.assetId, mapping]));
   const formatResources = [];
   const formatByKey = new Map();
@@ -198,6 +211,17 @@ function validateFcpxmlStructure(xml, expected = {}) {
   const clips = [...xml.matchAll(/<(?:asset-clip|video)\s+[^>]*ref="([^"]+)"[^>]*>/g)];
   const markers = [...xml.matchAll(/<marker\s+/g)];
   const mediaRepresentations = [...xml.matchAll(/<media-rep\s+[^>]*src="([^"]+)"/g)];
+  const sequenceFormatId = xml.match(/<sequence\b[^>]*\bformat="([^"]+)"/)?.[1] || null;
+  const formatTags = [...xml.matchAll(/<format\s+([^>]+)\/>/g)].map((match) => {
+    const attributes = match[1];
+    return {
+      id: attributes.match(/\bid="([^"]+)"/)?.[1] || null,
+      width: Number(attributes.match(/\bwidth="([^"]+)"/)?.[1]) || null,
+      height: Number(attributes.match(/\bheight="([^"]+)"/)?.[1]) || null,
+      frameDuration: attributes.match(/\bframeDuration="([^"]+)"/)?.[1] || null,
+    };
+  });
+  const sequenceFormat = formatTags.find((format) => format.id === sequenceFormatId) || null;
   const assetIds = new Set(assets.map((match) => match[1]));
   for (const clip of clips) {
     if (!assetIds.has(clip[1])) errors.push(`时间线镜头引用了不存在的资源 ${clip[1]}。`);
@@ -214,6 +238,15 @@ function validateFcpxmlStructure(xml, expected = {}) {
   if (Number.isInteger(expected.markerCount) && markers.length !== expected.markerCount) {
     errors.push(`marker 数量 ${markers.length} 与分析结果 ${expected.markerCount} 不一致。`);
   }
+  if (Number.isInteger(expected.width) && sequenceFormat?.width !== expected.width) {
+    errors.push(`正式时间线宽度 ${sequenceFormat?.width || '未知'} 与预期 ${expected.width} 不一致。`);
+  }
+  if (Number.isInteger(expected.height) && sequenceFormat?.height !== expected.height) {
+    errors.push(`正式时间线高度 ${sequenceFormat?.height || '未知'} 与预期 ${expected.height} 不一致。`);
+  }
+  if (Number.isFinite(expected.fps) && sequenceFormat?.frameDuration !== frameDuration(expected.fps)) {
+    errors.push(`正式时间线帧率与预期 ${expected.fps} fps 不一致。`);
+  }
   return {
     ok: errors.length === 0,
     errors,
@@ -221,6 +254,7 @@ function validateFcpxmlStructure(xml, expected = {}) {
     clipCount: clips.length,
     markerCount: markers.length,
     mediaUrls: mediaRepresentations.map((match) => match[1]),
+    sequenceFormat,
   };
 }
 
@@ -230,6 +264,9 @@ async function writeFcpxml(outputPath, payload) {
     shotCount: payload.analysis.timeline.shots.length,
     assetCount: payload.assetMappings.length,
     markerCount: payload.analysis.timeline.markers.length,
+    width: payload.analysis.timeline.width,
+    height: payload.analysis.timeline.height,
+    fps: payload.analysis.timeline.fps,
   });
   if (!report.ok) {
     throw Object.assign(new Error(`FCPXML 结构校验失败：${report.errors[0]}`), {

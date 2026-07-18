@@ -23,6 +23,7 @@ const {
   snapshotSource,
 } = require('./pending-media-service');
 const { timelineDuration, validateVideoAnalysis } = require('./video-analysis-schema');
+const { resolvePreviewFormat, resolveVideoFormats } = require('./video-format-service');
 const { validateFcpxmlStructure, writeFcpxml } = require('./fcpxml-service');
 
 const execFileAsync = promisify(execFile);
@@ -53,13 +54,21 @@ async function writeJson(filePath, value) {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-async function validateAnalysisFile(manifestPath, analysisPath) {
-  const [manifest, analysis] = await Promise.all([
+async function validateAnalysisFile(manifestPath, analysisPath, formatOptions = {}) {
+  const [manifest, rawAnalysis] = await Promise.all([
     readJson(manifestPath, '素材清单'),
     readJson(analysisPath, 'Codex 分析结果'),
   ]);
+  const resolved = resolveVideoFormats(rawAnalysis, manifest, formatOptions);
+  const analysis = resolved.analysis;
   validateVideoAnalysis(analysis, manifest);
-  return { manifest, analysis, manifestPath: path.resolve(manifestPath), analysisPath: path.resolve(analysisPath) };
+  return {
+    manifest,
+    analysis,
+    formats: { timeline: resolved.timeline, preview: resolved.preview },
+    manifestPath: path.resolve(manifestPath),
+    analysisPath: path.resolve(analysisPath),
+  };
 }
 
 async function assertProjectTargetAvailable(projectRoot, projectName) {
@@ -148,7 +157,8 @@ function previewVideoFilter(shot, width, height, fps, inputIndex) {
     + `setpts=PTS-STARTPTS[v${inputIndex}]`;
 }
 
-async function generateRoughcutPreview(outputPath, analysis, assetMappings) {
+async function generateRoughcutPreview(outputPath, analysis, assetMappings, previewFormat = {}) {
+  const format = resolvePreviewFormat(previewFormat);
   const mappingById = new Map(assetMappings.map((mapping) => [mapping.assetId, mapping]));
   const args = ['-y'];
   const filters = [];
@@ -168,9 +178,9 @@ async function generateRoughcutPreview(outputPath, analysis, assetMappings) {
     }
     filters.push(previewVideoFilter(
       shot,
-      analysis.timeline.width,
-      analysis.timeline.height,
-      analysis.timeline.fps,
+      format.width,
+      format.height,
+      format.fps,
       index,
     ));
     if (mapping.type === 'video' && mapping.metadata?.hasAudio && shot.audioMode === 'keep') {
@@ -216,13 +226,22 @@ async function generateRoughcutPreview(outputPath, analysis, assetMappings) {
       throw new Error('ffmpeg 生成的粗剪预览不可读取。');
     }
     await fs.rename(tempPath, outputPath);
-    return { outputPath, metadata, command: result.command };
+    return { outputPath, metadata, format, command: result.command };
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => {});
   }
 }
 
-function buildHumanSummary({ projectPath, analysis, manifest, mappings, fcpxmlPath, previewPath, sourceVerification }) {
+function buildHumanSummary({
+  projectPath,
+  analysis,
+  manifest,
+  mappings,
+  fcpxmlPath,
+  previewPath,
+  formats,
+  sourceVerification,
+}) {
   const analysisById = new Map(analysis.assets.map((item) => [item.assetId, item]));
   const manifestById = new Map(manifest.items.map((item) => [item.assetId, item]));
   const lines = [
@@ -235,7 +254,9 @@ function buildHumanSummary({ projectPath, analysis, manifest, mappings, fcpxmlPa
     `- 建议标题：${analysis.titles.recommended}`,
     `- 标题理由：${analysis.titles.rationale}`,
     `- FCPXML：${fcpxmlPath}`,
+    `- 正式时间线：${formats.timeline.width}×${formats.timeline.height}｜${formats.timeline.fps} fps｜${formats.timeline.orientation}`,
     `- 粗剪预览：${previewPath}`,
+    `- 预览规格：${formats.preview.width}×${formats.preview.height}｜${formats.preview.fps} fps`,
     `- 原始素材未变化：${sourceVerification.unchanged ? '是' : '否'}`,
     '',
     '## 标题候选',
@@ -317,10 +338,24 @@ async function verifyCodexVideoProject(projectPath) {
 
   const fcpxmlPath = path.join(resolved, status.artifacts.fcpxml);
   const fcpxml = await fs.readFile(fcpxmlPath, 'utf8').catch(() => '');
+  const timelineFormat = status.formats?.timeline || {
+    orientation: analysis.timeline.orientation,
+    width: analysis.timeline.width,
+    height: analysis.timeline.height,
+    fps: analysis.timeline.fps,
+  };
+  const previewFormat = resolvePreviewFormat(status.formats?.preview || {
+    width: status.previewMetadata?.displayWidth || analysis.timeline.width,
+    height: status.previewMetadata?.displayHeight || analysis.timeline.height,
+    fps: status.previewMetadata?.frameRate || analysis.timeline.fps,
+  });
   const fcpxmlReport = validateFcpxmlStructure(fcpxml, {
     shotCount: analysis.timeline.shots.length,
     assetCount: status.assetMappings.length,
     markerCount: analysis.timeline.markers.length,
+    width: timelineFormat.width,
+    height: timelineFormat.height,
+    fps: timelineFormat.fps,
   });
   errors.push(...fcpxmlReport.errors);
   let xmlSyntax = { ok: false, message: '未运行 xmllint。' };
@@ -342,9 +377,13 @@ async function verifyCodexVideoProject(projectPath) {
       || Math.abs(previewMetadata.durationSec - expectedDuration) > 0.35) {
       errors.push(`粗剪预览时长与时间线不一致：预期 ${expectedDuration}s。`);
     }
-    if (previewMetadata.displayWidth !== analysis.timeline.width
-      || previewMetadata.displayHeight !== analysis.timeline.height) {
-      errors.push('粗剪预览分辨率与时间线设置不一致。');
+    if (previewMetadata.displayWidth !== previewFormat.width
+      || previewMetadata.displayHeight !== previewFormat.height) {
+      errors.push('粗剪预览分辨率与独立预览设置不一致。');
+    }
+    if (!Number.isFinite(previewMetadata.frameRate)
+      || Math.abs(previewMetadata.frameRate - previewFormat.fps) > 0.05) {
+      errors.push('粗剪预览帧率与独立预览设置不一致。');
     }
   } catch (error) {
     errors.push(`粗剪预览无法读取：${error.message}`);
@@ -362,6 +401,7 @@ async function verifyCodexVideoProject(projectPath) {
     fcpxml: fcpxmlReport,
     xmlSyntax,
     previewMetadata,
+    formats: { timeline: timelineFormat, preview: previewFormat },
   };
   if (!report.ok) {
     throw Object.assign(new Error(`项目完整性验证失败：${errors[0]}`), {
@@ -373,7 +413,11 @@ async function verifyCodexVideoProject(projectPath) {
 }
 
 async function buildCodexVideoProject(options) {
-  const { manifest, analysis } = await validateAnalysisFile(options.manifestPath, options.analysisPath);
+  const { manifest, analysis, formats } = await validateAnalysisFile(
+    options.manifestPath,
+    options.analysisPath,
+    { timeline: options.timelineFormat, preview: options.previewFormat },
+  );
   const target = await assertProjectTargetAvailable(options.projectRoot, options.projectName);
   const currentBeforeBuild = await snapshotSource(manifest.sourceDirectory);
   const preflight = compareSourceSnapshots(manifest.sourceSnapshot, currentBeforeBuild);
@@ -411,7 +455,7 @@ async function buildCodexVideoProject(options) {
       analysis,
       assetMappings: mappings,
     });
-    const previewResult = await generateRoughcutPreview(previewPath, analysis, mappings);
+    const previewResult = await generateRoughcutPreview(previewPath, analysis, mappings, formats.preview);
     const sourceCurrent = await snapshotSource(manifest.sourceDirectory);
     const sourceVerification = compareSourceSnapshots(manifest.sourceSnapshot, sourceCurrent);
     if (!sourceVerification.unchanged) {
@@ -427,6 +471,7 @@ async function buildCodexVideoProject(options) {
       mappings,
       fcpxmlPath,
       previewPath,
+      formats,
       sourceVerification,
     }), 'utf8');
     status = {
@@ -443,6 +488,7 @@ async function buildCodexVideoProject(options) {
       },
       fcpxmlReport: fcpxmlResult.report,
       previewMetadata: previewResult.metadata,
+      formats,
       sourceVerification,
     };
     await writeJson(path.join(projectPath, CODEX_VIDEO_STATUS_FILE), status);
@@ -456,6 +502,7 @@ async function buildCodexVideoProject(options) {
       project: created.project,
       theme: analysis.theme,
       titles: analysis.titles,
+      formats,
       assetMappings: mappings,
       artifacts: {
         fcpxmlPath,

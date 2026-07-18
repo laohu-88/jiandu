@@ -10,6 +10,7 @@ const {
 const analysis = {
   titles: { recommended: '中文 标题' },
   timeline: {
+    orientation: 'horizontal',
     width: 1920,
     height: 1080,
     fps: 30,
@@ -58,6 +59,9 @@ test('FCPXML 为视频和静态图片生成 Final Cut Pro 兼容的独立镜头'
   assert.equal(report.ok, true, report.errors.join('；'));
   assert.equal(report.assetCount, 2);
   assert.equal(report.clipCount, 2);
+  assert.deepEqual(report.sequenceFormat, {
+    id: 'r1', width: 1920, height: 1080, frameDuration: '1/30s',
+  });
   assert.match(xml, /file:\/\/\/tmp\/%E4%B8%AD%E6%96%87%20%E8%B7%AF%E5%BE%84/);
   assert.match(xml, /结果 &amp; 对比\.png/);
   assert.match(xml, /<adjust-conform type="fill"\/>/);
@@ -67,4 +71,34 @@ test('FCPXML 为视频和静态图片生成 Final Cut Pro 兼容的独立镜头'
   assert.match(xml, /<video name="结果 &amp; 对比\.png"[^>]*start="3600\/1s"/);
   assert.doesNotMatch(xml, /asset-clip name="结果 &amp; 对比\.png"/);
   assert.doesNotMatch(xml, /roughcut-preview/);
+});
+
+test('竖屏正式项目默认为 1080×1920，混合静态图片和视频仍保持独立镜头', () => {
+  const verticalAnalysis = {
+    ...analysis,
+    timeline: {
+      ...analysis.timeline,
+      orientation: 'vertical',
+      width: undefined,
+      height: undefined,
+    },
+  };
+  const xml = buildFcpxml({
+    projectName: '竖屏项目',
+    analysis: verticalAnalysis,
+    assetMappings: mappings,
+  });
+  const report = validateFcpxmlStructure(xml, {
+    assetCount: 2,
+    shotCount: 2,
+    markerCount: 2,
+    width: 1080,
+    height: 1920,
+    fps: 30,
+  });
+  assert.equal(report.ok, true, report.errors.join('；'));
+  assert.equal(report.clipCount, 2);
+  assert.equal(report.sequenceFormat.width, 1080);
+  assert.equal(report.sequenceFormat.height, 1920);
+  assert.match(xml, /<adjust-conform type="fit"\/>/);
 });

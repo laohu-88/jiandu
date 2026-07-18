@@ -45,26 +45,28 @@ If the CLI path is missing, stop and report that the v3 repository is unavailabl
 7. Design a visual story from the material itself. Favor meaningful result/change, necessary context, key operations, comparison, success evidence, final result, and a brief ending only when supported by the material. Do not force a fixed section count.
 8. Avoid obvious dead time, black frames, repeated operations, irrelevant desktop waits, wrong windows, and failures with no narrative value. Sparse frames cannot prove frame-accurate boundaries: lower confidence, use conservative cuts, and set `reviewRequired` when uncertain.
 9. Generate 2–6 truthful title candidates and one recommended title. Do not copy the folder name as the title, exaggerate unfinished work, or claim “一键全自动”.
-10. Use zero or a few short markers. Do not create a voiceover script, narration, full subtitles, or title layers.
-11. Validate before building:
+10. Determine the main timeline orientation from the actual adopted media and the dominant video, not the folder name, first image, or preview size. Write `timeline.orientation`, `width`, `height`, and `fps` into the analysis. Use 1920×1080 for horizontal work and 1080×1920 for vertical work unless the material or user explicitly requires another production format. Prefer a reliable standard frame rate from the main video; otherwise use 30 fps. Keep screenshot-heavy shots on `contain` unless intentional cropping is justified.
+11. Use zero or a few short markers. Do not create a voiceover script, narration, full subtitles, or title layers.
+12. Validate before building:
 
     ```bash
     node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js validate-analysis --manifest "<manifest.json>" --analysis "<analysis.json>" --json
     ```
 
-12. Fix every validation error. Then create the formal v3 project:
+13. Fix every validation error. Then create the formal v3 project:
 
     ```bash
     node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js build --manifest "<manifest.json>" --analysis "<analysis.json>" --project-root "/Users/example/Desktop/视频素材库" --project-name "<项目名>" --json
     ```
 
-13. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs full verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`.
+14. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs full verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`.
 
 ## Completion rules
 
 - Require a real v3 project, registered/copied independent assets, valid FCPXML, readable preview MP4, project summary, and passing integrity verification.
 - Confirm source file collection, hashes, sizes, and mtimes are unchanged.
 - Treat the preview as a review artifact only; FCPXML must reference independent managed source assets.
+- Treat timeline and preview formats independently: the formal FCPXML uses the production timeline format from the analysis, while the rough-cut preview defaults to 640×360.
 - Report theme, title candidates/recommendation, adopted/rejected assets, video ranges and confidence, shot order, markers, artifact paths, and verification result.
 - Distinguish generated/xmllint-validated FCPXML from an actual manual Final Cut Pro import. Never claim FCP import success unless it was performed.
 

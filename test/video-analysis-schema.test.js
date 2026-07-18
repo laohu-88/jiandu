@@ -49,6 +49,7 @@ function validAnalysis() {
       },
     ],
     timeline: {
+      orientation: 'horizontal',
       width: 1920,
       height: 1080,
       fps: 30,
@@ -71,6 +72,15 @@ function validAnalysis() {
 
 test('Codex 视频分析协议接受完整无口播镜头方案', () => {
   const analysis = validAnalysis();
+  assert.equal(validateVideoAnalysis(analysis, manifest), analysis);
+});
+
+test('协议允许省略格式字段，交由构建阶段按主要素材解析默认值', () => {
+  const analysis = validAnalysis();
+  delete analysis.timeline.orientation;
+  delete analysis.timeline.width;
+  delete analysis.timeline.height;
+  delete analysis.timeline.fps;
   assert.equal(validateVideoAnalysis(analysis, manifest), analysis);
 });
 

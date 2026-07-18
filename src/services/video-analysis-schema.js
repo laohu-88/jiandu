@@ -1,6 +1,7 @@
 const ASSET_STATUSES = new Set(['adopt', 'candidate', 'reject']);
 const FIT_MODES = new Set(['contain', 'cover']);
 const AUDIO_MODES = new Set(['keep', 'mute']);
+const TIMELINE_ORIENTATIONS = new Set(['horizontal', 'vertical']);
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -137,19 +138,23 @@ function validateVideoAnalysis(analysis, manifest) {
   if (!isObject(analysis.timeline)) {
     errors.push('timeline 必须是对象。');
   } else {
-    if (!Number.isInteger(analysis.timeline.width)
+    if (analysis.timeline.orientation != null
+      && !TIMELINE_ORIENTATIONS.has(analysis.timeline.orientation)) {
+      errors.push('timeline.orientation 必须是 horizontal 或 vertical。');
+    }
+    if (analysis.timeline.width != null && (!Number.isInteger(analysis.timeline.width)
       || analysis.timeline.width < 320
-      || analysis.timeline.width % 2 !== 0) {
+      || analysis.timeline.width % 2 !== 0)) {
       errors.push('timeline.width 必须是大于等于 320 的偶数。');
     }
-    if (!Number.isInteger(analysis.timeline.height)
+    if (analysis.timeline.height != null && (!Number.isInteger(analysis.timeline.height)
       || analysis.timeline.height < 320
-      || analysis.timeline.height % 2 !== 0) {
+      || analysis.timeline.height % 2 !== 0)) {
       errors.push('timeline.height 必须是大于等于 320 的偶数。');
     }
-    if (!Number.isFinite(analysis.timeline.fps)
+    if (analysis.timeline.fps != null && (!Number.isFinite(analysis.timeline.fps)
       || analysis.timeline.fps < 1
-      || analysis.timeline.fps > 120) {
+      || analysis.timeline.fps > 120)) {
       errors.push('timeline.fps 必须在 1 到 120 之间。');
     }
     const shots = Array.isArray(analysis.timeline.shots) ? analysis.timeline.shots : [];
@@ -222,6 +227,7 @@ module.exports = {
   ASSET_STATUSES,
   AUDIO_MODES,
   FIT_MODES,
+  TIMELINE_ORIENTATIONS,
   timelineDuration,
   validateVideoAnalysis,
 };

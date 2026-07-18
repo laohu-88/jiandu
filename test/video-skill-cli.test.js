@@ -4,6 +4,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const cliPath = path.resolve(__dirname, '..', 'bin', 'video-skill.js');
+const { formatOptions, parseArguments } = require('../bin/video-skill');
 
 test('CLI help 列出准备、校验、构建和验证入口', () => {
   for (const argument of ['help', '--help', '-h']) {
@@ -13,7 +14,20 @@ test('CLI help 列出准备、校验、构建和验证入口', () => {
     assert.match(result.stdout, /validate-analysis/);
     assert.match(result.stdout, /build/);
     assert.match(result.stdout, /verify/);
+    assert.match(result.stdout, /--orientation/);
+    assert.match(result.stdout, /--preview-width/);
   }
+});
+
+test('CLI 接受可选的正式时间线和独立预览格式', () => {
+  const parsed = parseArguments([
+    'build', '--orientation', 'vertical', '--width', '1080', '--height', '1920',
+    '--fps', '30', '--preview-width', '640', '--preview-height', '360',
+  ]);
+  assert.deepEqual(formatOptions(parsed.options), {
+    timeline: { orientation: 'vertical', width: '1080', height: '1920', fps: '30' },
+    preview: { width: '640', height: '360', fps: undefined },
+  });
 });
 
 test('CLI 非法命令返回结构化错误和退出码 2', () => {

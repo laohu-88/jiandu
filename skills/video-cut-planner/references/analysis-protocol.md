@@ -23,7 +23,8 @@ The JSON is Codex's semantic decision record. Do not add source paths: identify 
 - `assets[].reason`: why it is adopted/candidate/rejected.
 - `assets[].ranges`: useful video intervals; use an empty list for still images or no reliable interval.
 - `confidence`: number from 0 to 1. Use lower values and `reviewRequired: true` for sparse evidence.
-- `timeline.width`, `height`, `fps`: intended unified sequence. Use even dimensions.
+- `timeline.orientation`: `horizontal` or `vertical`, based on the actual adopted media and dominant video rather than the folder name, first image, or preview size.
+- `timeline.width`, `height`, `fps`: intended production sequence. Horizontal defaults to 1920×1080, vertical defaults to 1080×1920, and an unreliable or unavailable source frame rate defaults to 30 fps. Use even dimensions. The rough-cut preview is a separate lightweight artifact and does not set these values.
 - `shots`: ordered no-voiceover visual timeline. For still images, encode display length as `inSec: 0`, `outSec: <duration>`, `durationSec: <duration>`.
 - `fitMode`: `contain` or `cover`.
 - `audioMode`: `keep` or `mute`; keep useful original audio when appropriate.
@@ -72,6 +73,7 @@ The JSON is Codex's semantic decision record. Do not add source paths: identify 
     }
   ],
   "timeline": {
+    "orientation": "horizontal",
     "width": 1920,
     "height": 1080,
     "fps": 30,

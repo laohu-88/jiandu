@@ -44,6 +44,22 @@ function required(options, key) {
   return value;
 }
 
+function formatOptions(options) {
+  return {
+    timeline: {
+      orientation: options.orientation,
+      width: options.width,
+      height: options.height,
+      fps: options.fps,
+    },
+    preview: {
+      width: options['preview-width'],
+      height: options['preview-height'],
+      fps: options['preview-fps'],
+    },
+  };
+}
+
 function helpText() {
   return `视频剪辑编排器 v3 Codex CLI
 
@@ -51,11 +67,11 @@ function helpText() {
   video-skill --help
   video-skill prepare --source <一期素材目录> [--cache-root <目录>] [--json]
   video-skill inspect-range --manifest <manifest.json> --asset-id <ID> --start <秒> --end <秒> [--interval <秒>] [--json]
-  video-skill validate-analysis --manifest <manifest.json> --analysis <analysis.json> [--json]
-  video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--open-fcpxml] [--json]
+  video-skill validate-analysis --manifest <manifest.json> --analysis <analysis.json> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--json]
+  video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--preview-width <像素>] [--preview-height <像素>] [--preview-fps <帧率>] [--open-fcpxml] [--json]
   video-skill verify --project <v3 正式项目目录> [--json]
 
-CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。
+CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。正式时间线默认使用生产规格，粗剪预览默认保持 640×360。
 `;
 }
 
@@ -84,6 +100,8 @@ function humanOutput(command, result) {
       `建议标题：${result.titles.recommended}`,
       `FCPXML：${result.artifacts.fcpxmlPath}`,
       `粗剪预览：${result.artifacts.previewPath}`,
+      `正式时间线：${result.formats.timeline.width}×${result.formats.timeline.height} ${result.formats.timeline.fps}fps`,
+      `粗剪预览规格：${result.formats.preview.width}×${result.formats.preview.height} ${result.formats.preview.fps}fps`,
       `摘要：${result.artifacts.summaryPath}`,
       '原始素材未变化：是',
       '',
@@ -125,6 +143,7 @@ async function execute(argv) {
     const validated = await validateAnalysisFile(
       required(options, 'manifest'),
       required(options, 'analysis'),
+      formatOptions(options),
     );
     return {
       command,
@@ -135,6 +154,7 @@ async function execute(argv) {
         analysisPath: validated.analysisPath,
         assetCount: validated.analysis.assets.length,
         shotCount: validated.analysis.timeline.shots.length,
+        formats: validated.formats,
       },
     };
   }
@@ -145,6 +165,8 @@ async function execute(argv) {
       projectRoot: required(options, 'project-root'),
       projectName: required(options, 'project-name'),
       openFcpxml: options['open-fcpxml'] === true,
+      timelineFormat: formatOptions(options).timeline,
+      previewFormat: formatOptions(options).preview,
     });
     return { command, options, result };
   }
@@ -185,6 +207,7 @@ if (require.main === module) main();
 module.exports = {
   execute,
   exitCodeFor,
+  formatOptions,
   humanOutput,
   parseArguments,
 };

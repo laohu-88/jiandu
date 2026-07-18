@@ -143,8 +143,9 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
       },
     ],
     timeline: {
-      width: 640,
-      height: 360,
+      orientation: 'horizontal',
+      width: 1920,
+      height: 1080,
       fps: 30,
       shots: [
         {
@@ -179,6 +180,14 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
   assert.equal(built.verification.fcpxml.markerCount, 2);
   assert.equal(built.verification.previewMetadata.displayWidth, 640);
   assert.equal(built.verification.previewMetadata.displayHeight, 360);
+  assert.equal(built.verification.previewMetadata.frameRate, 30);
+  assert.deepEqual(built.formats.timeline, {
+    orientation: 'horizontal', width: 1920, height: 1080, fps: 30,
+  });
+  assert.deepEqual(built.formats.preview, { width: 640, height: 360, fps: 30 });
+  assert.equal(built.verification.fcpxml.sequenceFormat.width, 1920);
+  assert.equal(built.verification.fcpxml.sequenceFormat.height, 1080);
+  assert.equal(built.verification.fcpxml.sequenceFormat.frameDuration, '1/30s');
   assert.equal(built.assetMappings.length, 2);
   const projectAssets = await fs.readdir(path.join(built.projectPath, '01-精选素材'));
   assert.ok(projectAssets.includes(video.filename));
@@ -189,6 +198,8 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
   assert.match(summary, /IMG_6382\.png｜reject/);
   const xml = await fs.readFile(built.artifacts.fcpxmlPath, 'utf8');
   assert.doesNotMatch(xml, /roughcut-preview\.mp4/);
+  assert.match(xml, /<sequence[^>]*format="r1"/);
+  assert.match(xml, /<format id="r1" frameDuration="1\/30s" width="1920" height="1080"/);
 
   const sourceAfter = await snapshotSource(source);
   assert.deepEqual(compareSourceSnapshots(sourceBefore, sourceAfter), {
