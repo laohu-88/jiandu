@@ -1,0 +1,190 @@
+#!/usr/bin/env node
+
+const path = require('node:path');
+
+const {
+  buildCodexVideoProject,
+  validateAnalysisFile,
+  verifyCodexVideoProject,
+} = require('../src/services/codex-video-service');
+const {
+  inspectVideoRange,
+  preparePendingMedia,
+} = require('../src/services/pending-media-service');
+
+const BOOLEAN_OPTIONS = new Set(['json', 'open-fcpxml', 'help']);
+
+function parseArguments(argv) {
+  if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) {
+    return { command: 'help', options: { help: true } };
+  }
+  const [command, ...tokens] = argv;
+  const options = {};
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token.startsWith('--')) throw new Error(`无法识别的参数：${token}`);
+    const key = token.slice(2);
+    if (BOOLEAN_OPTIONS.has(key)) {
+      options[key] = true;
+      continue;
+    }
+    const value = tokens[index + 1];
+    if (value == null || value.startsWith('--')) throw new Error(`参数 --${key} 缺少值。`);
+    options[key] = value;
+    index += 1;
+  }
+  return { command: command || 'help', options };
+}
+
+function required(options, key) {
+  const value = options[key];
+  if (typeof value !== 'string' || !value.trim()) {
+    throw Object.assign(new Error(`缺少必填参数 --${key}。`), { code: 'MISSING_ARGUMENT' });
+  }
+  return value;
+}
+
+function helpText() {
+  return `视频剪辑编排器 v3 Codex CLI
+
+用法：
+  video-skill --help
+  video-skill prepare --source <一期素材目录> [--cache-root <目录>] [--json]
+  video-skill inspect-range --manifest <manifest.json> --asset-id <ID> --start <秒> --end <秒> [--interval <秒>] [--json]
+  video-skill validate-analysis --manifest <manifest.json> --analysis <analysis.json> [--json]
+  video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--open-fcpxml] [--json]
+  video-skill verify --project <v3 正式项目目录> [--json]
+
+CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。
+`;
+}
+
+function humanOutput(command, result) {
+  if (command === 'prepare') {
+    const lines = [
+      `素材准备完成：${result.items.length} 个媒体文件`,
+      `素材清单：${result.manifestPath}`,
+      `分析请求：${result.analysisRequestPath}`,
+      `缓存：${result.cacheDirectory}${result.cached ? '（命中）' : ''}`,
+      `原始素材未变化：${result.sourceVerification.unchanged ? '是' : '否'}`,
+    ];
+    if (result.warnings.length) lines.push(`降级或警告：${result.warnings.join('；')}`);
+    return `${lines.join('\n')}\n`;
+  }
+  if (command === 'inspect-range') {
+    return `加密抽帧完成：${result.frames.length} 帧\n故事板：${result.storyboard || '未生成'}\n`;
+  }
+  if (command === 'validate-analysis') {
+    return `协议校验通过：${result.assetCount} 个素材，${result.shotCount} 个镜头。\n`;
+  }
+  if (command === 'build') {
+    return [
+      `v3 正式项目已创建并验证：${result.projectPath}`,
+      `主题：${result.theme.summary}`,
+      `建议标题：${result.titles.recommended}`,
+      `FCPXML：${result.artifacts.fcpxmlPath}`,
+      `粗剪预览：${result.artifacts.previewPath}`,
+      `摘要：${result.artifacts.summaryPath}`,
+      '原始素材未变化：是',
+      '',
+    ].join('\n');
+  }
+  if (command === 'verify') {
+    return `项目完整性验证通过：${result.projectPath}\nFCPXML 独立镜头：${result.fcpxml.clipCount}\n`;
+  }
+  return `${JSON.stringify(result, null, 2)}\n`;
+}
+
+function exitCodeFor(error) {
+  if (/^(INVALID_|MISSING_|NO_SUPPORTED_MEDIA|FOCUS_)/.test(error.code || '')) return 2;
+  if (error.code === 'PROJECT_VERIFICATION_FAILED') return 4;
+  return 3;
+}
+
+async function execute(argv) {
+  const { command, options } = parseArguments(argv);
+  if (command === 'help' || options.help) return { command: 'help', options, result: helpText() };
+
+  if (command === 'prepare') {
+    const result = await preparePendingMedia(required(options, 'source'), {
+      cacheRoot: options['cache-root'],
+    });
+    return { command, options, result };
+  }
+  if (command === 'inspect-range') {
+    const result = await inspectVideoRange(
+      required(options, 'manifest'),
+      required(options, 'asset-id'),
+      required(options, 'start'),
+      required(options, 'end'),
+      options.interval || 1,
+    );
+    return { command, options, result };
+  }
+  if (command === 'validate-analysis') {
+    const validated = await validateAnalysisFile(
+      required(options, 'manifest'),
+      required(options, 'analysis'),
+    );
+    return {
+      command,
+      options,
+      result: {
+        ok: true,
+        manifestPath: validated.manifestPath,
+        analysisPath: validated.analysisPath,
+        assetCount: validated.analysis.assets.length,
+        shotCount: validated.analysis.timeline.shots.length,
+      },
+    };
+  }
+  if (command === 'build') {
+    const result = await buildCodexVideoProject({
+      manifestPath: required(options, 'manifest'),
+      analysisPath: required(options, 'analysis'),
+      projectRoot: required(options, 'project-root'),
+      projectName: required(options, 'project-name'),
+      openFcpxml: options['open-fcpxml'] === true,
+    });
+    return { command, options, result };
+  }
+  if (command === 'verify') {
+    const result = await verifyCodexVideoProject(required(options, 'project'));
+    return { command, options, result };
+  }
+  throw Object.assign(new Error(`未知命令：${command}`), { code: 'INVALID_COMMAND' });
+}
+
+async function main() {
+  let parsed;
+  try {
+    parsed = await execute(process.argv.slice(2));
+    if (parsed.command === 'help') {
+      process.stdout.write(parsed.result);
+    } else if (parsed.options.json) {
+      process.stdout.write(`${JSON.stringify(parsed.result, null, 2)}\n`);
+    } else {
+      process.stdout.write(humanOutput(parsed.command, parsed.result));
+    }
+  } catch (error) {
+    const payload = {
+      ok: false,
+      error: {
+        code: error.code || 'VIDEO_SKILL_FAILED',
+        message: error.message,
+        details: error.details || error.report?.errors || [],
+      },
+    };
+    process.stderr.write(`${JSON.stringify(payload, null, 2)}\n`);
+    process.exitCode = exitCodeFor(error);
+  }
+}
+
+if (require.main === module) main();
+
+module.exports = {
+  execute,
+  exitCodeFor,
+  humanOutput,
+  parseArguments,
+};

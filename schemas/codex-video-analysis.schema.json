@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video-cut-planner.local/schemas/codex-video-analysis.schema.json",
+  "title": "Codex Video Analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "theme", "titles", "assets", "timeline"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "rationale", "confidence", "folderNameConflict"],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "folderNameConflict": { "type": "boolean" }
+      }
+    },
+    "titles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidates", "recommended", "rationale"],
+      "properties": {
+        "candidates": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 80 }
+        },
+        "recommended": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/assetAnalysis" }
+    },
+    "timeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "fps", "shots", "markers"],
+      "properties": {
+        "width": { "type": "integer", "minimum": 320, "multipleOf": 2 },
+        "height": { "type": "integer", "minimum": 320, "multipleOf": 2 },
+        "fps": { "type": "number", "minimum": 1, "maximum": 120 },
+        "shots": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/shot" }
+        },
+        "markers": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "$ref": "#/$defs/marker" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "stringList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startSec", "endSec", "confidence", "reviewRequired"],
+      "properties": {
+        "startSec": { "type": "number", "minimum": 0 },
+        "endSec": { "type": "number", "exclusiveMinimum": 0 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "reviewRequired": { "type": "boolean" }
+      }
+    },
+    "assetAnalysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assetId",
+        "type",
+        "semanticLabels",
+        "contentSummary",
+        "suggestedUse",
+        "status",
+        "reason",
+        "ranges",
+        "confidence"
+      ],
+      "properties": {
+        "assetId": { "type": "string", "minLength": 1 },
+        "type": { "enum": ["image", "video"] },
+        "semanticLabels": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 50 }
+        },
+        "contentSummary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "suggestedUse": {
+          "type": "array",
+          "maxItems": 5,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "status": { "enum": ["adopt", "candidate", "reject"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "ranges": { "type": "array", "items": { "$ref": "#/$defs/range" } },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "shot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "assetId",
+        "inSec",
+        "outSec",
+        "durationSec",
+        "fitMode",
+        "audioMode",
+        "purpose",
+        "confidence",
+        "reviewRequired"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "assetId": { "type": "string", "minLength": 1 },
+        "inSec": { "type": "number", "minimum": 0 },
+        "outSec": { "type": "number", "exclusiveMinimum": 0 },
+        "durationSec": { "type": "number", "exclusiveMinimum": 0 },
+        "fitMode": { "enum": ["contain", "cover"] },
+        "audioMode": { "enum": ["keep", "mute"] },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "reviewRequired": { "type": "boolean" }
+      }
+    },
+    "marker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeSec", "text"],
+      "properties": {
+        "timeSec": { "type": "number", "minimum": 0 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 30 }
+      }
+    }
+  }
+}
