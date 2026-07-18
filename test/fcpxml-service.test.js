@@ -34,7 +34,10 @@ const mappings = [
   {
     assetId: 'video', type: 'video', projectFilename: '屏幕 录制.mov',
     projectAbsolutePath: '/tmp/中文 路径/屏幕 录制.mov',
-    metadata: { durationSec: 4, width: 1280, height: 720, frameRate: 30, hasAudio: true },
+    metadata: {
+      durationSec: 4, width: 1280, height: 720, frameRate: 30,
+      hasAudio: true, audioChannels: 1, sampleRate: 48000,
+    },
   },
   {
     assetId: 'image', type: 'image', projectFilename: '结果 & 对比.png',
@@ -49,7 +52,7 @@ test('FCP 时间使用有理数并保持 30fps 精度', () => {
   assert.equal(fcpTime(1.5), '3/2s');
 });
 
-test('FCPXML 为每个原始素材和镜头生成独立资源及 asset-clip', () => {
+test('FCPXML 为视频和静态图片生成 Final Cut Pro 兼容的独立镜头', () => {
   const xml = buildFcpxml({ projectName: '中文 项目', analysis, assetMappings: mappings });
   const report = validateFcpxmlStructure(xml, { assetCount: 2, shotCount: 2, markerCount: 2 });
   assert.equal(report.ok, true, report.errors.join('；'));
@@ -58,5 +61,10 @@ test('FCPXML 为每个原始素材和镜头生成独立资源及 asset-clip', ()
   assert.match(xml, /file:\/\/\/tmp\/%E4%B8%AD%E6%96%87%20%E8%B7%AF%E5%BE%84/);
   assert.match(xml, /结果 &amp; 对比\.png/);
   assert.match(xml, /<adjust-conform type="fill"\/>/);
+  assert.match(xml, /audioChannels="1" audioRate="48000"/);
+  assert.match(xml, /asset-clip name="屏幕 录制\.mov"[^>]*audioRole="dialogue"/);
+  assert.match(xml, /<asset[^>]*name="结果 &amp; 对比\.png"[^>]*duration="0s"/);
+  assert.match(xml, /<video name="结果 &amp; 对比\.png"[^>]*start="3600\/1s"/);
+  assert.doesNotMatch(xml, /asset-clip name="结果 &amp; 对比\.png"/);
   assert.doesNotMatch(xml, /roughcut-preview/);
 });

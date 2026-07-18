@@ -37,7 +37,8 @@ function frameDuration(fps) {
   return `1/${rounded || 30}s`;
 }
 
-function createFormatKey(width, height, fps) {
+function createFormatKey(width, height, fps, isStill = false) {
+  if (isStill) return `${width || 1920}x${height || 1080}@still`;
   return `${width || 1920}x${height || 1080}@${Number(fps || 30).toFixed(3)}`;
 }
 
@@ -57,8 +58,8 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
   const formatByKey = new Map();
   let nextResourceId = 1;
 
-  const addFormat = (width, height, fps) => {
-    const key = createFormatKey(width, height, fps);
+  const addFormat = (width, height, fps, isStill = false) => {
+    const key = createFormatKey(width, height, fps, isStill);
     if (formatByKey.has(key)) return formatByKey.get(key);
     const id = `r${nextResourceId++}`;
     const format = {
@@ -66,6 +67,7 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
       width: width || analysis.timeline.width,
       height: height || analysis.timeline.height,
       fps: fps || analysis.timeline.fps,
+      isStill,
     };
     formatByKey.set(key, id);
     formatResources.push(format);
@@ -87,7 +89,12 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
         metadata.displayHeight || metadata.height,
         metadata.frameRate || analysis.timeline.fps,
       )
-      : sequenceFormatId;
+      : addFormat(
+        metadata.displayWidth || metadata.width,
+        metadata.displayHeight || metadata.height,
+        null,
+        true,
+      );
     const resourceId = `r${nextResourceId++}`;
     assetResourceById.set(mapping.assetId, resourceId);
     assets.push({ ...mapping, formatId, resourceId });
@@ -108,21 +115,25 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
   const totalDuration = analysis.timeline.shots.reduce((sum, shot) => sum + shot.durationSec, 0);
   const resourcesXml = [
     ...formatResources.map((format) => (
-      `    <format id="${format.id}" frameDuration="${frameDuration(format.fps)}"`
+      `    <format id="${format.id}"${format.isStill ? '' : ` frameDuration="${frameDuration(format.fps)}"`}`
       + ` width="${format.width}" height="${format.height}" colorSpace="1-1-1 (Rec. 709)"/>`
     )),
     ...assets.map((asset) => {
       const metadata = asset.metadata || {};
       const duration = asset.type === 'video' && Number.isFinite(metadata.durationSec)
         ? metadata.durationSec
-        : Math.max(...analysis.timeline.shots
-          .filter((shot) => shot.assetId === asset.assetId)
-          .map((shot) => shot.durationSec), 1);
+        : 0;
+      const audioChannels = Number.isInteger(metadata.audioChannels) && metadata.audioChannels > 0
+        ? metadata.audioChannels
+        : 1;
+      const audioRate = Number.isInteger(metadata.sampleRate) && metadata.sampleRate > 0
+        ? metadata.sampleRate
+        : 48000;
       const audioAttributes = metadata.hasAudio
-        ? ' hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000"'
+        ? ` hasAudio="1" audioSources="1" audioChannels="${audioChannels}" audioRate="${audioRate}"`
         : '';
       return `    <asset id="${asset.resourceId}" name="${escapeXml(asset.projectFilename)}"`
-        + ` start="0s" duration="${fcpTime(duration)}" hasVideo="1"${audioAttributes}`
+        + ` start="0s" duration="${fcpTime(duration)}" hasVideo="1" videoSources="1"${audioAttributes}`
         + ` format="${asset.formatId}">\n`
         + `      <media-rep kind="original-media" src="${escapeXml(pathToFileURL(asset.projectAbsolutePath).href)}"/>\n`
         + '    </asset>';
@@ -139,17 +150,20 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
     if (shot.audioMode === 'mute' && mapping.metadata?.hasAudio) {
       nested.push('          <adjust-volume amount="-96dB"/>');
     }
+    const stillTimeOffset = mapping.type === 'image' ? 3600 : 0;
     for (const marker of markerByShotId.get(shot.id) || []) {
       nested.push(
-        `          <marker start="${fcpTime(marker.sourceTimeSec)}"`
+        `          <marker start="${fcpTime(stillTimeOffset + marker.sourceTimeSec)}"`
         + ` duration="${frameDuration(analysis.timeline.fps)}" value="${escapeXml(marker.text)}"/>`,
       );
     }
-    const clip = `        <asset-clip name="${escapeXml(mapping.projectFilename)}" ref="${resourceId}"`
-      + ` offset="${fcpTime(timelineOffset)}" start="${fcpTime(shot.inSec)}"`
-      + ` duration="${fcpTime(shot.durationSec)}" audioRole="dialogue">\n`
+    const audioRole = mapping.metadata?.hasAudio ? ' audioRole="dialogue"' : '';
+    const clipElement = mapping.type === 'image' ? 'video' : 'asset-clip';
+    const clip = `        <${clipElement} name="${escapeXml(mapping.projectFilename)}" ref="${resourceId}"`
+      + ` offset="${fcpTime(timelineOffset)}" start="${fcpTime(stillTimeOffset + shot.inSec)}"`
+      + ` duration="${fcpTime(shot.durationSec)}"${audioRole}>\n`
       + `${nested.join('\n')}\n`
-      + '        </asset-clip>';
+      + `        </${clipElement}>`;
     timelineOffset += shot.durationSec;
     return clip;
   }).join('\n');
@@ -181,18 +195,18 @@ function validateFcpxmlStructure(xml, expected = {}) {
   if (!/<resources>[\s\S]*<\/resources>/.test(xml)) errors.push('缺少 resources。');
   if (!/<sequence\b[^>]*>[\s\S]*<spine>[\s\S]*<\/spine>/.test(xml)) errors.push('缺少 sequence/spine。');
   const assets = [...xml.matchAll(/<asset\s+id="([^"]+)"/g)];
-  const clips = [...xml.matchAll(/<asset-clip\s+[^>]*ref="([^"]+)"[^>]*>/g)];
+  const clips = [...xml.matchAll(/<(?:asset-clip|video)\s+[^>]*ref="([^"]+)"[^>]*>/g)];
   const markers = [...xml.matchAll(/<marker\s+/g)];
   const mediaRepresentations = [...xml.matchAll(/<media-rep\s+[^>]*src="([^"]+)"/g)];
   const assetIds = new Set(assets.map((match) => match[1]));
   for (const clip of clips) {
-    if (!assetIds.has(clip[1])) errors.push(`asset-clip 引用了不存在的资源 ${clip[1]}。`);
+    if (!assetIds.has(clip[1])) errors.push(`时间线镜头引用了不存在的资源 ${clip[1]}。`);
   }
   for (const media of mediaRepresentations) {
     if (!media[1].startsWith('file://')) errors.push('素材资源不是 file URL。');
   }
   if (Number.isInteger(expected.shotCount) && clips.length !== expected.shotCount) {
-    errors.push(`asset-clip 数量 ${clips.length} 与镜头数 ${expected.shotCount} 不一致。`);
+    errors.push(`时间线镜头数量 ${clips.length} 与镜头数 ${expected.shotCount} 不一致。`);
   }
   if (Number.isInteger(expected.assetCount) && assets.length !== expected.assetCount) {
     errors.push(`asset 数量 ${assets.length} 与独立素材数 ${expected.assetCount} 不一致。`);
