@@ -85,6 +85,7 @@ async function createFixture(root, name, options = {}) {
     effective.timeline.shots.at(-1).assetId = 'generated_hyperframes_asset';
     effective.timeline.shots.at(-1).durationSec = 5;
     effective.timeline.shots.at(-1).outSec = 5;
+    effective.timeline.markers[0].timeSec = 6;
   }
   const generatedAt = options.generatedAt || '2026-07-19T01:00:00.000Z';
   const mappings = base.timeline.shots.map((shot, index) => ({
@@ -256,6 +257,11 @@ test('普通项目使用基础 analysis，HyperFrames 使用 effectiveAnalysis �
   assert.equal(hyper.hyperframes.kind, 'process-flow');
   assert.equal(hyper.hyperframes.insertAfterShotId, 'shot-002');
   assert.equal(hyper.hyperframes.file.exists, true);
+  assert.equal(normal.subtitles.source, 'analysis');
+  assert.equal(normal.subtitles.items[0].durationSec, null);
+  assert.equal(hyper.subtitles.source, 'effectiveAnalysis');
+  assert.equal(hyper.subtitles.items[0].timeSec, 6);
+  assert.equal(hyper.subtitles.items[0].timeAdjustedByHyperframes, true);
 });
 
 test('缺少可选产物降级展示，项目路径穿越和非项目路径被拒绝', async (t) => {
@@ -338,4 +344,22 @@ test('preload 不暴露文件系统、任意 shell 命令或任意绝对路径�
   assert.doesNotMatch(preload, /showItemInFolder:\s*\(itemPath\)/);
   assert.match(preload, /runProjectArtifactAction/);
   assert.match(preload, /openProjectFcpxmlInFinalCut/);
+});
+
+test('Electron 结果中心提供 Marker 列表、seek、高亮、字幕叠加与只读时间线且不暴露写项目操作', async () => {
+  const renderer = await fs.readFile(path.join(__dirname, '../src/renderer/app.js'), 'utf8');
+  const styles = await fs.readFile(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
+  assert.match(renderer, /轻字幕建议/);
+  assert.match(renderer, /跳到此处/);
+  assert.match(renderer, /预览字幕/);
+  assert.match(renderer, /关闭预览/);
+  assert.match(renderer, /video\.currentTime\s*=/);
+  assert.match(renderer, /loadedmetadata.*timeupdate.*seeked.*ended/s);
+  assert.match(renderer, /activeMarkerKey/);
+  assert.match(renderer, /currentTimelineShot/);
+  assert.match(renderer, /readonly-timeline/);
+  assert.match(renderer, /不会烧录进粗剪视频/);
+  assert.match(styles, /\.result-subtitle-overlay/);
+  assert.match(styles, /\.readonly-playhead/);
+  assert.doesNotMatch(renderer, /save.*Marker|update.*Marker|write.*Marker/i);
 });

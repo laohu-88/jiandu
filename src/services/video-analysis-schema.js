@@ -1,6 +1,7 @@
 const ASSET_STATUSES = new Set(['adopt', 'candidate', 'reject']);
 const FIT_MODES = new Set(['contain', 'cover']);
 const AUDIO_MODES = new Set(['keep', 'mute']);
+const SUBTITLE_POSITIONS = new Set(['bottom-safe', 'top-safe', 'center']);
 const TIMELINE_ORIENTATIONS = new Set(['horizontal', 'vertical']);
 
 function isObject(value) {
@@ -202,6 +203,7 @@ function validateVideoAnalysis(analysis, manifest) {
     const markers = Array.isArray(analysis.timeline.markers) ? analysis.timeline.markers : [];
     if (!Array.isArray(analysis.timeline.markers)) errors.push('timeline.markers 必须是数组。');
     if (markers.length > 12) errors.push('timeline.markers 最多 12 条。');
+    const markerIds = new Set();
     markers.forEach((marker, index) => {
       const field = `timeline.markers[${index}]`;
       if (!isObject(marker)
@@ -211,6 +213,37 @@ function validateVideoAnalysis(analysis, manifest) {
         errors.push(`${field}.timeSec 必须位于时间线范围内。`);
       }
       if (!isNonEmptyString(marker?.text, 30)) errors.push(`${field}.text 必须是 1 到 30 字的轻字幕。`);
+      if (marker?.id != null) {
+        if (!isNonEmptyString(marker.id, 100)) errors.push(`${field}.id 无效。`);
+        if (markerIds.has(marker.id)) errors.push(`${field}.id 重复。`);
+        markerIds.add(marker.id);
+      }
+      if (marker?.type != null && !isNonEmptyString(marker.type, 50)) {
+        errors.push(`${field}.type 无效。`);
+      }
+      if (marker?.subtitle != null) {
+        const subtitle = marker.subtitle;
+        if (!isObject(subtitle)) {
+          errors.push(`${field}.subtitle 必须是对象。`);
+        } else {
+          if (typeof subtitle.enabled !== 'boolean') errors.push(`${field}.subtitle.enabled 必须是布尔值。`);
+          if (!isNonEmptyString(subtitle.text, 30) || /[\r\n]/.test(subtitle.text || '')) {
+            errors.push(`${field}.subtitle.text 必须是一行 1 到 30 字的轻字幕。`);
+          }
+          if (!Number.isFinite(subtitle.durationSec) || subtitle.durationSec <= 0) {
+            errors.push(`${field}.subtitle.durationSec 必须大于 0。`);
+          }
+          if (!SUBTITLE_POSITIONS.has(subtitle.position)) {
+            errors.push(`${field}.subtitle.position 无效。`);
+          }
+          if (!isNonEmptyString(subtitle.purpose, 200)) {
+            errors.push(`${field}.subtitle.purpose 无效。`);
+          }
+          if (typeof subtitle.renderAsFcpTitle !== 'boolean') {
+            errors.push(`${field}.subtitle.renderAsFcpTitle 必须是布尔值。`);
+          }
+        }
+      }
     });
   }
 
@@ -227,6 +260,7 @@ module.exports = {
   ASSET_STATUSES,
   AUDIO_MODES,
   FIT_MODES,
+  SUBTITLE_POSITIONS,
   TIMELINE_ORIENTATIONS,
   timelineDuration,
   validateVideoAnalysis,

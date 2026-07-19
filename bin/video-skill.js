@@ -62,7 +62,7 @@ function formatOptions(options) {
 }
 
 function hyperframesOptions(options) {
-  return {
+  const result = {
     enabled: options.hyperframes === true,
     executablePath: options['hyperframes-executable'],
     browserPath: options['hyperframes-browser'],
@@ -70,6 +70,10 @@ function hyperframesOptions(options) {
     quality: options['hyperframes-quality'],
     flowSpecPath: options['hyperframes-flow'],
   };
+  if (options['reuse-hyperframes-project']) {
+    result.reuseProjectPath = options['reuse-hyperframes-project'];
+  }
+  return result;
 }
 
 function helpText() {
@@ -81,7 +85,7 @@ function helpText() {
   video-skill inspect-range --manifest <manifest.json> --asset-id <ID> --start <秒> --end <秒> [--interval <秒>] [--json]
   video-skill validate-analysis --manifest <manifest.json> --analysis <analysis.json> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--json]
   video-skill hyperframes-doctor [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--json]
-  video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--preview-width <像素>] [--preview-height <像素>] [--preview-fps <帧率>] [--hyperframes] [--hyperframes-flow <流程 JSON>] [--hyperframes-duration <秒>] [--hyperframes-quality draft|standard|high] [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--open-fcpxml] [--json]
+  video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--preview-width <像素>] [--preview-height <像素>] [--preview-fps <帧率>] [--hyperframes] [--hyperframes-flow <流程 JSON>] [--reuse-hyperframes-project <已验收项目>] [--hyperframes-duration <秒>] [--hyperframes-quality draft|standard|high] [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--open-fcpxml] [--json]
   video-skill verify --project <v3 正式项目目录> [--json]
 
 CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。正式时间线默认使用生产规格，粗剪预览默认保持 640×360。

@@ -26,7 +26,7 @@ const {
 } = require('./pending-media-service');
 const { timelineDuration, validateVideoAnalysis } = require('./video-analysis-schema');
 const { resolvePreviewFormat, resolveVideoFormats } = require('./video-format-service');
-const { validateFcpxmlStructure, writeFcpxml } = require('./fcpxml-service');
+const { collectFcpTitles, validateFcpxmlStructure, writeFcpxml } = require('./fcpxml-service');
 const {
   GENERATED_ASSET_ID,
   addHyperframesAsset,
@@ -218,6 +218,114 @@ async function registerHyperframesAsset(projectPath, rendered, analysis, flow = 
   };
 }
 
+function assertContainedPath(rootPath, candidate, label) {
+  const root = path.resolve(rootPath);
+  const resolved = path.resolve(root, String(candidate || ''));
+  const relative = path.relative(root, resolved);
+  if (!candidate || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw Object.assign(new Error(`${label} 路径不在复用项目内。`), {
+      code: 'INVALID_HYPERFRAMES_REUSE',
+    });
+  }
+  return { resolved, relative };
+}
+
+async function copyReusableHyperframes(projectPath, sourceProjectPath) {
+  const sourceRoot = path.resolve(String(sourceProjectPath || ''));
+  const sourceStatus = await readJson(
+    path.join(sourceRoot, CODEX_VIDEO_STATUS_FILE),
+    '复用项目 Codex 视频状态',
+  );
+  if (sourceStatus.status !== 'verified'
+    || sourceStatus.hyperframes?.enabled !== true
+    || sourceStatus.hyperframes.check?.ok !== true) {
+    throw Object.assign(new Error('复用项目不是已验证且 HyperFrames check 通过的正式项目。'), {
+      code: 'INVALID_HYPERFRAMES_REUSE',
+    });
+  }
+  const sourceMapping = (sourceStatus.assetMappings || []).find(
+    (mapping) => mapping.origin === 'hyperframes',
+  );
+  if (!sourceMapping) {
+    throw Object.assign(new Error('复用项目缺少 HyperFrames 独立素材映射。'), {
+      code: 'INVALID_HYPERFRAMES_REUSE',
+    });
+  }
+  const sourceMedia = assertContainedPath(
+    sourceRoot,
+    sourceMapping.projectRelativePath,
+    'HyperFrames MP4',
+  );
+  const actualHash = await hashFile(sourceMedia.resolved).catch(() => null);
+  if (!actualHash || actualHash !== sourceMapping.sourceSha256) {
+    throw Object.assign(new Error('复用项目 HyperFrames MP4 缺失或哈希不一致。'), {
+      code: 'INVALID_HYPERFRAMES_REUSE',
+    });
+  }
+  const outputFilename = safeFilename(sourceMapping.projectFilename, 'HyperFrames-process-flow.mp4');
+  const outputPath = path.join(projectPath, ASSETS_DIR, outputFilename);
+  await fs.copyFile(sourceMedia.resolved, outputPath);
+  if (await hashFile(outputPath) !== sourceMapping.sourceSha256) {
+    throw Object.assign(new Error('复用 HyperFrames MP4 复制校验失败。'), {
+      code: 'ASSET_COPY_MISMATCH',
+    });
+  }
+
+  const composition = assertContainedPath(
+    sourceRoot,
+    sourceStatus.artifacts.hyperframesComposition,
+    'HyperFrames composition',
+  );
+  const input = assertContainedPath(
+    sourceRoot,
+    sourceStatus.artifacts.hyperframesInput,
+    'HyperFrames input',
+  );
+  const outputRecord = assertContainedPath(
+    sourceRoot,
+    sourceStatus.artifacts.hyperframesOutputRecord,
+    'HyperFrames output record',
+  );
+  const compositionDirectory = path.join(projectPath, composition.relative);
+  await fs.cp(composition.resolved, compositionDirectory, { recursive: true, errorOnExist: true });
+  const inputPath = path.join(projectPath, input.relative);
+  const outputRecordPath = path.join(projectPath, outputRecord.relative);
+  for (const artifactPath of [inputPath, outputRecordPath]) {
+    if (!(await fs.stat(artifactPath).catch(() => null))?.isFile()) {
+      throw Object.assign(new Error('复用 HyperFrames composition 缺少构建记录。'), {
+        code: 'INVALID_HYPERFRAMES_REUSE',
+      });
+    }
+  }
+  return {
+    sourceProjectPath: sourceRoot,
+    flow: sourceStatus.hyperframes.flow || null,
+    rendered: {
+      outputPath,
+      compositionDirectory,
+      inputPath,
+      outputRecordPath,
+      sha256: sourceMapping.sourceSha256,
+      metadata: sourceMapping.metadata,
+      format: sourceStatus.hyperframes.format || {
+        width: sourceMapping.metadata?.displayWidth,
+        height: sourceMapping.metadata?.displayHeight,
+        fps: sourceMapping.metadata?.frameRate,
+        durationSec: sourceMapping.metadata?.durationSec,
+      },
+      environment: {
+        version: sourceStatus.hyperframes.version,
+        requiredChecks: sourceStatus.hyperframes.requiredChecks || [],
+        optionalWarnings: sourceStatus.hyperframes.optionalWarnings || [],
+      },
+      check: sourceStatus.hyperframes.check,
+      commands: {
+        reuse: `只读复用已验收项目：${sourceRoot}`,
+      },
+    },
+  };
+}
+
 function resolveHyperframesVisualSources(flow, mappings) {
   if (!flow?.visuals) return null;
   const mappingById = new Map(mappings.map((mapping) => [mapping.assetId, mapping]));
@@ -397,7 +505,13 @@ function buildHumanSummary({
   lines.push('', '## 轻字幕 marker', '');
   if (timelineAnalysis.timeline.markers.length === 0) lines.push('- 无');
   else timelineAnalysis.timeline.markers.forEach(
-    (marker) => lines.push(`- ${marker.timeSec}s｜${marker.text}`),
+    (marker) => lines.push(
+      `- ${marker.timeSec}s｜${marker.text}`
+      + (marker.subtitle
+        ? `｜FCP Title：${marker.subtitle.enabled && marker.subtitle.renderAsFcpTitle ? '是' : '否'}`
+          + `｜${marker.subtitle.durationSec}s｜${marker.subtitle.position}｜${marker.subtitle.purpose}`
+        : '｜未提供字幕扩展'),
+    ),
   );
   lines.push('', '## v3 素材登记', '');
   mappings.forEach((mapping) => {
@@ -466,6 +580,7 @@ async function verifyCodexVideoProject(projectPath) {
     shotCount: effectiveAnalysis.timeline.shots.length,
     assetCount: status.assetMappings.length,
     markerCount: effectiveAnalysis.timeline.markers.length,
+    titleCount: collectFcpTitles(effectiveAnalysis).length,
     width: timelineFormat.width,
     height: timelineFormat.height,
     fps: timelineFormat.fps,
@@ -570,9 +685,14 @@ async function buildCodexVideoProject(options) {
   );
   const target = await assertProjectTargetAvailable(options.projectRoot, options.projectName);
   const hyperframesOptions = options.hyperframes || {};
-  const hyperframesFlow = hyperframesOptions.flowSpecPath
+  let hyperframesFlow = hyperframesOptions.flowSpecPath
     ? normalizeFlowSpec(await readJson(hyperframesOptions.flowSpecPath, 'HyperFrames 流程输入'))
     : null;
+  if (hyperframesOptions.enabled && hyperframesOptions.reuseProjectPath) {
+    throw Object.assign(new Error('不能同时重新渲染并复用 HyperFrames。'), {
+      code: 'INVALID_HYPERFRAMES_REUSE',
+    });
+  }
   let hyperframesEnvironment = null;
   if (hyperframesOptions.enabled) {
     hyperframesEnvironment = await inspectHyperframesEnvironment({
@@ -616,7 +736,39 @@ async function buildCodexVideoProject(options) {
     ]);
     let effectiveAnalysis = analysis;
     let hyperframes = null;
-    if (hyperframesOptions.enabled) {
+    if (hyperframesOptions.reuseProjectPath) {
+      const reused = await copyReusableHyperframes(projectPath, hyperframesOptions.reuseProjectPath);
+      hyperframesFlow = reused.flow;
+      const rendered = reused.rendered;
+      const mapping = await registerHyperframesAsset(projectPath, rendered, analysis, hyperframesFlow);
+      mappings.push(mapping);
+      effectiveAnalysis = addHyperframesAsset(
+        analysis,
+        mapping,
+        rendered.format.durationSec,
+        { flow: hyperframesFlow },
+      );
+      mapping.analysis = effectiveAnalysis.assets.find((asset) => asset.assetId === mapping.assetId);
+      hyperframes = {
+        enabled: true,
+        kind: hyperframesFlow?.kind || 'title-card',
+        reason: hyperframesFlow?.reason || '只读复用已验收 HyperFrames 独立素材。',
+        flow: hyperframesFlow,
+        version: rendered.environment.version,
+        outputPath: rendered.outputPath,
+        compositionDirectory: rendered.compositionDirectory,
+        inputPath: rendered.inputPath,
+        outputRecordPath: rendered.outputRecordPath,
+        sha256: rendered.sha256,
+        metadata: rendered.metadata,
+        format: rendered.format,
+        requiredChecks: rendered.environment.requiredChecks,
+        optionalWarnings: rendered.environment.optionalWarnings,
+        check: rendered.check,
+        commands: rendered.commands,
+        reusedFromProject: reused.sourceProjectPath,
+      };
+    } else if (hyperframesOptions.enabled) {
       const durationSec = Number(hyperframesOptions.durationSec || (hyperframesFlow ? 5 : 2));
       const visualSources = resolveHyperframesVisualSources(hyperframesFlow, mappings);
       const outputFilename = hyperframesOutputFilename(
@@ -782,6 +934,7 @@ async function openFcpxml(fcpxmlPath) {
 module.exports = {
   buildCodexVideoProject,
   buildHumanSummary,
+  copyReusableHyperframes,
   generateRoughcutPreview,
   hyperframesFlowFingerprint,
   hyperframesOutputFilename,

@@ -30,12 +30,16 @@ npm start
 
 - 项目状态、主题、主题依据、建议标题和标题候选；
 - 采用、候选、淘汰素材及理由、有效区间和精选素材复制状态；
-- 最终镜头顺序、总时长、marker，以及 HyperFrames 独立镜头；
+- 最终镜头顺序、总时长、完整 Marker 字段，以及 HyperFrames 独立镜头；
 - 正式 FCP 时间线规格与粗剪预览规格；
 - 源素材 SHA-256、FCPXML、预览和 HyperFrames 验证；
 - FCPXML、粗剪、分析 JSON、状态 JSON 和项目目录的位置。
 
-详情页可直接播放粗剪；启用 HyperFrames 时也可独立播放动画。粗剪是评审产物，默认可为 640×360；“正式 FCP 项目”卡显示实际生产时间线，例如 1920×1080、30p，两者不会混用。项目刷新、打开、切换和“重新验证（只读）”不会改写项目 JSON、素材、FCPXML 或预览。
+详情页可直接播放粗剪；启用 HyperFrames 时也可独立播放动画。“轻字幕建议”会显示文案、秒数、FCP 时间码、镜头、素材、用途、建议时长与位置，以及 Marker/Title 的 FCPXML 状态。点击 Marker 可 seek 粗剪、同步高亮镜头并临时叠加字幕；叠加层只用于审阅，不写项目、不改粗剪、不重新编码。
+
+Marker 是建议和定位信息，FCP Title 才是画面中真正显示的可编辑文字。两者会同时保留：不导出 SRT，不把文字烧录到粗剪中；导入 Final Cut Pro 后可继续调整 Title 的文字、时长、位置和样式。HyperFrames 项目始终以 `effectiveAnalysis.timeline` 的最终时间为准。
+
+粗剪是评审产物，默认可为 640×360；“正式 FCP 项目”卡显示实际生产时间线，例如 1920×1080、30p，两者不会混用。项目刷新、打开、切换和“重新验证（只读）”不会改写项目 JSON、素材、FCPXML 或预览。
 
 “Finder 中显示 FCPXML”和“使用 Final Cut Pro 打开”是两个独立操作。后者优先执行 `open -b com.apple.FinalCutApp <FCPXML>`，失败时回退 `/Applications/Final Cut Pro Creator Studio.app` 的实际应用路径；所有调用使用参数数组，不拼接 shell 命令。
 
@@ -222,13 +226,27 @@ Codex 工作流增加的正式文件：
 让 FCPXML 改为引用整条粗剪预览。标题卡插在开头；process-flow 按
 `insertAfterShotId` 插入，只有其后的 marker 会移动。
 
+发布精修项目可以只读复用一个已验证的 HyperFrames 项目，不重新渲染动画：
+
+```bash
+node bin/video-skill.js build \
+  --manifest "/path/to/manifest.json" \
+  --analysis "/path/to/release-analysis.json" \
+  --project-root "/Users/example/Desktop/视频素材库" \
+  --project-name "发布精修版" \
+  --reuse-hyperframes-project "/path/to/已验收-HyperFrames-项目"
+```
+
+该方式创建新的完整 v3 项目并复制、登记已验收的独立 MP4 与 composition，不覆盖原项目。
+
 ## 分析边界
 
 - 场景抽帧和定时抽帧用于建立可查看的证据，不保证识别每一帧操作。
 - 低可信度区间会保守裁剪或标记 `reviewRequired`，应在 FCP 中复核。
 - 空视频、损坏视频和无法解码素材会保留在清单中并给出降级说明，不会伪造内容。
 - 超长视频会限制代表帧数量；对关键区间使用 `inspect-range`。
-- marker 是少量轻字幕建议，不是全程字幕标题层。
+- marker 是少量轻字幕建议和定位信息，不是全程字幕；只有显式启用的 `marker.subtitle` 才会生成 FCP 原生 Title。
+- 原生 Title 使用本机 Final Cut Pro 12.3 导出的“基本字幕”结构；无标题项目继续保持 FCPXML 1.10，带标题项目使用 FCPXML 1.14。
 - 生成并通过 `xmllint` 校验不等于已经在 Final Cut Pro 中人工导入验证。
 
 ## 开发与验证

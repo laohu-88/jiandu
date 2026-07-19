@@ -40,6 +40,10 @@ test('CLI 将 HyperFrames 保持为显式启用的可选适配', () => {
     flowSpecPath: '/tmp/flow.json',
   });
   assert.equal(hyperframesOptions({}).enabled, false);
+  assert.equal(
+    hyperframesOptions({ 'reuse-hyperframes-project': '/tmp/reviewed-project' }).reuseProjectPath,
+    '/tmp/reviewed-project',
+  );
 });
 
 test('CLI 接受可选的正式时间线和独立预览格式', () => {

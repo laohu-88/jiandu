@@ -5,6 +5,12 @@ const { pathToFileURL } = require('node:url');
 const { resolveTimelineFormat } = require('./video-format-service');
 
 const FCPXML_TIMESCALE = 60000;
+const FCPXML_DEFAULT_VERSION = '1.10';
+const FCPXML_TITLE_VERSION = '1.14';
+const BASIC_TITLE_EFFECT = Object.freeze({
+  name: '基本字幕',
+  uid: '.../Titles.localized/Bumper:Opener.localized/Basic Title.localized/Basic Title.moti',
+});
 
 function escapeXml(value) {
   return String(value ?? '')
@@ -68,6 +74,39 @@ function getShotAtTime(shots, timeSec) {
   return null;
 }
 
+function collectFcpTitles(analysis) {
+  const totalDuration = analysis.timeline.shots.reduce(
+    (sum, shot) => sum + shot.durationSec,
+    0,
+  );
+  const requested = analysis.timeline.markers
+    .map((marker, index) => ({ marker, index, subtitle: marker.subtitle }))
+    .filter(({ subtitle }) => (
+      subtitle?.enabled === true
+      && subtitle.renderAsFcpTitle === true
+      && typeof subtitle.text === 'string'
+      && subtitle.text.trim()
+      && Number.isFinite(subtitle.durationSec)
+      && subtitle.durationSec > 0
+    ))
+    .sort((left, right) => left.marker.timeSec - right.marker.timeSec);
+  return requested.map((item, index) => {
+    const startSec = item.marker.timeSec;
+    const nextStart = requested[index + 1]?.marker.timeSec ?? totalDuration;
+    const durationSec = Math.max(0, Math.min(
+      item.subtitle.durationSec,
+      totalDuration - startSec,
+      nextStart - startSec,
+    ));
+    return {
+      ...item,
+      startSec,
+      durationSec,
+      text: item.subtitle.text.trim(),
+    };
+  }).filter((item) => item.durationSec > 0);
+}
+
 function buildFcpxml({ projectName, analysis, assetMappings }) {
   const manifest = {
     items: assetMappings.map((mapping) => ({
@@ -82,6 +121,7 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
     timeline: { ...analysis.timeline, ...timelineFormat },
   };
   const mappingById = new Map(assetMappings.map((mapping) => [mapping.assetId, mapping]));
+  const fcpTitles = collectFcpTitles(analysis);
   const formatResources = [];
   const formatByKey = new Map();
   let nextResourceId = 1;
@@ -127,6 +167,7 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
     assetResourceById.set(mapping.assetId, resourceId);
     assets.push({ ...mapping, formatId, resourceId });
   }
+  const titleEffectId = fcpTitles.length > 0 ? `r${nextResourceId++}` : null;
 
   const markerByShotId = new Map();
   for (const marker of analysis.timeline.markers) {
@@ -138,6 +179,17 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
       sourceTimeSec: located.shot.inSec + marker.timeSec - located.timelineStart,
     });
     markerByShotId.set(located.shot.id, markers);
+  }
+  const titleByShotId = new Map();
+  for (const title of fcpTitles) {
+    const located = getShotAtTime(analysis.timeline.shots, title.startSec);
+    if (!located) continue;
+    const titles = titleByShotId.get(located.shot.id) || [];
+    titles.push({
+      ...title,
+      sourceTimeSec: located.shot.inSec + title.startSec - located.timelineStart,
+    });
+    titleByShotId.set(located.shot.id, titles);
   }
 
   const totalDuration = analysis.timeline.shots.reduce((sum, shot) => sum + shot.durationSec, 0);
@@ -167,6 +219,10 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
         + `      <media-rep kind="original-media" src="${escapeXml(pathToFileURL(asset.projectAbsolutePath).href)}"/>\n`
         + '    </asset>';
     }),
+    ...(titleEffectId ? [
+      `    <effect id="${titleEffectId}" name="${escapeXml(BASIC_TITLE_EFFECT.name)}"`
+      + ` uid="${escapeXml(BASIC_TITLE_EFFECT.uid)}"/>`,
+    ] : []),
   ].join('\n');
 
   let timelineOffset = 0;
@@ -180,6 +236,24 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
       nested.push('          <adjust-volume amount="-96dB"/>');
     }
     const stillTimeOffset = mapping.type === 'image' ? 3600 : 0;
+    for (const title of titleByShotId.get(shot.id) || []) {
+      const titleOffset = stillTimeOffset + title.sourceTimeSec;
+      nested.push(
+        `          <title ref="${titleEffectId}" lane="1" offset="${fcpTime(titleOffset)}"`
+        + ` name="${escapeXml(`${title.text} - ${BASIC_TITLE_EFFECT.name}`)}"`
+        + ` start="3600s" duration="${fcpTime(title.durationSec)}">\n`
+        + '            <param name="展平" key="9999/999166631/999166633/2/351" value="1"/>\n'
+        + '            <param name="对齐" key="9999/999166631/999166633/2/354/999169573/401" value="1 (居中)"/>\n'
+        + '            <text>\n'
+        + `              <text-style ref="ts-title-${title.index + 1}">${escapeXml(title.text)}</text-style>\n`
+        + '            </text>\n'
+        + `            <text-style-def id="ts-title-${title.index + 1}">\n`
+        + '              <text-style font="Helvetica" fontSize="63" fontFace="Regular" fontColor="1 1 1 1" alignment="center"/>\n'
+        + '            </text-style-def>\n'
+        + '          </title>',
+      );
+    }
+    // FCPXML 1.14 的 DTD 要求锚定项（Title 等）位于 Marker 之前。
     for (const marker of markerByShotId.get(shot.id) || []) {
       nested.push(
         `          <marker start="${fcpTime(stillTimeOffset + marker.sourceTimeSec)}"`
@@ -197,9 +271,10 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
     return clip;
   }).join('\n');
 
+  const fcpxmlVersion = fcpTitles.length > 0 ? FCPXML_TITLE_VERSION : FCPXML_DEFAULT_VERSION;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE fcpxml>
-<fcpxml version="1.10">
+<fcpxml version="${fcpxmlVersion}">
   <resources>
 ${resourcesXml}
   </resources>
@@ -220,12 +295,25 @@ ${clipsXml}
 
 function validateFcpxmlStructure(xml, expected = {}) {
   const errors = [];
-  if (!/^<\?xml[\s\S]*<fcpxml\s+version="1\.10">/.test(xml)) errors.push('缺少 FCPXML 1.10 根节点。');
+  const version = xml.match(/<fcpxml\s+version="([^"]+)">/)?.[1] || null;
+  if (![FCPXML_DEFAULT_VERSION, FCPXML_TITLE_VERSION].includes(version)) {
+    errors.push('缺少受支持的 FCPXML 1.10/1.14 根节点。');
+  }
   if (!/<resources>[\s\S]*<\/resources>/.test(xml)) errors.push('缺少 resources。');
   if (!/<sequence\b[^>]*>[\s\S]*<spine>[\s\S]*<\/spine>/.test(xml)) errors.push('缺少 sequence/spine。');
   const assets = [...xml.matchAll(/<asset\s+id="([^"]+)"/g)];
   const clips = [...xml.matchAll(/<(?:asset-clip|video)\s+[^>]*ref="([^"]+)"[^>]*>/g)];
   const markers = [...xml.matchAll(/<marker\s+/g)];
+  const effects = [...xml.matchAll(/<effect\s+([^>]+)\/>/g)].map((match) => ({
+    id: match[1].match(/\bid="([^"]+)"/)?.[1] || null,
+    uid: match[1].match(/\buid="([^"]+)"/)?.[1] || null,
+  }));
+  const titles = [...xml.matchAll(/<title\s+([^>]+)>[\s\S]*?<\/title>/g)].map((match) => ({
+    ref: match[1].match(/\bref="([^"]+)"/)?.[1] || null,
+    lane: Number(match[1].match(/\blane="([^"]+)"/)?.[1]),
+    offset: match[1].match(/\boffset="([^"]+)"/)?.[1] || null,
+    duration: match[1].match(/\bduration="([^"]+)"/)?.[1] || null,
+  }));
   const mediaRepresentations = [...xml.matchAll(/<media-rep\s+[^>]*src="([^"]+)"/g)];
   const sequenceFormatId = xml.match(/<sequence\b[^>]*\bformat="([^"]+)"/)?.[1] || null;
   const formatTags = [...xml.matchAll(/<format\s+([^>]+)\/>/g)].map((match) => {
@@ -239,11 +327,17 @@ function validateFcpxmlStructure(xml, expected = {}) {
   });
   const sequenceFormat = formatTags.find((format) => format.id === sequenceFormatId) || null;
   const assetIds = new Set(assets.map((match) => match[1]));
+  const effectIds = new Set(effects.map((effect) => effect.id));
   for (const clip of clips) {
     if (!assetIds.has(clip[1])) errors.push(`时间线镜头引用了不存在的资源 ${clip[1]}。`);
   }
   for (const media of mediaRepresentations) {
     if (!media[1].startsWith('file://')) errors.push('素材资源不是 file URL。');
+  }
+  for (const title of titles) {
+    if (!effectIds.has(title.ref)) errors.push(`标题引用了不存在的 effect ${title.ref}。`);
+    if (!(title.lane > 0)) errors.push('标题必须位于主时间线上方的正 lane。');
+    if (!title.offset || !title.duration) errors.push('标题缺少 offset 或 duration。');
   }
   if (Number.isInteger(expected.shotCount) && clips.length !== expected.shotCount) {
     errors.push(`时间线镜头数量 ${clips.length} 与镜头数 ${expected.shotCount} 不一致。`);
@@ -253,6 +347,15 @@ function validateFcpxmlStructure(xml, expected = {}) {
   }
   if (Number.isInteger(expected.markerCount) && markers.length !== expected.markerCount) {
     errors.push(`marker 数量 ${markers.length} 与分析结果 ${expected.markerCount} 不一致。`);
+  }
+  if (Number.isInteger(expected.titleCount) && titles.length !== expected.titleCount) {
+    errors.push(`title 数量 ${titles.length} 与分析结果 ${expected.titleCount} 不一致。`);
+  }
+  if (titles.length > 0 && !effects.some((effect) => effect.uid === BASIC_TITLE_EFFECT.uid)) {
+    errors.push('原生标题缺少 FCP 12.3 基础标题 effect 资源。');
+  }
+  if (titles.length > 0 && version !== FCPXML_TITLE_VERSION) {
+    errors.push(`原生标题项目必须使用 FCPXML ${FCPXML_TITLE_VERSION}。`);
   }
   if (Number.isInteger(expected.width) && sequenceFormat?.width !== expected.width) {
     errors.push(`正式时间线宽度 ${sequenceFormat?.width || '未知'} 与预期 ${expected.width} 不一致。`);
@@ -269,6 +372,9 @@ function validateFcpxmlStructure(xml, expected = {}) {
     assetCount: assets.length,
     clipCount: clips.length,
     markerCount: markers.length,
+    titleCount: titles.length,
+    effectCount: effects.length,
+    version,
     mediaUrls: mediaRepresentations.map((match) => match[1]),
     sequenceFormat,
   };
@@ -280,6 +386,7 @@ async function writeFcpxml(outputPath, payload) {
     shotCount: payload.analysis.timeline.shots.length,
     assetCount: payload.assetMappings.length,
     markerCount: payload.analysis.timeline.markers.length,
+    titleCount: collectFcpTitles(payload.analysis).length,
     width: payload.analysis.timeline.width,
     height: payload.analysis.timeline.height,
     fps: payload.analysis.timeline.fps,
@@ -296,9 +403,13 @@ async function writeFcpxml(outputPath, payload) {
 }
 
 module.exports = {
+  BASIC_TITLE_EFFECT,
+  FCPXML_DEFAULT_VERSION,
+  FCPXML_TITLE_VERSION,
   FCPXML_TIMESCALE,
   assetUid,
   buildFcpxml,
+  collectFcpTitles,
   escapeXml,
   fcpTime,
   frameDuration,

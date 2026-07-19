@@ -177,6 +177,46 @@ test('真实 HyperFrames A/B：独立 MP4 登记进 v3 并作为独立镜头进�
   const reverified = await verifyCodexVideoProject(enhanced.projectPath);
   assert.equal(reverified.ok, true);
   assert.equal(reverified.hyperframes.checkOk, true);
+
+  const releaseAnalysis = structuredClone(analysis);
+  releaseAnalysis.timeline.markers[0] = {
+    id: 'marker-release',
+    timeSec: 0.4,
+    text: '原始结果',
+    type: 'light-subtitle',
+    subtitle: {
+      enabled: true,
+      text: '原始结果写入本地',
+      durationSec: 0.5,
+      position: 'bottom-safe',
+      purpose: '确认结果',
+      renderAsFcpTitle: true,
+    },
+  };
+  const releaseAnalysisPath = path.join(root, 'release-analysis.json');
+  await fs.writeFile(
+    releaseAnalysisPath,
+    `${JSON.stringify(releaseAnalysis, null, 2)}\n`,
+    'utf8',
+  );
+  const release = await buildCodexVideoProject({
+    manifestPath: prepared.manifestPath,
+    analysisPath: releaseAnalysisPath,
+    projectRoot,
+    projectName: 'C-发布精修',
+    hyperframes: { reuseProjectPath: enhanced.projectPath },
+  });
+  assert.equal(release.hyperframes.enabled, true);
+  assert.equal(release.hyperframes.reusedFromProject, enhanced.projectPath);
+  assert.equal(release.verification.fcpxml.clipCount, 2);
+  assert.equal(release.verification.fcpxml.markerCount, 1);
+  assert.equal(release.verification.fcpxml.titleCount, 1);
+  assert.equal(release.verification.fcpxml.version, '1.14');
+  const releaseStatus = JSON.parse(await fs.readFile(release.artifacts.statusPath, 'utf8'));
+  assert.equal(releaseStatus.effectiveAnalysis.timeline.markers[0].timeSec, 1.4);
+  assert.equal(releaseStatus.hyperframes.sha256, generated.sourceSha256);
+  assert.match(releaseStatus.hyperframes.commands.reuse, /只读复用已验收项目/);
+  assert.equal(releaseStatus.assetMappings.find((item) => item.origin === 'hyperframes').sourceSha256, generated.sourceSha256);
   const sourceAfter = await snapshotSource(source);
   assert.deepEqual(compareSourceSnapshots(sourceBefore, sourceAfter), {
     unchanged: true,

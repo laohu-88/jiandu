@@ -46,7 +46,7 @@ If the CLI path is missing, stop and report that the v3 repository is unavailabl
 8. Avoid obvious dead time, black frames, repeated operations, irrelevant desktop waits, wrong windows, and failures with no narrative value. Sparse frames cannot prove frame-accurate boundaries: lower confidence, use conservative cuts, and set `reviewRequired` when uncertain.
 9. Generate 2–6 truthful title candidates and one recommended title. Do not copy the folder name as the title, exaggerate unfinished work, or claim “一键全自动”.
 10. Determine the main timeline orientation from the actual adopted media and the dominant video, not the folder name, first image, or preview size. Write `timeline.orientation`, `width`, `height`, and `fps` into the analysis. Use 1920×1080 for horizontal work and 1080×1920 for vertical work unless the material or user explicitly requires another production format. Prefer a reliable standard frame rate from the main video; otherwise use 30 fps. Keep screenshot-heavy shots on `contain` unless intentional cropping is justified.
-11. Use zero or a few short markers. Do not create a voiceover script, narration, full subtitles, or title layers.
+11. Use zero or a few short markers. Do not create a voiceover script, narration, or full subtitles. Keep plain `{timeSec, text}` markers by default. Only when the user explicitly requests release light subtitles, add the optional one-line `subtitle` metadata defined by the protocol; those markers may become editable FCP Title clips while the markers themselves remain present.
 12. Validate before building:
 
     ```bash
@@ -73,6 +73,7 @@ If the CLI path is missing, stop and report that the v3 repository is unavailabl
     either mode, register it as an independent v3 asset and FCPXML clip. Do not treat missing Docker,
     transcription, TTS, or BGM tools as a local-render failure.
 15. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs full verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`.
+16. When a release refinement must preserve an already accepted HyperFrames render, use `--reuse-hyperframes-project "<已验收 v3 项目>"` instead of rendering HyperFrames again. The source project is read-only; the build copies and registers its independent MP4, composition, and records into a new non-empty-safe project target.
 
 ## Completion rules
 
@@ -84,6 +85,7 @@ If the CLI path is missing, stop and report that the v3 repository is unavailabl
 - Treat timeline and preview formats independently: the formal FCPXML uses the production timeline format from the analysis, while the rough-cut preview defaults to 640×360.
 - Report theme, title candidates/recommendation, adopted/rejected assets, video ranges and confidence, shot order, markers, artifact paths, and verification result.
 - Distinguish generated/xmllint-validated FCPXML from an actual manual Final Cut Pro import. Never claim FCP import success unless it was performed.
+- When editable light subtitles are explicitly enabled, report Marker and native FCP Title counts separately; do not export SRT or burn text into the rough-cut preview.
 
 ## Failure handling
 

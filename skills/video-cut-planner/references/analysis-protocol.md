@@ -28,7 +28,11 @@ The JSON is Codex's semantic decision record. Do not add source paths: identify 
 - `shots`: ordered no-voiceover visual timeline. For still images, encode display length as `inSec: 0`, `outSec: <duration>`, `durationSec: <duration>`.
 - `fitMode`: `contain` or `cover`.
 - `audioMode`: `keep` or `mute`; keep useful original audio when appropriate.
-- `markers`: zero or a few brief explanatory suggestions, not full subtitles.
+- `markers`: zero or a few brief explanatory suggestions, not full subtitles. Existing
+  `{timeSec, text}` markers remain valid. When the user explicitly requests editable
+  light subtitles for a release project, a marker may additionally provide `id`, `type`,
+  and `subtitle` with `enabled`, one-line `text`, positive `durationSec`, `position`
+  (`bottom-safe`, `top-safe`, or `center`), `purpose`, and `renderAsFcpTitle`.
 
 ## 3. Minimal example
 

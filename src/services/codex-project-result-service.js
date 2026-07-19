@@ -14,6 +14,7 @@ const {
 } = require('../constants');
 const { readJsonFile } = require('./project-json-service');
 const { verifyCodexVideoProject } = require('./codex-video-service');
+const { createMarkerViewModel } = require('./marker-view-model');
 
 const PROJECT_RESULT_STATUS = Object.freeze({
   VERIFIED: 'verified',
@@ -203,6 +204,16 @@ async function readCodexProjectResult(projectPath) {
   const sourceVerification = status?.verification?.sourceVerification
     || status?.sourceVerification
     || null;
+  const fcpxmlText = artifacts.fcpxml?.exists
+    ? await fs.readFile(artifacts.fcpxml.path, 'utf8').catch(() => '')
+    : '';
+  const subtitles = createMarkerViewModel({
+    analysis,
+    baseAnalysis,
+    manifest,
+    status,
+    fcpxml: fcpxmlText,
+  });
 
   return {
     project: {
@@ -250,7 +261,11 @@ async function readCodexProjectResult(projectPath) {
       fcpxmlClipCount: status?.fcpxmlReport?.clipCount
         ?? status?.verification?.fcpxml?.clipCount
         ?? null,
+      fcpxmlTitleCount: status?.fcpxmlReport?.titleCount
+        ?? status?.verification?.fcpxml?.titleCount
+        ?? null,
     },
+    subtitles,
     artifacts,
     verification: {
       ok: status?.verification?.ok ?? (classification === PROJECT_RESULT_STATUS.VERIFIED),

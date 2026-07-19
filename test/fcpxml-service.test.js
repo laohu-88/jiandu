@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  BASIC_TITLE_EFFECT,
   assetUid,
   buildFcpxml,
   fcpTime,
@@ -122,4 +123,58 @@ test('竖屏正式项目默认为 1080×1920，混合静态图片和视频仍保
   assert.equal(report.sequenceFormat.width, 1080);
   assert.equal(report.sequenceFormat.height, 1920);
   assert.match(xml, /<adjust-conform type="fit"\/>/);
+});
+
+test('FCPXML 1.14 使用 FCP 12.3 基础标题生成独立可编辑 Title 且不改变主线镜头数', () => {
+  const titledAnalysis = structuredClone(analysis);
+  titledAnalysis.timeline.markers[0] = {
+    ...titledAnalysis.timeline.markers[0],
+    id: 'marker-a',
+    subtitle: {
+      enabled: true,
+      text: '开始 & 调整 <结果>',
+      durationSec: 1.2,
+      position: 'bottom-safe',
+      purpose: '解释开始调整',
+      renderAsFcpTitle: true,
+    },
+  };
+  titledAnalysis.timeline.markers[1] = {
+    ...titledAnalysis.timeline.markers[1],
+    id: 'marker-b',
+    subtitle: {
+      enabled: true,
+      text: '中文结果',
+      durationSec: 1,
+      position: 'bottom-safe',
+      purpose: '确认结果',
+      renderAsFcpTitle: true,
+    },
+  };
+  const xml = buildFcpxml({ projectName: '原生标题', analysis: titledAnalysis, assetMappings: mappings });
+  const report = validateFcpxmlStructure(xml, {
+    assetCount: 2, shotCount: 2, markerCount: 2, titleCount: 2,
+  });
+  assert.equal(report.ok, true, report.errors.join('；'));
+  assert.equal(report.version, '1.14');
+  assert.equal(report.clipCount, 2);
+  assert.equal(report.titleCount, 2);
+  assert.equal(report.effectCount, 1);
+  assert.match(xml, new RegExp(`uid="${BASIC_TITLE_EFFECT.uid.replaceAll('.', '\\.')}"`));
+  assert.match(xml, /<title ref="r\d+" lane="1" offset="3\/4s"[^>]*duration="6\/5s">/);
+  assert.match(xml, /<text-style[^>]*>开始 &amp; 调整 &lt;结果&gt;<\/text-style>/);
+  assert.match(xml, /<text-style-def id="ts-title-1">/);
+  assert.match(xml, /<marker [^>]*value="开始调整"\/>/);
+  assert.ok(
+    xml.indexOf('<title ') < xml.indexOf('<marker '),
+    'FCPXML 1.14 DTD 要求锚定 Title 位于 Marker 之前',
+  );
+  assert.doesNotMatch(xml, /roughcut-preview/);
+});
+
+test('没有启用标题的旧分析继续输出 FCPXML 1.10 且无 effect/title', () => {
+  const xml = buildFcpxml({ projectName: '旧项目', analysis, assetMappings: mappings });
+  assert.match(xml, /<fcpxml version="1\.10">/);
+  assert.doesNotMatch(xml, /<effect\s/);
+  assert.doesNotMatch(xml, /<title\s/);
 });

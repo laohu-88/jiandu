@@ -63,6 +63,20 @@ Electron 默认页会只读聚合 `Codex视频状态.json` 中的 HyperFrames �
 重新生成按钮。HyperFrames 仍然默认关闭、显式启用且正式保留；未启用时显示
 “本期未启用 HyperFrames”，不会被当成故障或废弃能力。
 
+## 轻字幕 Marker 与 FCP Title
+
+Marker 的唯一事实来源仍是普通项目的 `Codex视频分析.json.timeline`，或
+HyperFrames 项目的 `Codex视频状态.json.effectiveAnalysis.timeline`。结果中心不
+重新计算 HyperFrames 偏移，只把最终 Marker 聚合为统一 View Model，并显示秒数、
+30fps 时间码、镜头、素材、用途、建议时长/位置和 XML 写入状态。
+
+Marker 负责建议与定位；显式启用的 `marker.subtitle` 同时生成 FCP 12.3 基础标题
+Title。Title 是正 lane 的连接片段，仍保留底下的独立主镜头和原 Marker；不使用
+SRT，也不烧录到粗剪预览。Electron 的字幕叠加只用于只读审阅。
+
+`--reuse-hyperframes-project` 可从已验证项目只读复制 HyperFrames MP4、composition
+和构建记录，创建新的发布精修项目；原验收项目不会被覆盖或改写。
+
 ## 真实 A/B 验收
 
 `test/hyperframes-integration.test.js` 构建同一分析的两个正式 v3 项目：

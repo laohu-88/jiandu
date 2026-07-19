@@ -75,6 +75,47 @@ test('Codex 视频分析协议接受完整无口播镜头方案', () => {
   assert.equal(validateVideoAnalysis(analysis, manifest), analysis);
 });
 
+test('协议接受可选轻字幕扩展且旧 Marker 保持兼容', () => {
+  const analysis = validAnalysis();
+  analysis.timeline.markers[0] = {
+    id: 'marker-result',
+    timeSec: 3.5,
+    text: '结果确认',
+    type: 'light-subtitle',
+    subtitle: {
+      enabled: true,
+      text: '结果已写入本地',
+      durationSec: 1.8,
+      position: 'bottom-safe',
+      purpose: '解释最终结果',
+      renderAsFcpTitle: true,
+    },
+  };
+  assert.equal(validateVideoAnalysis(analysis, manifest), analysis);
+  delete analysis.timeline.markers[0].subtitle;
+  assert.equal(validateVideoAnalysis(analysis, manifest), analysis);
+});
+
+test('协议拒绝多行、重复 ID 和无效位置的轻字幕扩展', () => {
+  const analysis = validAnalysis();
+  analysis.timeline.markers = [
+    {
+      id: 'duplicate', timeSec: 1, text: 'A', type: 'light-subtitle',
+      subtitle: {
+        enabled: true, text: '两行\n字幕', durationSec: 2, position: 'floating',
+        purpose: '测试', renderAsFcpTitle: true,
+      },
+    },
+    { id: 'duplicate', timeSec: 2, text: 'B' },
+  ];
+  assert.throws(
+    () => validateVideoAnalysis(analysis, manifest),
+    (error) => error.details.some((message) => /一行/.test(message))
+      && error.details.some((message) => /position 无效/.test(message))
+      && error.details.some((message) => /id 重复/.test(message)),
+  );
+});
+
 test('协议允许省略格式字段，交由构建阶段按主要素材解析默认值', () => {
   const analysis = validAnalysis();
   delete analysis.timeline.orientation;
