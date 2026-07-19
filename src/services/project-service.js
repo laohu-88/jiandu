@@ -7,6 +7,7 @@ const {
   PROJECT_DIRS,
   PROJECT_FILE,
 } = require('../constants');
+const { readJsonFile } = require('./project-json-service');
 
 function validateProjectName(projectName) {
   const name = String(projectName || '').trim();
@@ -25,14 +26,6 @@ async function pathExists(targetPath) {
     return true;
   } catch {
     return false;
-  }
-}
-
-async function readJson(filePath) {
-  try {
-    return JSON.parse(await fs.readFile(filePath, 'utf8'));
-  } catch {
-    return null;
   }
 }
 
@@ -57,7 +50,10 @@ async function getMissingDirs(projectPath) {
 
 async function writeProjectState(projectPath, options = {}) {
   const filePath = path.join(projectPath, PROJECT_FILE);
-  const existing = await readJson(filePath);
+  const existing = (await readJsonFile(filePath, {
+    optional: true,
+    label: 'project.json',
+  })).value;
   const now = new Date().toISOString();
   const state = {
     projectName: options.projectName || existing?.projectName || path.basename(projectPath),
@@ -95,6 +91,10 @@ async function createProject(rootPath, projectName) {
 }
 
 async function openProject(projectPath) {
+  return loadProjectReadOnly(projectPath);
+}
+
+async function readProjectMetadata(projectPath) {
   const cleanPath = path.resolve(String(projectPath || '').trim());
   const stat = await fs.stat(cleanPath).catch(() => null);
   if (!stat?.isDirectory()) {
@@ -102,26 +102,27 @@ async function openProject(projectPath) {
   }
 
   const missingDirs = await getMissingDirs(cleanPath);
-  let project = await readJson(path.join(cleanPath, PROJECT_FILE));
-
-  if (!project && missingDirs.includes('00-项目总控')) {
-    project = {
-      projectName: path.basename(cleanPath),
-      projectPath: cleanPath,
-      version: APP_VERSION,
-      createdAt: null,
-      updatedAt: null,
-    };
-  } else {
-    project = await writeProjectState(cleanPath, {
-      projectName: project?.projectName || path.basename(cleanPath),
-    });
-  }
+  const projectFile = await readJsonFile(path.join(cleanPath, PROJECT_FILE), {
+    optional: true,
+    label: 'project.json',
+  });
+  const project = projectFile.value || {
+    projectName: path.basename(cleanPath),
+    projectPath: cleanPath,
+    version: null,
+    createdAt: null,
+    updatedAt: null,
+  };
 
   return {
     project,
     missingDirs,
+    metadataMissing: projectFile.missing,
   };
+}
+
+async function loadProjectReadOnly(projectPath) {
+  return readProjectMetadata(projectPath);
 }
 
 async function ensureProjectDirs(projectPath) {
@@ -143,6 +144,8 @@ async function ensureProjectDirs(projectPath) {
 module.exports = {
   createProject,
   openProject,
+  readProjectMetadata,
+  loadProjectReadOnly,
   ensureProjectDirs,
   getMissingDirs,
   writeProjectState,

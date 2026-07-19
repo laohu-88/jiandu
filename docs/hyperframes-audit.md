@@ -1,12 +1,13 @@
 # HyperFrames × 视频剪辑编排器 v3 审计
 
-审计日期：2026-07-18
+审计日期：2026-07-19
 
 ## 结论
 
 HyperFrames 可以作为 v3 的可选 HTML→MP4 生成器，但不应替代现有媒体分析、
-FFmpeg 粗剪或 FCPXML 生成器。当前接入只生成一个由结构化分析驱动的标题卡
-MP4，并把它当作普通、独立、可删除的 v3 素材。
+FFmpeg 粗剪或 FCPXML 生成器。当前接入支持结构化分析驱动的标题卡，也支持
+由本期真实素材证明、在指定镜头后插入的 process-flow 流程解释动画。两者都被
+当作普通、独立、可删除的 v3 素材。
 
 默认流程保持不变。只有 `build --hyperframes` 会探测和调用外部 CLI。
 
@@ -27,25 +28,40 @@ FFprobe 和 Chrome 四项通过，并把其余失败保留为提示。
 ## 接入边界
 
 ```text
-Codex视频分析.json
+Codex视频分析.json + 可选流程 JSON
   ├─ titles.recommended ──→ 标题
-  └─ theme.summary ───────→ 副标题
+  ├─ theme.summary ───────→ 副标题
+  └─ insertAfterShotId ───→ 真实叙事插入点
             │
             ▼
 HyperFrames composition + check
             │
             ▼
 01-精选素材/HyperFrames-片头-<标题>.mp4
+或 HyperFrames-流程解释-<标题>-<指纹>.mp4
   ├─ ffprobe 规格校验
   ├─ SHA-256
   ├─ assets.json stable ID
   └─ FCPXML 独立 asset + 独立 clip
 ```
 
-composition 源文件和输入记录保存在
-`00-项目总控/HyperFrames/title-card/`，便于复查和重新渲染。生成镜头被放到
-有效时间线开头，原 marker 按生成时长整体后移。粗剪预览仍只是审片文件，
-FCPXML 不引用它。
+composition 源文件和输入/输出记录保存在
+`00-项目总控/HyperFrames/title-card/` 或
+`00-项目总控/HyperFrames/process-flow/`，便于复查。标题卡镜头放到有效
+时间线开头；process-flow 在 `insertAfterShotId` 后插入，只有后续 marker
+移动。粗剪预览仍只是审片文件，FCPXML 不引用它。
+
+## 项目结果中心
+
+Electron 默认页会只读聚合 `Codex视频状态.json` 中的 HyperFrames 版本、类型、
+动画文件、时长、分辨率、帧率、SHA-256、stable ID、插入位置和 check 状态。
+存在 `effectiveAnalysis` 时，列表和详情使用最终时间线，避免把基础 12 镜头
+误显示为 HyperFrames 项目的最终 12 镜头；真实 process-flow 项目显示 13 镜头、
+29.3 秒。
+
+界面可以播放独立 HyperFrames MP4 并在 Finder 中定位它，但不提供重新渲染或
+重新生成按钮。HyperFrames 仍然默认关闭、显式启用且正式保留；未启用时显示
+“本期未启用 HyperFrames”，不会被当成故障或废弃能力。
 
 ## 真实 A/B 验收
 

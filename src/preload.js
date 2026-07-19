@@ -43,7 +43,7 @@ contextBridge.exposeInMainWorld('plannerApi', {
   loadRoughcutStatus: (projectPath) => ipcRenderer.invoke('roughcut:load-status', projectPath),
   generateRoughcut: (args) => ipcRenderer.invoke('roughcut:generate-one', args),
   generateAllRoughcuts: (projectPath) => ipcRenderer.invoke('roughcut:generate-all', projectPath),
-  showRoughcutOutput: (outputPath) => ipcRenderer.invoke('roughcut:show-output', outputPath),
+  showRoughcutOutput: (args) => ipcRenderer.invoke('roughcut:show-output', args),
   loadFinalRoughcutStatus: (projectPath) =>
     ipcRenderer.invoke('final-roughcut:load-status', projectPath),
   generateFinalRoughcut: (projectPath) =>
@@ -62,6 +62,12 @@ contextBridge.exposeInMainWorld('plannerApi', {
   validateCodexVideoAnalysis: (args) => ipcRenderer.invoke('codex-video:validate-analysis', args),
   buildCodexVideoProject: (args) => ipcRenderer.invoke('codex-video:build', args),
   verifyCodexVideoProject: (projectPath) => ipcRenderer.invoke('codex-video:verify', projectPath),
-  showItemInFolder: (itemPath) => ipcRenderer.invoke('shell:show-item', itemPath),
-  openFolder: (folderPath) => ipcRenderer.invoke('shell:open-folder', folderPath),
+  scanProjectCatalog: () => ipcRenderer.invoke('catalog:scan'),
+  getCodexProjectResult: (projectPath) => ipcRenderer.invoke('catalog:get-result', projectPath),
+  verifyCodexProjectReadOnly: (projectPath) => ipcRenderer.invoke('catalog:verify', projectPath),
+  runProjectArtifactAction: (args) => ipcRenderer.invoke('catalog:artifact-action', args),
+  openProjectFcpxmlInFinalCut: (projectPath) =>
+    ipcRenderer.invoke('catalog:open-final-cut', projectPath),
+  showItemInFolder: (args) => ipcRenderer.invoke('shell:show-item', args),
+  openFolder: (args) => ipcRenderer.invoke('shell:open-folder', args),
 });

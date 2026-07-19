@@ -15,6 +15,16 @@ const {
   ensureProjectDirs,
 } = require('./services/project-service');
 const {
+  readCodexProjectResult,
+  resolveProjectPath,
+  verifyCodexProjectReadOnly,
+} = require('./services/codex-project-result-service');
+const {
+  assertCatalogProject,
+  scanProjectCatalog,
+} = require('./services/project-catalog-service');
+const { openInFinalCut } = require('./services/project-action-service');
+const {
   scanAssets,
   loadAssetIndex,
   getAssetPreview,
@@ -90,6 +100,28 @@ const {
 
 let mainWindow;
 let aiAnalysisRunning = false;
+const authorizedProjectPaths = new Set();
+
+function authorizeProject(projectPath) {
+  const resolved = path.resolve(projectPath);
+  authorizedProjectPaths.add(resolved);
+  return resolved;
+}
+
+function assertAuthorizedProject(projectPath) {
+  const resolved = path.resolve(String(projectPath || ''));
+  if (!authorizedProjectPaths.has(resolved)) {
+    throw Object.assign(new Error('项目尚未通过主进程授权。'), {
+      code: 'PROJECT_NOT_AUTHORIZED',
+    });
+  }
+  return resolved;
+}
+
+async function resolveAuthorizedItem(args, kind) {
+  const projectPath = assertAuthorizedProject(args?.projectPath);
+  return resolveProjectPath(projectPath, args?.relativePath, { kind });
+}
 
 async function runExclusiveAiAnalysis(action) {
   if (aiAnalysisRunning) {
@@ -201,6 +233,7 @@ function registerIpc() {
 
   ipcMain.handle('project:create', (_event, args) =>
     createProject(args.rootPath, args.projectName).then(async (result) => {
+      authorizeProject(result.project.projectPath);
       await saveRecentProject(app.getPath('userData'), result.project);
       return result;
     }));
@@ -212,12 +245,14 @@ function registerIpc() {
     });
     if (result.canceled) return null;
     const opened = await openProject(result.filePaths[0]);
+    authorizeProject(opened.project.projectPath);
     await saveRecentProject(app.getPath('userData'), opened.project);
     return opened;
   });
 
   ipcMain.handle('project:open-path', async (_event, projectPath) => {
     const opened = await openProject(projectPath);
+    authorizeProject(opened.project.projectPath);
     await saveRecentProject(app.getPath('userData'), opened.project);
     return opened;
   });
@@ -379,8 +414,10 @@ function registerIpc() {
   ipcMain.handle('roughcut:generate-all', (_event, projectPath) =>
     generateAllSegments(projectPath));
 
-  ipcMain.handle('roughcut:show-output', (_event, outputPath) => {
-    shell.showItemInFolder(outputPath);
+  ipcMain.handle('roughcut:show-output', async (_event, args) => {
+    const item = await resolveAuthorizedItem(args, 'file');
+    if (!item.exists) throw new Error('粗剪文件不存在。');
+    shell.showItemInFolder(item.path);
   });
 
   ipcMain.handle('final-roughcut:load-status', (_event, projectPath) =>
@@ -458,12 +495,70 @@ function registerIpc() {
   ipcMain.handle('codex-video:verify', (_event, projectPath) =>
     verifyCodexVideoProject(projectPath));
 
-  ipcMain.handle('shell:show-item', (_event, itemPath) => {
-    shell.showItemInFolder(itemPath);
+  ipcMain.handle('catalog:scan', () =>
+    scanProjectCatalog(DEFAULT_PROJECT_ROOT));
+
+  ipcMain.handle('catalog:get-result', async (_event, projectPath) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    authorizeProject(validated);
+    return readCodexProjectResult(validated);
   });
 
-  ipcMain.handle('shell:open-folder', (_event, folderPath) =>
-    shell.openPath(folderPath));
+  ipcMain.handle('catalog:verify', async (_event, projectPath) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    authorizeProject(validated);
+    return verifyCodexProjectReadOnly(validated);
+  });
+
+  ipcMain.handle('catalog:artifact-action', async (_event, args) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, args?.projectPath);
+    const result = await readCodexProjectResult(validated);
+    const artifact = result.artifacts[args?.target];
+    if (!artifact?.exists) throw new Error('所选项目产物不存在。');
+    const folderTargets = new Set([
+      'projectRoot',
+      'selectedAssets',
+      'exportDirectory',
+      'controlDirectory',
+    ]);
+    if (folderTargets.has(args.target)) {
+      const error = await shell.openPath(artifact.path);
+      if (error) throw new Error(error);
+      return { opened: true, target: args.target };
+    }
+    const fileTargets = new Set([
+      'fcpxml',
+      'preview',
+      'analysis',
+      'status',
+      'manifest',
+      'hyperframesMp4',
+    ]);
+    if (!fileTargets.has(args.target)) throw new Error('不支持的项目产物操作。');
+    shell.showItemInFolder(artifact.path);
+    return { opened: true, target: args.target };
+  });
+
+  ipcMain.handle('catalog:open-final-cut', async (_event, projectPath) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    const result = await readCodexProjectResult(validated);
+    if (!result.artifacts.fcpxml?.exists) throw new Error('FCPXML 不存在。');
+    return openInFinalCut(result.artifacts.fcpxml.path);
+  });
+
+  ipcMain.handle('shell:show-item', async (_event, args) => {
+    const item = await resolveAuthorizedItem(args, 'file');
+    if (!item.exists) throw new Error('文件不存在。');
+    shell.showItemInFolder(item.path);
+  });
+
+  ipcMain.handle('shell:open-folder', async (_event, args) => {
+    const item = await resolveAuthorizedItem(args, 'directory');
+    if (!item.exists) throw new Error('目录不存在。');
+    const error = await shell.openPath(item.path);
+    if (error) throw new Error(error);
+    return { opened: true };
+  });
 }
 
 app.setName(APP_NAME);

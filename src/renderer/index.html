@@ -13,12 +13,54 @@
     <main class="shell">
       <header class="app-header">
         <div>
-            <p class="eyebrow">STAGE 1 · 素材筛选台</p>
-            <h1>视频剪辑编排器 v3</h1>
-          </div>
-        <span id="version" class="version">v3.1.0-stage1</span>
+          <p id="viewEyebrow" class="eyebrow">CODEX · 项目结果中心</p>
+          <h1>视频剪辑编排器 v3</h1>
+        </div>
+        <div class="header-actions">
+          <nav class="view-switcher" aria-label="主视图">
+            <button id="showResultsCenterButton" class="view-tab active" type="button">
+              项目结果中心
+            </button>
+            <button id="showWorkspaceButton" class="view-tab" type="button">
+              素材筛选台
+            </button>
+          </nav>
+          <span id="version" class="version">v3.1.0-stage1</span>
+        </div>
       </header>
 
+      <section id="resultsCenterView" class="results-center">
+        <div class="results-toolbar card">
+          <div>
+            <h2>项目结果中心</h2>
+            <p id="catalogSummary">正在读取默认视频素材库…</p>
+          </div>
+          <button id="refreshCatalogButton" class="button primary" type="button">
+            刷新项目库
+          </button>
+        </div>
+        <div id="catalogError" class="notice warning hidden"></div>
+        <div class="results-layout">
+          <aside class="card catalog-panel">
+            <div id="projectCatalogList" class="catalog-list"></div>
+            <div id="projectCatalogEmpty" class="empty">
+              <strong>尚未发现正式项目</strong>
+              <p>Codex 创建的 v3 项目会自动出现在这里。</p>
+            </div>
+          </aside>
+          <section class="card result-detail-panel">
+            <div id="resultDetailEmpty" class="empty result-detail-empty">
+              <strong>选择一个项目查看结果</strong>
+              <p>这里会汇总 Codex 分析、粗剪、FCPXML、验证和 HyperFrames。</p>
+            </div>
+            <div id="resultDetailLoading" class="empty hidden">正在读取项目结果…</div>
+            <div id="resultDetailError" class="notice warning hidden"></div>
+            <div id="resultDetail" class="hidden"></div>
+          </section>
+        </div>
+      </section>
+
+      <div id="workspaceView" class="hidden">
       <section class="card setup-card">
         <div class="section-heading">
           <div>
@@ -521,6 +563,7 @@
           </aside>
         </div>
       </section>
+      </div>
     </main>
 
     <div id="toast" class="toast hidden" role="status"></div>

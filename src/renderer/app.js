@@ -26,6 +26,9 @@ const state = {
   assetReviewSaveQueue: Promise.resolve(),
   assetReviewSaveGeneration: 0,
   assetReviewPendingCount: 0,
+  catalog: null,
+  selectedCatalogProjectPath: null,
+  selectedProjectResult: null,
 };
 
 const TEXT_PREVIEW_MAX_BYTES = 64 * 1024;
@@ -62,6 +65,20 @@ const AUDIO_LABELS = {
 
 const elements = {
   version: document.querySelector('#version'),
+  viewEyebrow: document.querySelector('#viewEyebrow'),
+  resultsCenterView: document.querySelector('#resultsCenterView'),
+  workspaceView: document.querySelector('#workspaceView'),
+  showResultsCenterButton: document.querySelector('#showResultsCenterButton'),
+  showWorkspaceButton: document.querySelector('#showWorkspaceButton'),
+  refreshCatalogButton: document.querySelector('#refreshCatalogButton'),
+  catalogSummary: document.querySelector('#catalogSummary'),
+  catalogError: document.querySelector('#catalogError'),
+  projectCatalogList: document.querySelector('#projectCatalogList'),
+  projectCatalogEmpty: document.querySelector('#projectCatalogEmpty'),
+  resultDetailEmpty: document.querySelector('#resultDetailEmpty'),
+  resultDetailLoading: document.querySelector('#resultDetailLoading'),
+  resultDetailError: document.querySelector('#resultDetailError'),
+  resultDetail: document.querySelector('#resultDetail'),
   projectName: document.querySelector('#projectName'),
   projectRoot: document.querySelector('#projectRoot'),
   selectRootButton: document.querySelector('#selectRootButton'),
@@ -337,6 +354,380 @@ function createTextElement(tag, text, className = '') {
   element.textContent = text;
   if (className) element.className = className;
   return element;
+}
+
+function switchMainView(view) {
+  const showResults = view === 'results';
+  elements.resultsCenterView.classList.toggle('hidden', !showResults);
+  elements.workspaceView.classList.toggle('hidden', showResults);
+  elements.showResultsCenterButton.classList.toggle('active', showResults);
+  elements.showWorkspaceButton.classList.toggle('active', !showResults);
+  elements.viewEyebrow.textContent = showResults
+    ? 'CODEX · 项目结果中心'
+    : 'STAGE 1 · 素材筛选台';
+}
+
+function formatDateTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN');
+}
+
+function formatResultDuration(value) {
+  return Number.isFinite(value) ? `${Number(value.toFixed(2))} 秒` : '—';
+}
+
+function formatVideoSpec(format) {
+  if (!format) return '—';
+  const dimensions = format.width && format.height ? `${format.width}×${format.height}` : '—';
+  const fps = Number.isFinite(format.fps) ? `${format.fps}p` : '—';
+  return `${dimensions} · ${fps}`;
+}
+
+function resultStatusClass(status) {
+  return `result-status result-status-${status || 'incomplete'}`;
+}
+
+function createResultSection(title, subtitle = '') {
+  const section = document.createElement('section');
+  section.className = 'result-section';
+  const heading = document.createElement('div');
+  heading.className = 'result-section-heading';
+  heading.appendChild(createTextElement('h3', title));
+  if (subtitle) heading.appendChild(createTextElement('p', subtitle));
+  section.appendChild(heading);
+  return section;
+}
+
+function createDefinitionGrid(entries, className = '') {
+  const grid = document.createElement('dl');
+  grid.className = `result-definition-grid ${className}`.trim();
+  entries.forEach(([label, value]) => {
+    const item = document.createElement('div');
+    item.append(
+      createTextElement('dt', label),
+      createTextElement('dd', value ?? '—'),
+    );
+    grid.appendChild(item);
+  });
+  return grid;
+}
+
+function createArtifactButton(label, target, enabled = true) {
+  const button = createTextElement('button', label, 'button secondary');
+  button.type = 'button';
+  button.disabled = !enabled;
+  button.addEventListener('click', () =>
+    withBusy(button, async () => {
+      await window.plannerApi.runProjectArtifactAction({
+        projectPath: state.selectedCatalogProjectPath,
+        target,
+      });
+    }, '正在打开…'));
+  return button;
+}
+
+function renderDecisionGroup(section, label, items) {
+  const group = document.createElement('div');
+  group.className = 'decision-group';
+  group.appendChild(createTextElement('h4', `${label} · ${items.length}`));
+  if (!items.length) {
+    group.appendChild(createTextElement('p', '无'));
+  } else {
+    const list = document.createElement('div');
+    list.className = 'decision-list';
+    items.forEach((item) => {
+      const row = document.createElement('article');
+      const ranges = item.ranges.length
+        ? item.ranges.map((range) => `${range.startSec}–${range.endSec}s`).join('、')
+        : '静态素材 / 无有效区间';
+      row.append(
+        createTextElement('strong', item.filename),
+        createTextElement('p', item.reason || '未记录理由'),
+        createTextElement(
+          'small',
+          `${ranges} · ${item.selectedPath?.exists ? '已复制到精选素材' : '未复制到精选素材'}`,
+        ),
+      );
+      list.appendChild(row);
+    });
+    group.appendChild(list);
+  }
+  section.appendChild(group);
+}
+
+function renderCodexProjectResult(result) {
+  state.selectedProjectResult = result;
+  elements.resultDetail.replaceChildren();
+  elements.resultDetail.classList.remove('hidden');
+  elements.resultDetailEmpty.classList.add('hidden');
+  elements.resultDetailLoading.classList.add('hidden');
+  elements.resultDetailError.classList.add('hidden');
+
+  const hero = document.createElement('div');
+  hero.className = 'result-hero';
+  const heroText = document.createElement('div');
+  heroText.append(
+    createTextElement('span', result.project.statusLabel, resultStatusClass(result.project.status)),
+    createTextElement('h2', result.project.name),
+    createTextElement('p', result.summary.recommendedTitle || '尚无 Codex 建议标题'),
+    createTextElement('small', result.project.path, 'result-path'),
+  );
+  const heroActions = document.createElement('div');
+  heroActions.className = 'result-actions';
+  heroActions.append(
+    createArtifactButton('打开项目目录', 'projectRoot'),
+    createArtifactButton('打开精选素材', 'selectedAssets', result.artifacts.selectedAssets?.exists),
+    createArtifactButton('打开导出目录', 'exportDirectory', result.artifacts.exportDirectory?.exists),
+  );
+  const legacyButton = createTextElement('button', '进入素材筛选台', 'button ghost');
+  legacyButton.addEventListener('click', () =>
+    withBusy(legacyButton, async () => {
+      const opened = await window.plannerApi.openProjectPath(result.project.path);
+      await activateProject(opened, `已打开项目：${opened.project.projectName}`);
+      switchMainView('workspace');
+    }, '正在打开…'));
+  heroActions.appendChild(legacyButton);
+  hero.append(heroText, heroActions);
+  elements.resultDetail.appendChild(hero);
+
+  const summary = createResultSection('结果摘要');
+  summary.appendChild(createDefinitionGrid([
+    ['主题', result.summary.theme],
+    ['主题依据', result.summary.themeRationale],
+    ['建议标题', result.summary.recommendedTitle],
+    ['标题候选', result.summary.titleCandidates.join('、') || '—'],
+    ['创建时间', formatDateTime(result.project.createdAt)],
+    ['生成时间', formatDateTime(result.project.generatedAt)],
+    ['验证时间', formatDateTime(result.project.verifiedAt)],
+  ]));
+  elements.resultDetail.appendChild(summary);
+
+  const decisions = createResultSection('素材取舍', '只展示结构化 Codex 分析，不反向解析 Markdown 报告。');
+  renderDecisionGroup(decisions, '采用', result.decisions.adopt);
+  renderDecisionGroup(decisions, '候选', result.decisions.candidate);
+  renderDecisionGroup(decisions, '淘汰', result.decisions.reject);
+  elements.resultDetail.appendChild(decisions);
+
+  const timeline = createResultSection(
+    '时间线',
+    `${result.timeline.shotCount} 个镜头 · ${formatResultDuration(result.timeline.totalDurationSec)} · ${result.timeline.markers.length} 个 marker`,
+  );
+  const shotList = document.createElement('ol');
+  shotList.className = 'shot-list';
+  result.timeline.shots.forEach((shot) => {
+    const item = document.createElement('li');
+    const label = shot.hyperframes ? 'HyperFrames' : '素材';
+    item.append(
+      createTextElement('strong', `${shot.order}. ${shot.filename}`),
+      createTextElement(
+        'span',
+        `${label} · ${shot.inSec}–${shot.outSec}s · ${formatResultDuration(shot.durationSec)} · ${shot.purpose || '—'}`,
+        shot.hyperframes ? 'hyperframes-shot' : '',
+      ),
+    );
+    shotList.appendChild(item);
+  });
+  if (!result.timeline.shots.length) shotList.appendChild(createTextElement('li', '暂无正式时间线数据'));
+  timeline.appendChild(shotList);
+  const markerText = result.timeline.markers.length
+    ? result.timeline.markers.map((marker) => `${marker.timeSec}s ${marker.text}`).join(' · ')
+    : '本期无 marker';
+  timeline.appendChild(createTextElement('p', markerText, 'marker-summary'));
+  elements.resultDetail.appendChild(timeline);
+
+  const formats = createResultSection('格式', '正式 FCP 项目与轻量粗剪预览是两套独立规格。');
+  const formatCards = document.createElement('div');
+  formatCards.className = 'format-cards';
+  const formal = document.createElement('article');
+  formal.append(
+    createTextElement('h4', '正式 FCP 项目'),
+    createTextElement('strong', formatVideoSpec(result.formats.timeline)),
+    createTextElement('p', `${displayOrientation(result.formats.timeline?.orientation)} · ${result.formats.fcpxmlClipCount ?? '—'} 个独立 clip`),
+  );
+  const preview = document.createElement('article');
+  preview.append(
+    createTextElement('h4', '粗剪预览'),
+    createTextElement('strong', formatVideoSpec(result.formats.preview)),
+    createTextElement('p', `实际时长 ${formatResultDuration(result.formats.previewMetadata?.durationSec)}`),
+  );
+  formatCards.append(formal, preview);
+  formats.appendChild(formatCards);
+  elements.resultDetail.appendChild(formats);
+
+  const player = createResultSection('粗剪播放器', '这是评审预览，不是正式 FCP 时间线。');
+  if (result.artifacts.preview?.fileUrl) {
+    const video = document.createElement('video');
+    video.className = 'result-video';
+    video.controls = true;
+    video.preload = 'metadata';
+    video.src = result.artifacts.preview.fileUrl;
+    player.appendChild(video);
+  } else {
+    player.appendChild(createTextElement('p', '粗剪预览缺失或不可读取。', 'empty-inline'));
+  }
+  elements.resultDetail.appendChild(player);
+
+  const artifacts = createResultSection('产物操作');
+  const artifactActions = document.createElement('div');
+  artifactActions.className = 'result-actions';
+  artifactActions.append(
+    createArtifactButton('Finder 中显示粗剪', 'preview', result.artifacts.preview?.exists),
+    createArtifactButton('Finder 中显示 FCPXML', 'fcpxml', result.artifacts.fcpxml?.exists),
+    createArtifactButton('定位分析 JSON', 'analysis', result.artifacts.analysis?.exists),
+    createArtifactButton('定位状态 JSON', 'status', result.artifacts.status?.exists),
+  );
+  const fcpButton = createTextElement('button', '使用 Final Cut Pro 打开', 'button primary');
+  fcpButton.disabled = !result.artifacts.fcpxml?.exists;
+  fcpButton.addEventListener('click', () =>
+    withBusy(fcpButton, async () => {
+      const opened = await window.plannerApi.openProjectFcpxmlInFinalCut(result.project.path);
+      showToast(`已通过 ${opened.strategy === 'bundle-id' ? 'Bundle ID' : '应用路径'} 发送给 Final Cut Pro。`);
+    }, '正在打开…'));
+  artifactActions.appendChild(fcpButton);
+  artifacts.appendChild(artifactActions);
+  elements.resultDetail.appendChild(artifacts);
+
+  const verification = createResultSection('验证状态');
+  verification.appendChild(createDefinitionGrid([
+    ['总体', result.verification.statusLabel],
+    ['源素材 SHA-256', result.verification.source.unchanged === true ? '通过' : (result.verification.source.unchanged === false ? '失败' : '—')],
+    ['源素材 digest', result.verification.source.beforeDigest],
+    ['FCPXML 结构', result.verification.fcpxml?.ok === true ? '通过' : (result.verification.fcpxml ? '失败' : '—')],
+    ['FCPXML XML', result.verification.xmlSyntax?.ok === true ? '通过' : (result.verification.xmlSyntax ? '失败' : '—')],
+    ['粗剪', result.verification.preview?.hasVideo === true ? '通过' : (result.verification.preview ? '失败' : '—')],
+    ['HyperFrames', result.hyperframes.enabled ? (result.hyperframes.checkOk ? '通过' : '未通过') : '本期未启用'],
+    ['warnings', result.verification.warnings.join('；') || '无'],
+    ['errors', result.verification.errors.join('；') || '无'],
+  ]));
+  const verifyActions = document.createElement('div');
+  verifyActions.className = 'result-actions';
+  const verifyButton = createTextElement('button', '重新验证（只读）', 'button secondary');
+  const verifyRun = createTextElement('span', '', 'verify-run-status');
+  verifyButton.disabled = !result.project.isCodexProject;
+  verifyButton.addEventListener('click', () =>
+    withBusy(verifyButton, async () => {
+      const report = await window.plannerApi.verifyCodexProjectReadOnly(result.project.path);
+      verifyRun.textContent = `${report.ok ? '验证通过' : '验证失败'} · ${formatDateTime(report.verifiedAt)}`;
+      verifyRun.classList.toggle('error', !report.ok);
+      showToast(report.ok ? '只读验证通过，项目文件未改写。' : `验证失败：${report.errors?.[0] || '未知错误'}`, !report.ok);
+    }, '验证中…'));
+  verifyActions.append(verifyButton, verifyRun);
+  verification.appendChild(verifyActions);
+  elements.resultDetail.appendChild(verification);
+
+  const hyperframes = createResultSection('HyperFrames');
+  if (!result.hyperframes.enabled) {
+    hyperframes.appendChild(createTextElement('p', '本期未启用 HyperFrames', 'hyperframes-disabled'));
+  } else {
+    hyperframes.appendChild(createDefinitionGrid([
+      ['状态', '已启用'],
+      ['版本', result.hyperframes.version],
+      ['动画数量', String(result.hyperframes.count)],
+      ['类型', result.hyperframes.kind],
+      ['规格', `${result.hyperframes.width}×${result.hyperframes.height} · ${result.hyperframes.fps}p`],
+      ['时长', formatResultDuration(result.hyperframes.durationSec)],
+      ['插入位置', result.hyperframes.insertAfterShotId ? `${result.hyperframes.insertAfterShotId} 之后` : '—'],
+      ['stable ID', result.hyperframes.stableId],
+      ['SHA-256', result.hyperframes.sha256],
+      ['check', result.hyperframes.checkOk ? '通过' : '未通过'],
+    ]));
+    if (result.hyperframes.file?.fileUrl) {
+      const video = document.createElement('video');
+      video.className = 'result-video hyperframes-video';
+      video.controls = true;
+      video.preload = 'metadata';
+      video.src = result.hyperframes.file.fileUrl;
+      hyperframes.appendChild(video);
+    }
+    const hfActions = document.createElement('div');
+    hfActions.className = 'result-actions';
+    hfActions.appendChild(createArtifactButton(
+      'Finder 中定位动画',
+      'hyperframesMp4',
+      result.hyperframes.file?.exists,
+    ));
+    hyperframes.appendChild(hfActions);
+  }
+  elements.resultDetail.appendChild(hyperframes);
+}
+
+async function loadCatalogProject(projectPath) {
+  state.selectedCatalogProjectPath = projectPath;
+  renderProjectCatalog();
+  elements.resultDetailEmpty.classList.add('hidden');
+  elements.resultDetail.classList.add('hidden');
+  elements.resultDetailError.classList.add('hidden');
+  elements.resultDetailLoading.classList.remove('hidden');
+  try {
+    const result = await window.plannerApi.getCodexProjectResult(projectPath);
+    if (state.selectedCatalogProjectPath !== projectPath) return;
+    renderCodexProjectResult(result);
+  } catch (error) {
+    if (state.selectedCatalogProjectPath !== projectPath) return;
+    elements.resultDetailLoading.classList.add('hidden');
+    elements.resultDetailError.textContent = getUserErrorMessage(error);
+    elements.resultDetailError.classList.remove('hidden');
+  }
+}
+
+function renderProjectCatalog() {
+  const projects = state.catalog?.projects || [];
+  elements.projectCatalogList.replaceChildren();
+  elements.projectCatalogEmpty.classList.toggle('hidden', projects.length > 0);
+  projects.forEach((project) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'catalog-project';
+    if (project.projectPath === state.selectedCatalogProjectPath) button.classList.add('selected');
+    const top = document.createElement('div');
+    top.className = 'catalog-project-top';
+    top.append(
+      createTextElement('strong', project.projectName),
+      createTextElement('span', project.statusLabel, resultStatusClass(project.status)),
+    );
+    const format = project.timelineFormat
+      ? `${project.timelineFormat.width}×${project.timelineFormat.height} · ${project.timelineFormat.fps}p`
+      : '规格未知';
+    button.append(
+      top,
+      createTextElement('p', project.recommendedTitle || '尚无建议标题'),
+      createTextElement(
+        'small',
+        `${formatDateTime(project.generatedAt || project.createdAt || project.filesystemTime)} · ${project.shotCount ?? '—'} 镜头 · ${formatResultDuration(project.totalDurationSec)}`,
+      ),
+    );
+    const badges = document.createElement('div');
+    badges.className = 'catalog-badges';
+    if (project.hyperframesEnabled) badges.appendChild(createTextElement('span', 'HyperFrames', 'hyperframes-badge'));
+    if (project.warningCount) badges.appendChild(createTextElement('span', `${project.warningCount} 警告`, 'warning-badge'));
+    if (project.errorCount) badges.appendChild(createTextElement('span', `${project.errorCount} 错误`, 'error-badge'));
+    button.appendChild(badges);
+    button.addEventListener('click', () => loadCatalogProject(project.projectPath));
+    elements.projectCatalogList.appendChild(button);
+  });
+}
+
+async function loadProjectCatalog() {
+  elements.catalogError.classList.add('hidden');
+  state.catalog = await window.plannerApi.scanProjectCatalog();
+  const projects = state.catalog.projects || [];
+  elements.catalogSummary.textContent = state.catalog.exists
+    ? `已从 ${state.catalog.rootPath} 发现 ${projects.length} 个项目；忽略 ${state.catalog.ignoredCount} 个普通目录。`
+    : `默认项目库不存在：${state.catalog.rootPath}`;
+  renderProjectCatalog();
+  if (state.selectedCatalogProjectPath
+    && projects.some((project) => project.projectPath === state.selectedCatalogProjectPath)) {
+    await loadCatalogProject(state.selectedCatalogProjectPath);
+  } else if (projects.length) {
+    await loadCatalogProject(projects[0].projectPath);
+  } else {
+    state.selectedCatalogProjectPath = null;
+    elements.resultDetail.classList.add('hidden');
+    elements.resultDetailError.classList.add('hidden');
+    elements.resultDetailLoading.classList.add('hidden');
+    elements.resultDetailEmpty.classList.remove('hidden');
+  }
 }
 
 function renderRecentProjects() {
@@ -1247,9 +1638,10 @@ function renderRoughcutPanel(segment) {
   if (status.outputFile) {
     const showButton = createTextElement('button', '在 Finder 中显示', 'button secondary');
     showButton.addEventListener('click', () =>
-      window.plannerApi.showRoughcutOutput(
-        `${state.project.projectPath}/${status.outputFile}`,
-      ));
+      window.plannerApi.showRoughcutOutput({
+        projectPath: state.project.projectPath,
+        relativePath: status.outputFile,
+      }));
     actions.append(showButton);
   }
   panel.append(info, actions);
@@ -1517,7 +1909,22 @@ async function init() {
   elements.version.textContent = config.version;
   elements.projectRoot.value = config.defaultProjectRoot;
   await Promise.all([loadRecentProjects(), loadAiSettingsState()]);
+  try {
+    await loadProjectCatalog();
+  } catch (error) {
+    elements.catalogSummary.textContent = '项目库扫描失败。';
+    elements.catalogError.textContent = getUserErrorMessage(error);
+    elements.catalogError.classList.remove('hidden');
+  }
 }
+
+elements.showResultsCenterButton.addEventListener('click', () => switchMainView('results'));
+elements.showWorkspaceButton.addEventListener('click', () => switchMainView('workspace'));
+elements.refreshCatalogButton.addEventListener('click', () =>
+  withBusy(elements.refreshCatalogButton, async () => {
+    await loadProjectCatalog();
+    showToast('项目库已只读刷新。');
+  }, '正在刷新…'));
 
 elements.assetSearchInput.addEventListener('input', () => {
   state.assetSearchQuery = elements.assetSearchInput.value.trim().toLowerCase();
@@ -1712,24 +2119,39 @@ elements.generateFcpChecklistButton.addEventListener('click', () =>
 
 elements.showFinalRoughcutButton.addEventListener('click', () => {
   if (state.finalRoughcutStatus?.outputFile) {
-    window.plannerApi.showItemInFolder(fullPath(state.finalRoughcutStatus.outputFile));
+    window.plannerApi.showItemInFolder({
+      projectPath: state.project.projectPath,
+      relativePath: state.finalRoughcutStatus.outputFile,
+    });
   }
 });
 
 elements.openControlDirButton.addEventListener('click', () => {
-  if (state.project) window.plannerApi.openFolder(`${state.project.projectPath}/00-项目总控`);
+  if (state.project) window.plannerApi.openFolder({
+    projectPath: state.project.projectPath,
+    relativePath: '00-项目总控',
+  });
 });
 
 elements.openCurrentControlDirButton.addEventListener('click', () => {
-  if (state.project) window.plannerApi.openFolder(`${state.project.projectPath}/00-项目总控`);
+  if (state.project) window.plannerApi.openFolder({
+    projectPath: state.project.projectPath,
+    relativePath: '00-项目总控',
+  });
 });
 
 elements.openRoughcutDirButton.addEventListener('click', () => {
-  if (state.project) window.plannerApi.openFolder(`${state.project.projectPath}/04-分段粗剪`);
+  if (state.project) window.plannerApi.openFolder({
+    projectPath: state.project.projectPath,
+    relativePath: '04-分段粗剪',
+  });
 });
 
 elements.openFinalRoughcutDirButton.addEventListener('click', () => {
-  if (state.project) window.plannerApi.openFolder(`${state.project.projectPath}/05-总粗剪`);
+  if (state.project) window.plannerApi.openFolder({
+    projectPath: state.project.projectPath,
+    relativePath: '05-总粗剪',
+  });
 });
 
 elements.chooseSubtitleVideoButton.addEventListener('click', () =>
@@ -1792,7 +2214,10 @@ elements.organizeSrtButton.addEventListener('click', () =>
   }));
 
 elements.openSubtitleDirButton.addEventListener('click', () => {
-  if (state.project) window.plannerApi.openFolder(`${state.project.projectPath}/07-字幕`);
+  if (state.project) window.plannerApi.openFolder({
+    projectPath: state.project.projectPath,
+    relativePath: '07-字幕',
+  });
 });
 
 elements.detectEnvironmentButton.addEventListener('click', () =>

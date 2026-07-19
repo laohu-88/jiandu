@@ -9,13 +9,39 @@ Electron 视频项目管理与剪辑编排工具。当前新增的 Codex 视频�
 → v3 CLI 探测媒体、抽帧并生成故事板
 → Codex 查看实际画面并生成结构化分析
 → v3 共享核心创建正式项目并登记素材
-→ 可选：HyperFrames 根据现有分析生成独立标题卡 MP4
+→ 可选：HyperFrames 根据现有分析生成独立标题卡或 process-flow MP4
 → 独立素材组成的可编辑 FCPXML
 → 粗剪预览 MP4
+→ Electron 项目结果中心自动发现并汇总项目
 → Final Cut Pro 精修
 ```
 
 CLI 和 Electron IPC 调用同一组 `src/services`，不会复制项目创建、素材登记、FCPXML、预览或验证逻辑。CLI 不接入外部模型；主题、标题、素材判断和镜头顺序由当前 Codex 会话完成。
+
+## Electron 项目结果中心
+
+运行：
+
+```bash
+npm start
+```
+
+应用默认打开“项目结果中心”，只读扫描 `/Users/example/Desktop/视频素材库` 的直属项目目录。Codex 创建正式 v3 项目后，不需要再次输入路径；点击列表项目即可查看：
+
+- 项目状态、主题、主题依据、建议标题和标题候选；
+- 采用、候选、淘汰素材及理由、有效区间和精选素材复制状态；
+- 最终镜头顺序、总时长、marker，以及 HyperFrames 独立镜头；
+- 正式 FCP 时间线规格与粗剪预览规格；
+- 源素材 SHA-256、FCPXML、预览和 HyperFrames 验证；
+- FCPXML、粗剪、分析 JSON、状态 JSON 和项目目录的位置。
+
+详情页可直接播放粗剪；启用 HyperFrames 时也可独立播放动画。粗剪是评审产物，默认可为 640×360；“正式 FCP 项目”卡显示实际生产时间线，例如 1920×1080、30p，两者不会混用。项目刷新、打开、切换和“重新验证（只读）”不会改写项目 JSON、素材、FCPXML 或预览。
+
+“Finder 中显示 FCPXML”和“使用 Final Cut Pro 打开”是两个独立操作。后者优先执行 `open -b com.apple.FinalCutApp <FCPXML>`，失败时回退 `/Applications/Final Cut Pro Creator Studio.app` 的实际应用路径；所有调用使用参数数组，不拼接 shell 命令。
+
+原“素材筛选台”保留为另一个主视图，新建项目、打开已有项目、最近项目、素材预览、人工审核、评分、标签、备注和本地 AI 单素材分析仍可继续使用。旧项目在结果中心标记为“旧版项目”，并可进入素材筛选台。
+
+当前不提供历史版本系统，也不在原项目内重新生成 HyperFrames。结果中心只聚合已有结构化产物并提供只读操作。
 
 ## 准备一期素材
 
@@ -115,8 +141,8 @@ node bin/video-skill.js verify --project "/path/to/v3-project" --json
 ### 可选 HyperFrames 适配
 
 HyperFrames 不属于默认生产依赖。未启用时，现有分析、FFmpeg 粗剪和 FCPXML
-流程完全不变。需要根据 `titles.recommended` 和 `theme.summary` 生成独立标题卡
-MP4 时，先安装锁定版本到当前开发环境或 PATH：
+流程完全不变。需要生成独立标题卡，或根据本期真实素材证明的流程生成
+process-flow 独立 MP4 时，先安装锁定版本到当前开发环境或 PATH：
 
 ```bash
 npm install --no-save --ignore-scripts hyperframes@0.7.63
@@ -141,6 +167,11 @@ node bin/video-skill.js build \
 它会关闭遥测，先运行 HyperFrames `check`，再渲染 MP4，并用 ffprobe 校验
 时长、生产分辨率和帧率。`doctor.ok` 可能因为 Docker、TTS、BGM 等非必需项
 缺失而为 false；v3 只用本地渲染必需的四项判断可用性。
+
+process-flow 是已实现能力，不只是标题卡描述。使用
+`--hyperframes-flow <流程.json>` 提供 3–6 个短节点、真实原因和
+`insertAfterShotId`；生成动画会在该镜头之后作为独立素材插入。HyperFrames
+仍默认关闭，只有用户明确启用时才运行，项目结果中心不提供重新渲染按钮。
 
 当前没有把 HyperFrames 固定为 Electron 生产依赖：`0.7.63` 的传递依赖
 `adm-zip<0.6.0` 命中
@@ -172,11 +203,13 @@ Codex 工作流增加的正式文件：
 ├─ Codex视频分析.json
 ├─ Codex视频状态.json
 ├─ Codex视频项目摘要.md
-└─ HyperFrames/title-card/        # 仅显式启用时
+└─ HyperFrames/title-card/        # 显式启用标题卡时
+   或 HyperFrames/process-flow/  # 显式启用流程解释时
    ├─ index.html
    └─ render-input.json
 01-精选素材/
-└─ HyperFrames-片头-<标题>.mp4    # 独立登记、独立校验
+└─ HyperFrames-片头-<标题>.mp4
+   或 HyperFrames-流程解释-<标题>-<指纹>.mp4
 03-导出/
 ├─ FCPXML/<标题>.fcpxml
 └─ 粗剪预览/<标题>-roughcut-preview.mp4
@@ -184,9 +217,10 @@ Codex 工作流增加的正式文件：
 
 `01-精选素材` 保存被时间线采用的独立素材副本，并通过现有 `assets.json` 机制登记。FCPXML 直接引用这些独立素材，因此导入 Final Cut Pro 后可以单独移动、删除、缩短、拉长、调速、裁切和调整音量。粗剪 MP4 只用于检查顺序、节奏、黑屏和错误镜头，不能替代 FCPXML。
 
-启用 HyperFrames 时，标题卡 MP4 同样位于 `01-精选素材`，拥有独立哈希、
+启用 HyperFrames 时，标题卡或 process-flow MP4 同样位于 `01-精选素材`，拥有独立哈希、
 独立 v3 stable ID 和独立 FCPXML asset/clip；它不会被烘焙进原始录屏，也不会
-让 FCPXML 改为引用整条粗剪预览。原 marker 会按标题卡时长整体后移。
+让 FCPXML 改为引用整条粗剪预览。标题卡插在开头；process-flow 按
+`insertAfterShotId` 插入，只有其后的 marker 会移动。
 
 ## 分析边界
 

@@ -4,7 +4,10 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
-const { buildCodexVideoProject } = require('../src/services/codex-video-service');
+const {
+  buildCodexVideoProject,
+  verifyCodexVideoProject,
+} = require('../src/services/codex-video-service');
 const { runMediaTool } = require('../src/services/media-tool-service');
 const {
   compareSourceSnapshots,
@@ -48,6 +51,15 @@ async function createVideo(outputPath) {
     '-c:a', 'aac',
     outputPath,
   ], { timeoutMs: 60_000 });
+}
+
+async function fileFingerprint(filePath) {
+  const [buffer, stat] = await Promise.all([fs.readFile(filePath), fs.stat(filePath)]);
+  return {
+    sha256: require('node:crypto').createHash('sha256').update(buffer).digest('hex'),
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+  };
 }
 
 test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预览与验证闭环', {
@@ -200,6 +212,24 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
   assert.doesNotMatch(xml, /roughcut-preview\.mp4/);
   assert.match(xml, /<sequence[^>]*format="r1"/);
   assert.match(xml, /<format id="r1" frameDuration="1\/30s" width="1920" height="1080"/);
+
+  const protectedFiles = [
+    path.join(built.projectPath, '00-项目总控/project.json'),
+    path.join(built.projectPath, '00-项目总控/assets.json'),
+    path.join(built.projectPath, '00-项目总控/Codex视频分析.json'),
+    path.join(built.projectPath, '00-项目总控/Codex视频状态.json'),
+    path.join(built.projectPath, '00-项目总控/Codex视频素材清单.json'),
+    built.artifacts.fcpxmlPath,
+    built.artifacts.previewPath,
+  ];
+  const protectedBefore = await Promise.all(protectedFiles.map(fileFingerprint));
+  const readOnlyVerification = await verifyCodexVideoProject(built.projectPath);
+  assert.equal(readOnlyVerification.ok, true);
+  assert.deepEqual(
+    await Promise.all(protectedFiles.map(fileFingerprint)),
+    protectedBefore,
+    '只读验证不得改写项目 JSON、FCPXML 或粗剪预览',
+  );
 
   const sourceAfter = await snapshotSource(source);
   assert.deepEqual(compareSourceSnapshots(sourceBefore, sourceAfter), {
