@@ -1,16 +1,17 @@
 const fs = require('node:fs/promises');
 const { constants: fsConstants } = require('node:fs');
+const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
 const { hashFile } = require('./pending-media-service');
-const { probeMedia } = require('./media-tool-service');
+const { probeMedia, runMediaTool } = require('./media-tool-service');
 
 const execFileAsync = promisify(execFile);
-const GENERATED_ASSET_ID = 'generated_hyperframes_title_card';
-const GENERATED_SHOT_ID = 'generated-hyperframes-title-card';
+const GENERATED_ASSET_ID = 'generated_hyperframes_asset';
+const GENERATED_SHOT_ID = 'generated-hyperframes-shot';
 const REQUIRED_DOCTOR_CHECKS = ['Node.js', 'FFmpeg', 'FFprobe', 'Chrome'];
 const SUPPORTED_QUALITIES = new Set(['draft', 'standard', 'high']);
 const SYSTEM_BROWSER_PATHS = process.platform === 'darwin'
@@ -211,6 +212,243 @@ function buildTitleCardHtml(options) {
 `;
 }
 
+function normalizeFlowSpec(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', 'HyperFrames 流程输入必须是 JSON 对象。');
+  }
+  const nodes = Array.isArray(value.nodes)
+    ? value.nodes.map((node) => String(node?.label ?? node ?? '').trim())
+    : [];
+  if (nodes.length < 3 || nodes.length > 6 || nodes.some((label) => !label || [...label].length > 32)) {
+    throw createHyperframesError(
+      'INVALID_HYPERFRAMES_FLOW',
+      'HyperFrames 流程必须包含 3 到 6 个非空节点，每个节点最多 32 个字符。',
+    );
+  }
+  const reason = String(value.reason || '').trim();
+  if (!reason || [...reason].length > 240) {
+    throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', 'HyperFrames 生成原因必须为 1 到 240 个字符。');
+  }
+  const insertAfterShotId = String(value.insertAfterShotId || '').trim();
+  if (!insertAfterShotId || [...insertAfterShotId].length > 80) {
+    throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', 'HyperFrames 流程必须指定有效的 insertAfterShotId。');
+  }
+  const heading = String(value.heading || '本地实测流程').trim();
+  const closing = String(value.closing || '').trim();
+  if (!heading || [...heading].length > 40 || [...closing].length > 48) {
+    throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', 'HyperFrames 流程标题或收束文案过长。');
+  }
+  const visualKeys = ['drawInterface', 'drawResult', 'comfyInterface', 'comfyResult'];
+  let visuals = null;
+  if (value.visuals != null) {
+    if (typeof value.visuals !== 'object' || Array.isArray(value.visuals)) {
+      throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', 'HyperFrames visuals 必须是对象。');
+    }
+    visuals = Object.fromEntries(visualKeys.map((key) => [key, String(value.visuals[key] || '').trim()]));
+    if (Object.values(visuals).some((assetId) => !assetId || [...assetId].length > 100)) {
+      throw createHyperframesError(
+        'INVALID_HYPERFRAMES_FLOW',
+        '产品流程演示必须提供 Draw Things 与 Comfy Desktop 的界面和结果素材 ID。',
+      );
+    }
+  }
+  return {
+    schemaVersion: 1,
+    kind: 'process-flow',
+    heading,
+    nodes,
+    closing,
+    reason,
+    insertAfterShotId,
+    visuals,
+  };
+}
+
+function buildProcessFlowHtml(options) {
+  const format = normalizeRenderOptions(options);
+  const flow = normalizeFlowSpec(options.flow);
+  if (options.visualPaths) return buildProductFlowHtml({ format, flow, visualPaths: options.visualPaths });
+  const nodes = flow.nodes.map((label, index) => `
+        <article id="node-${index}" class="node ${index < 3 ? 'draw' : 'comfy'}">
+          <span class="step">${String(index + 1).padStart(2, '0')}</span>
+          <strong>${escapeHtml(label)}</strong>
+        </article>`).join('');
+  const arrows = flow.nodes.slice(1).map((_, index) => `
+        <div id="arrow-${index}" class="arrow" aria-hidden="true">→</div>`).join('');
+  const sequence = [];
+  for (let index = 0; index < flow.nodes.length; index += 1) {
+    sequence.push(nodes.match(new RegExp(`<article id="node-${index}"[\\s\\S]*?<\\/article>`))?.[0] || '');
+    if (index < flow.nodes.length - 1) sequence.push(arrows.match(new RegExp(`<div id="arrow-${index}"[\\s\\S]*?<\\/div>`))?.[0] || '');
+  }
+  const step = Math.max(0.55, (format.durationSec - 1.15) / flow.nodes.length);
+  const timeline = flow.nodes.map((_, index) => {
+    const at = Number((0.28 + index * step).toFixed(3));
+    const arrowAt = Number((at + Math.min(0.42, step * 0.58)).toFixed(3));
+    return `
+      tl.fromTo("#node-${index}", { opacity: 0, y: 28, scale: 0.97 }, { opacity: 1, y: 0, scale: 1, duration: 0.34 }, ${at});${index < flow.nodes.length - 1 ? `
+      tl.fromTo("#arrow-${index}", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.24 }, ${arrowAt});` : ''}`;
+  }).join('');
+  const closingAt = Math.max(0.4, Number((format.durationSec - 0.72).toFixed(3)));
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=${format.width}, height=${format.height}" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Project CJK"; src: local("PingFang SC"); }
+      * { box-sizing: border-box; }
+      html, body { width: ${format.width}px; height: ${format.height}px; margin: 0; overflow: hidden; }
+      body { background: #0b0d12; color: #f7f7f5; font-family: "Project CJK", sans-serif; }
+      #root { position: relative; width: 100%; height: 100%; }
+      #stage { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; padding: 110px 118px 96px; }
+      #header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 72px; }
+      #header h1 { margin: 0; font-size: 50px; line-height: 1; letter-spacing: -.025em; font-weight: 650; }
+      #header span { color: #9ca3af; font: 500 22px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; }
+      #flow { display: grid; grid-template-columns: repeat(${flow.nodes.length * 2 - 1}, auto); align-items: center; justify-content: space-between; }
+      .node { width: 268px; min-height: 184px; padding: 28px 28px 30px; border: 1px solid #343a46; border-radius: 20px; background: #151922; opacity: 0; }
+      .node.draw { border-top: 5px solid #5b8cff; }
+      .node.comfy { border-top: 5px solid #d4a72c; }
+      .step { display: block; margin-bottom: 30px; color: #8b93a1; font: 600 18px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .node strong { display: block; font-size: 31px; line-height: 1.23; letter-spacing: -.018em; font-weight: 620; overflow-wrap: anywhere; }
+      .arrow { width: 48px; color: #697180; font-size: 38px; line-height: 1; text-align: center; opacity: 0; }
+      #closing { margin-top: 64px; color: #b9c0ca; font-size: 25px; line-height: 1.3; letter-spacing: .015em; opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <main id="root" data-composition-id="main" data-start="0"
+      data-duration="${format.durationSec}" data-width="${format.width}"
+      data-height="${format.height}" data-fps="${format.fps}">
+      <section id="stage" class="clip" data-start="0" data-duration="${format.durationSec}" data-track-index="0">
+        <header id="header"><h1>${escapeHtml(flow.heading)}</h1><span>DRAW THINGS / COMFY DESKTOP</span></header>
+        <div id="flow">${sequence.join('')}</div>
+        <p id="closing">${escapeHtml(flow.closing)}</p>
+      </section>
+    </main>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#header", { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.32 }, 0.06);${timeline}
+      tl.fromTo("#closing", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.3 }, ${closingAt});
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>
+`;
+}
+
+function buildProductFlowHtml({ format, flow, visualPaths }) {
+  const required = ['drawInterface', 'drawResult', 'comfyInterface', 'comfyResult'];
+  if (required.some((key) => !visualPaths?.[key])) {
+    throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', '产品流程演示缺少已复制的视觉素材。');
+  }
+  const src = (key) => escapeHtml(visualPaths[key]);
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=${format.width}, height=${format.height}" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Project CJK"; src: local("PingFang SC"); }
+      * { box-sizing: border-box; }
+      html, body { width: ${format.width}px; height: ${format.height}px; margin: 0; overflow: hidden; }
+      body { background: #0a0c10; color: #f6f7f8; font-family: "Project CJK", sans-serif; }
+      #root, #stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
+      #stage { background: #0a0c10; }
+      .app-card {
+        position: absolute; left: 535px; top: 166px; width: 850px; height: 600px;
+        overflow: hidden; border: 1px solid #343942; border-radius: 24px;
+        background: #11151b; box-shadow: 0 34px 80px rgba(0,0,0,.38); opacity: 0;
+        transform-origin: 50% 50%; z-index: 3;
+      }
+      .app-bar { height: 66px; display: flex; align-items: center; gap: 13px; padding: 0 24px; border-bottom: 1px solid #303640; background: #171b22; }
+      .app-bar strong { font-size: 25px; line-height: 1; font-weight: 620; letter-spacing: -.01em; }
+      .app-dot { width: 13px; height: 13px; border-radius: 50%; flex: 0 0 auto; }
+      #draw-card .app-dot { background: #ff6b58; }
+      #comfy-card .app-dot { background: #d6e838; }
+      .screen { position: relative; width: 100%; height: 534px; overflow: hidden; background: #080a0d; }
+      .interface { width: 100%; height: 100%; display: block; object-fit: contain; transform-origin: 50% 50%; }
+      .result-card {
+        position: absolute; right: 28px; bottom: 28px; width: 306px; height: 236px;
+        overflow: hidden; border: 1px solid rgba(255,255,255,.44); border-radius: 16px;
+        background: #101319; box-shadow: 0 18px 46px rgba(0,0,0,.5); opacity: 0;
+      }
+      .result-card img { width: 100%; height: 100%; display: block; object-fit: cover; }
+      .result-card span {
+        position: absolute; left: 13px; bottom: 12px; padding: 7px 11px;
+        border-radius: 999px; background: rgba(8,10,14,.78); color: #f5f6f7;
+        font-size: 17px; line-height: 1; letter-spacing: .01em;
+      }
+      #model-hub {
+        position: absolute; left: 850px; top: 443px; width: 220px; height: 72px;
+        display: grid; place-items: center; border: 1px solid #555d69; border-radius: 18px;
+        background: #151a21; box-shadow: 0 16px 42px rgba(0,0,0,.42); opacity: 0; z-index: 5;
+      }
+      #model-hub strong { font-size: 24px; line-height: 1; font-weight: 650; letter-spacing: -.015em; }
+      #model-hub::before, #model-hub::after { content: ""; position: absolute; top: 29px; width: 12px; height: 12px; border-radius: 50%; }
+      #model-hub::before { left: -6px; background: #5b8cff; }
+      #model-hub::after { right: -6px; background: #d4a72c; }
+      .model-line { position: absolute; top: 478px; height: 2px; width: 0; background: #59616d; opacity: 0; z-index: 2; }
+      #line-left { right: 1070px; }
+      #line-right { left: 1070px; }
+      .model-pulse { position: absolute; top: 474px; width: 10px; height: 10px; border-radius: 50%; background: #c9d0d9; opacity: 0; z-index: 4; }
+      #pulse-left { left: 842px; }
+      #pulse-right { left: 1068px; }
+    </style>
+  </head>
+  <body>
+    <main id="root" data-composition-id="main" data-start="0"
+      data-duration="${format.durationSec}" data-width="${format.width}"
+      data-height="${format.height}" data-fps="${format.fps}">
+      <section id="stage" class="clip" data-start="0" data-duration="${format.durationSec}" data-track-index="0">
+        <div id="line-left" class="model-line"></div>
+        <div id="line-right" class="model-line"></div>
+        <div id="pulse-left" class="model-pulse"></div>
+        <div id="pulse-right" class="model-pulse"></div>
+        <div id="model-hub"><strong>Z Image Turbo</strong></div>
+        <article id="draw-card" class="app-card">
+          <header class="app-bar"><span class="app-dot"></span><strong>Draw Things</strong></header>
+          <div class="screen">
+            <img id="draw-interface" class="interface" src="${src('drawInterface')}" alt="" />
+            <div id="draw-result" class="result-card"><img src="${src('drawResult')}" alt="" /><span>本地结果</span></div>
+          </div>
+        </article>
+        <article id="comfy-card" class="app-card">
+          <header class="app-bar"><span class="app-dot"></span><strong>Comfy Desktop</strong></header>
+          <div class="screen">
+            <img id="comfy-interface" class="interface" src="${src('comfyInterface')}" alt="" />
+            <div id="comfy-result" class="result-card"><img src="${src('comfyResult')}" alt="" /><span>本地结果</span></div>
+          </div>
+        </article>
+      </section>
+    </main>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#draw-card", { opacity: 0, y: 28, scale: 0.92 }, { opacity: 1, y: 0, scale: 0.96, duration: 0.42 }, 0.06);
+      tl.fromTo("#draw-interface", { scale: 1.035 }, { scale: 1, duration: 1.35 }, 0.06);
+      tl.fromTo("#draw-result", { opacity: 0, y: 20, scale: 0.8 }, { opacity: 1, y: 0, scale: 1, duration: 0.42 }, 0.78);
+      tl.to("#draw-card", { x: -420, scale: 0.78, duration: 0.62 }, 1.38);
+      tl.fromTo("#model-hub", { opacity: 0, x: -170, scale: 0.72 }, { opacity: 1, x: 0, scale: 1, duration: 0.5 }, 1.5);
+      tl.fromTo("#line-left", { opacity: 0, width: 0 }, { opacity: 1, width: 120, duration: 0.38 }, 1.82);
+      tl.fromTo("#pulse-left", { opacity: 0, x: 0 }, { opacity: 1, x: -110, duration: 0.42 }, 1.84);
+      tl.fromTo("#comfy-card", { opacity: 0, x: 510, y: 24, scale: 0.74 }, { opacity: 1, x: 420, y: 0, scale: 0.78, duration: 0.6 }, 2.12);
+      tl.fromTo("#comfy-interface", { scale: 1.035 }, { scale: 1, duration: 1.3 }, 2.12);
+      tl.fromTo("#line-right", { opacity: 0, width: 0 }, { opacity: 1, width: 120, duration: 0.38 }, 2.48);
+      tl.fromTo("#pulse-right", { opacity: 0, x: 0 }, { opacity: 1, x: 110, duration: 0.42 }, 2.5);
+      tl.fromTo("#comfy-result", { opacity: 0, y: 20, scale: 0.8 }, { opacity: 1, y: 0, scale: 1, duration: 0.44 }, 3.08);
+      tl.to("#draw-card", { scale: 0.8, duration: 0.5 }, 3.86);
+      tl.to("#comfy-card", { scale: 0.8, duration: 0.5 }, 3.86);
+      tl.to("#model-hub", { scale: 1.035, duration: 0.26 }, 4.02);
+      tl.to("#model-hub", { scale: 1, duration: 0.24 }, 4.28);
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>
+`;
+}
+
 async function executableFile(candidate) {
   if (!candidate) return null;
   try {
@@ -358,8 +596,45 @@ function parseCheckOutput(stdout) {
   }
 }
 
-async function renderHyperframesTitleCard(options) {
+async function materializeFlowVisuals(compositionDirectory, flow, visualSources) {
+  if (!flow?.visuals) return { paths: null, records: null };
+  const keys = ['drawInterface', 'drawResult', 'comfyInterface', 'comfyResult'];
+  const assetsDirectory = path.join(compositionDirectory, 'assets');
+  await fs.mkdir(assetsDirectory, { recursive: true });
+  const paths = {};
+  const records = {};
+  for (const key of keys) {
+    const source = visualSources?.[key];
+    if (!source || source.assetId !== flow.visuals[key] || !source.sourcePath) {
+      throw createHyperframesError(
+        'INVALID_HYPERFRAMES_FLOW',
+        `找不到产品流程演示视觉素材：${key}（${flow.visuals[key]}）。`,
+      );
+    }
+    const extension = path.extname(source.sourcePath).toLowerCase();
+    if (!['.png', '.jpg', '.jpeg', '.webp'].includes(extension)) {
+      throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', `视觉素材格式不受支持：${extension}`);
+    }
+    const filename = `${key}${extension}`;
+    const targetPath = path.join(assetsDirectory, filename);
+    await fs.copyFile(source.sourcePath, targetPath);
+    const copiedSha256 = await hashFile(targetPath);
+    if (source.sha256 && copiedSha256 !== source.sha256) {
+      throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', `视觉素材复制校验失败：${key}`);
+    }
+    paths[key] = `assets/${filename}`;
+    records[key] = {
+      assetId: source.assetId,
+      relativePath: paths[key],
+      sha256: copiedSha256,
+    };
+  }
+  return { paths, records };
+}
+
+async function renderHyperframesAsset(options) {
   const format = normalizeRenderOptions(options);
+  const flow = options.flow ? normalizeFlowSpec(options.flow) : null;
   const compositionDirectory = path.resolve(options.compositionDirectory);
   const outputPath = path.resolve(options.outputPath);
   const existing = await fs.stat(outputPath).catch(() => null);
@@ -376,17 +651,33 @@ async function renderHyperframesTitleCard(options) {
   }
   await fs.mkdir(compositionDirectory, { recursive: true });
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  const visualFiles = await materializeFlowVisuals(
+    compositionDirectory,
+    flow,
+    options.visualSources,
+  );
   const htmlPath = path.join(compositionDirectory, 'index.html');
   const inputPath = path.join(compositionDirectory, 'render-input.json');
+  const outputRecordPath = path.join(compositionDirectory, 'render-output.json');
   const input = {
     schemaVersion: 1,
     renderer: 'hyperframes',
     rendererVersion: environment.version,
-    title: String(options.title || '').trim(),
-    subtitle: String(options.subtitle || '').trim(),
+    kind: flow?.kind || 'title-card',
+    ...(flow ? { flow } : {
+      title: String(options.title || '').trim(),
+      subtitle: String(options.subtitle || '').trim(),
+    }),
+    ...(visualFiles.records ? { visualFiles: visualFiles.records } : {}),
     format,
   };
-  await fs.writeFile(htmlPath, buildTitleCardHtml({ ...options, ...format }), 'utf8');
+  await fs.writeFile(
+    htmlPath,
+    flow
+      ? buildProcessFlowHtml({ ...options, flow, visualPaths: visualFiles.paths, ...format })
+      : buildTitleCardHtml({ ...options, ...format }),
+    'utf8',
+  );
   await fs.writeFile(inputPath, `${JSON.stringify(input, null, 2)}\n`, 'utf8');
 
   const checkCommand = await runHyperframesCommand(
@@ -417,6 +708,7 @@ async function renderHyperframesTitleCard(options) {
     path.dirname(outputPath),
     `.${path.basename(outputPath)}.${process.pid}.tmp.mp4`,
   );
+  const identityPath = `${tempPath}.identity.mp4`;
   try {
     const renderCommand = await runHyperframesCommand(
       environment.executable,
@@ -435,6 +727,22 @@ async function renderHyperframesTitleCard(options) {
         timeoutMs: 30 * 60 * 1000,
       },
     );
+    let identityCommand = null;
+    if (options.mediaIdentity) {
+      const mediaIdentity = crypto.createHash('sha256')
+        .update(String(options.mediaIdentity))
+        .digest('hex');
+      identityCommand = await runMediaTool('ffmpeg', [
+        '-y',
+        '-i', tempPath,
+        '-map', '0',
+        '-c', 'copy',
+        '-metadata', `comment=video-cut-planner:${mediaIdentity}`,
+        '-movflags', '+faststart',
+        identityPath,
+      ]);
+      await fs.rename(identityPath, tempPath);
+    }
     const metadata = await probeMedia(tempPath);
     const errors = [];
     if (!metadata.hasVideo) errors.push('生成文件没有视频流。');
@@ -457,11 +765,29 @@ async function renderHyperframesTitleCard(options) {
     }
     const sha256 = await hashFile(tempPath);
     await fs.rename(tempPath, outputPath);
+    await fs.writeFile(outputRecordPath, `${JSON.stringify({
+      schemaVersion: 1,
+      renderer: 'hyperframes',
+      rendererVersion: environment.version,
+      kind: flow?.kind || 'title-card',
+      reason: flow?.reason || '根据既有分析生成可选独立标题素材。',
+      outputPath,
+      sha256,
+      metadata,
+      check: { ok: check.ok === true },
+      commands: {
+        check: checkCommand.command,
+        render: renderCommand.command,
+        ...(identityCommand ? { identity: identityCommand.command } : {}),
+      },
+      generatedAt: new Date().toISOString(),
+    }, null, 2)}\n`, 'utf8');
     return {
       outputPath,
       compositionDirectory,
       htmlPath,
       inputPath,
+      outputRecordPath,
       sha256,
       metadata,
       format,
@@ -470,23 +796,44 @@ async function renderHyperframesTitleCard(options) {
       commands: {
         check: checkCommand.command,
         render: renderCommand.command,
+        ...(identityCommand ? { identity: identityCommand.command } : {}),
       },
     };
   } finally {
     await fs.rm(tempPath, { force: true }).catch(() => {});
+    await fs.rm(identityPath, { force: true }).catch(() => {});
   }
 }
 
-function addHyperframesTitleCard(analysis, mapping, durationSec) {
+function addHyperframesAsset(analysis, mapping, durationSec, options = {}) {
   const duration = positiveNumber(durationSec, mapping.metadata?.durationSec || 2, 'HyperFrames duration');
+  const flow = options.flow ? normalizeFlowSpec(options.flow) : null;
+  let insertionIndex = 0;
+  if (flow) {
+    const afterIndex = analysis.timeline.shots.findIndex((shot) => shot.id === flow.insertAfterShotId);
+    if (afterIndex < 0) {
+      throw createHyperframesError(
+        'INVALID_HYPERFRAMES_FLOW',
+        `找不到 HyperFrames 插入镜头：${flow.insertAfterShotId}`,
+      );
+    }
+    insertionIndex = afterIndex + 1;
+  }
+  const insertionTime = analysis.timeline.shots
+    .slice(0, insertionIndex)
+    .reduce((total, shot) => total + shot.durationSec, 0);
   const generatedAsset = {
     assetId: mapping.assetId,
     type: 'video',
-    semanticLabels: ['HyperFrames', '独立片头', '建议标题'],
-    contentSummary: `HyperFrames 根据现有分析生成标题卡：${analysis.titles.recommended}`,
-    suggestedUse: ['独立片头素材'],
+    semanticLabels: flow
+      ? ['HyperFrames', '流程解释', '独立生成素材']
+      : ['HyperFrames', '独立片头', '建议标题'],
+    contentSummary: flow
+      ? `HyperFrames 解释流程：${flow.nodes.join(' → ')}`
+      : `HyperFrames 根据现有分析生成标题卡：${analysis.titles.recommended}`,
+    suggestedUse: [flow ? '两套本地工具之间的流程桥接' : '独立片头素材'],
     status: 'adopt',
-    reason: '作为可单独调整或删除的生成镜头进入 FCPXML。',
+    reason: flow?.reason || '作为可单独调整或删除的生成镜头进入 FCPXML。',
     ranges: [{
       startSec: 0,
       endSec: duration,
@@ -503,7 +850,9 @@ function addHyperframesTitleCard(analysis, mapping, durationSec) {
     durationSec: duration,
     fitMode: 'contain',
     audioMode: 'mute',
-    purpose: '用分析建议标题建立主题，并保留为独立可编辑 MP4',
+    purpose: flow
+      ? '用短动画串联 Draw Things 与 Comfy Desktop 的同模型本地生成关系'
+      : '用分析建议标题建立主题，并保留为独立可编辑 MP4',
     confidence: 1,
     reviewRequired: false,
   };
@@ -512,25 +861,44 @@ function addHyperframesTitleCard(analysis, mapping, durationSec) {
     assets: [...analysis.assets, generatedAsset],
     timeline: {
       ...analysis.timeline,
-      shots: [generatedShot, ...analysis.timeline.shots],
+      shots: [
+        ...analysis.timeline.shots.slice(0, insertionIndex),
+        generatedShot,
+        ...analysis.timeline.shots.slice(insertionIndex),
+      ],
       markers: analysis.timeline.markers.map((marker) => ({
         ...marker,
-        timeSec: Number((marker.timeSec + duration).toFixed(3)),
+        timeSec: Number((marker.timeSec >= insertionTime
+          ? marker.timeSec + duration
+          : marker.timeSec).toFixed(3)),
       })),
     },
   };
+}
+
+function addHyperframesTitleCard(analysis, mapping, durationSec) {
+  return addHyperframesAsset(analysis, mapping, durationSec);
+}
+
+async function renderHyperframesTitleCard(options) {
+  return renderHyperframesAsset(options);
 }
 
 module.exports = {
   GENERATED_ASSET_ID,
   GENERATED_SHOT_ID,
   REQUIRED_DOCTOR_CHECKS,
+  addHyperframesAsset,
   addHyperframesTitleCard,
+  buildProcessFlowHtml,
   buildTitleCardHtml,
   escapeHtml,
   hyperframesFpsArgument,
   inspectHyperframesEnvironment,
   normalizeRenderOptions,
+  normalizeFlowSpec,
+  materializeFlowVisuals,
+  renderHyperframesAsset,
   renderHyperframesTitleCard,
   requiredDoctorReport,
   resolveBrowserPath,

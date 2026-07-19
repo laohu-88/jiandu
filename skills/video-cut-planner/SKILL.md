@@ -61,11 +61,17 @@ If the CLI path is missing, stop and report that the v3 repository is unavailabl
 
 14. When the user explicitly requests HyperFrames, first run
     `hyperframes-doctor --json`. Only add `--hyperframes` when Node.js, FFmpeg,
-    FFprobe, and Chrome are available. HyperFrames remains optional: it creates
-    one independent title-card MP4 from the recommended title and theme, registers
-    it in v3, prepends it to the effective timeline, and adds it as an independent
-    FCPXML clip. Do not treat missing Docker, transcription, TTS, or BGM tools as a
-    local-render failure.
+    FFprobe, and Chrome are available. HyperFrames remains optional and disabled by
+    default. Without a flow input it creates one independent title-card MP4. When
+    the requested animation must explain a proven process, pass
+    `--hyperframes-flow <流程 JSON>` containing 3–6 short `nodes`, a truthful
+    `reason`, and `insertAfterShotId`. For a restrained product-flow demonstration,
+    `visuals` may additionally name four already-adopted image asset IDs:
+    `drawInterface`, `drawResult`, `comfyInterface`, and `comfyResult`; use only
+    screenshots whose visible content supports the stated relationship. The generated
+    MP4 is inserted at that exact narrative boundary and only later markers move. In
+    either mode, register it as an independent v3 asset and FCPXML clip. Do not treat missing Docker,
+    transcription, TTS, or BGM tools as a local-render failure.
 15. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs full verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`.
 
 ## Completion rules

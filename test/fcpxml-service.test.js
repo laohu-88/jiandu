@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  assetUid,
   buildFcpxml,
   fcpTime,
   validateFcpxmlStructure,
@@ -35,6 +36,8 @@ const mappings = [
   {
     assetId: 'video', type: 'video', projectFilename: '屏幕 录制.mov',
     projectAbsolutePath: '/tmp/中文 路径/屏幕 录制.mov',
+    projectStableId: 'asset_project_video',
+    sourceSha256: 'a'.repeat(64),
     metadata: {
       durationSec: 4, width: 1280, height: 720, frameRate: 30,
       hasAudio: true, audioChannels: 1, sampleRate: 48000,
@@ -43,6 +46,8 @@ const mappings = [
   {
     assetId: 'image', type: 'image', projectFilename: '结果 & 对比.png',
     projectAbsolutePath: '/tmp/中文 路径/结果 & 对比.png',
+    projectStableId: 'asset_project_image',
+    sourceSha256: 'b'.repeat(64),
     metadata: { width: 1280, height: 720, hasAudio: false },
   },
 ];
@@ -51,6 +56,20 @@ test('FCP 时间使用有理数并保持 30fps 精度', () => {
   assert.equal(fcpTime(0), '0s');
   assert.equal(fcpTime(1 / 30), '1/30s');
   assert.equal(fcpTime(1.5), '3/2s');
+});
+
+test('FCPXML 真实素材按内容复用，HyperFrames 素材按项目隔离旧媒体', () => {
+  assert.equal(
+    assetUid(mappings[0]),
+    `com.openai.video-cut-planner.asset.${'a'.repeat(64)}`,
+  );
+  assert.notEqual(assetUid(mappings[0]), assetUid(mappings[1]));
+  assert.equal(assetUid(mappings[0]), assetUid({ ...mappings[0], projectAbsolutePath: '/tmp/copy.mov' }));
+  assert.equal(assetUid(mappings[0]), assetUid({ ...mappings[0], projectStableId: 'asset_other_project' }));
+
+  const generated = { ...mappings[0], origin: 'hyperframes' };
+  assert.equal(assetUid(generated), assetUid({ ...generated, projectAbsolutePath: '/tmp/copy.mov' }));
+  assert.notEqual(assetUid(generated), assetUid({ ...generated, projectStableId: 'asset_other_project' }));
 });
 
 test('FCPXML 为视频和静态图片生成 Final Cut Pro 兼容的独立镜头', () => {
@@ -63,6 +82,8 @@ test('FCPXML 为视频和静态图片生成 Final Cut Pro 兼容的独立镜头'
     id: 'r1', width: 1920, height: 1080, frameDuration: '1/30s',
   });
   assert.match(xml, /file:\/\/\/tmp\/%E4%B8%AD%E6%96%87%20%E8%B7%AF%E5%BE%84/);
+  assert.match(xml, new RegExp(`uid="${assetUid(mappings[0]).replaceAll('.', '\\.')}"`));
+  assert.match(xml, new RegExp(`uid="${assetUid(mappings[1]).replaceAll('.', '\\.')}"`));
   assert.match(xml, /结果 &amp; 对比\.png/);
   assert.match(xml, /<adjust-conform type="fill"\/>/);
   assert.match(xml, /audioChannels="1" audioRate="48000"/);

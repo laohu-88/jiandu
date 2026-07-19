@@ -1,4 +1,5 @@
 const fs = require('node:fs/promises');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { resolveTimelineFormat } = require('./video-format-service');
@@ -41,6 +42,20 @@ function frameDuration(fps) {
 function createFormatKey(width, height, fps, isStill = false) {
   if (isStill) return `${width || 1920}x${height || 1080}@still`;
   return `${width || 1920}x${height || 1080}@${Number(fps || 30).toFixed(3)}`;
+}
+
+function assetUid(mapping) {
+  const sourceIdentity = String(
+    mapping.sourceSha256 || mapping.projectAbsolutePath || mapping.assetId,
+  );
+  const generated = mapping.origin === 'hyperframes' || mapping.generator?.name === 'hyperframes';
+  const uidIdentity = generated
+    ? `${sourceIdentity}:${mapping.projectStableId || mapping.projectAbsolutePath || mapping.assetId}`
+    : sourceIdentity;
+  const digest = /^[0-9a-f]{64}$/i.test(uidIdentity)
+    ? uidIdentity.toLowerCase()
+    : crypto.createHash('sha256').update(uidIdentity).digest('hex');
+  return `com.openai.video-cut-planner.asset.${digest}`;
 }
 
 function getShotAtTime(shots, timeSec) {
@@ -146,6 +161,7 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
         ? ` hasAudio="1" audioSources="1" audioChannels="${audioChannels}" audioRate="${audioRate}"`
         : '';
       return `    <asset id="${asset.resourceId}" name="${escapeXml(asset.projectFilename)}"`
+        + ` uid="${assetUid(asset)}"`
         + ` start="0s" duration="${fcpTime(duration)}" hasVideo="1" videoSources="1"${audioAttributes}`
         + ` format="${asset.formatId}">\n`
         + `      <media-rep kind="original-media" src="${escapeXml(pathToFileURL(asset.projectAbsolutePath).href)}"/>\n`
@@ -281,6 +297,7 @@ async function writeFcpxml(outputPath, payload) {
 
 module.exports = {
   FCPXML_TIMESCALE,
+  assetUid,
   buildFcpxml,
   escapeXml,
   fcpTime,

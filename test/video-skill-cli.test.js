@@ -29,6 +29,7 @@ test('CLI 将 HyperFrames 保持为显式启用的可选适配', () => {
   const parsed = parseArguments([
     'build', '--hyperframes', '--hyperframes-duration', '1.5',
     '--hyperframes-quality', 'draft', '--hyperframes-executable', '/tmp/hyperframes',
+    '--hyperframes-flow', '/tmp/flow.json',
   ]);
   assert.deepEqual(hyperframesOptions(parsed.options), {
     enabled: true,
@@ -36,6 +37,7 @@ test('CLI 将 HyperFrames 保持为显式启用的可选适配', () => {
     browserPath: undefined,
     durationSec: '1.5',
     quality: 'draft',
+    flowSpecPath: '/tmp/flow.json',
   });
   assert.equal(hyperframesOptions({}).enabled, false);
 });
