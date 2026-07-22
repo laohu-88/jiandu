@@ -11,6 +11,8 @@ FFmpeg 粗剪或 FCPXML 生成器。当前接入支持结构化分析驱动的�
 
 默认流程保持不变。只有 `build --hyperframes` 会探测和调用外部 CLI。
 
+Stage 4D 增加 `auto`、`disabled`、`force-attempt` 三种交接策略。`auto` 必须先完成真实素材初剪，只有在普通剪辑、单条轻字幕和转场不足以解决具体表达缺口时才启用；`disabled` 禁止生成；`force-attempt` 要求认真设计但不绕过质量门。任务文件记录决策、理由、表达缺口、插入位置和质量复核。
+
 ## 可用性证据
 
 - 官方仓库：<https://github.com/heygen-com/hyperframes>
@@ -50,6 +52,8 @@ composition 源文件和输入/输出记录保存在
 `00-项目总控/HyperFrames/process-flow/`，便于复查。标题卡镜头放到有效
 时间线开头；process-flow 在 `insertAfterShotId` 后插入，只有后续 marker
 移动。粗剪预览仍只是审片文件，FCPXML 不引用它。
+
+生成 MP4 与 HyperFrames `check` 通过不是最终验收。Codex 还必须实际观看独立动画，检查表达是否更清楚、前后镜头是否连贯，以及缓动、跳动、抖动、排版、黑帧、乱码、拉伸、遮挡和风格一致性。有问题时修改设计并重渲染；仍不提升成片时从正式时间线放弃。`handoff-complete` 只在该复核记录存在后接受启用 HyperFrames 的交接终态。
 
 ## 项目结果中心
 

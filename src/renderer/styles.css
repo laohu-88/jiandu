@@ -1847,3 +1847,181 @@ tbody tr:last-child td {
 .hidden {
   display: none !important;
 }
+
+.pending-media-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.pending-media-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 0;
+}
+
+.pending-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pending-card-heading h3 {
+  margin: 0;
+}
+
+.pending-status {
+  flex: none;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: #44506a;
+  background: #edf0f5;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pending-status.completed,
+.pending-status.existing_result {
+  color: #17643b;
+  background: #ddf5e7;
+}
+
+.pending-status.processing,
+.pending-status.awaiting_user_send {
+  color: #2844ad;
+  background: #e3e9ff;
+}
+
+.pending-status.warning,
+.pending-status.completed_with_warnings,
+.pending-status.empty,
+.pending-status.failed,
+.pending-status.unreadable {
+  color: #8b4d05;
+  background: #fff0d5;
+}
+
+.pending-definition-grid,
+.completion-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pending-warning {
+  color: #99611d;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 290px;
+  color: #545e70;
+  font-size: 13px;
+}
+
+.handoff-view {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.handoff-panel {
+  display: grid;
+  gap: 20px;
+}
+
+.handoff-panel > h2,
+.handoff-panel > .eyebrow {
+  margin-bottom: 0;
+}
+
+.handoff-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.handoff-columns section {
+  padding: 18px;
+  border: 1px solid #e3e7ef;
+  border-radius: 14px;
+  background: #fafbfe;
+}
+
+.handoff-columns h3 {
+  margin-top: 0;
+}
+
+.compact-list {
+  margin: 0;
+  padding-left: 20px;
+  color: #586274;
+  line-height: 1.7;
+}
+
+.hyperframes-mode-picker {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid #dfe4ed;
+  border-radius: 14px;
+}
+
+.hyperframes-mode-picker legend {
+  padding: 0 8px;
+  font-weight: 700;
+}
+
+.hyperframes-mode-picker label {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f7f8fc;
+}
+
+.hyperframes-mode-picker span {
+  display: grid;
+  gap: 4px;
+}
+
+.hyperframes-mode-picker small {
+  color: #717b8d;
+}
+
+.handoff-actions,
+.completion-actions {
+  flex-wrap: wrap;
+}
+
+.handoff-status-card {
+  padding: 16px;
+  border: 1px solid #dfe5ef;
+  border-radius: 14px;
+  background: #fafbfe;
+}
+
+.completion-panel {
+  border-top: 4px solid #5367ea;
+}
+
+.completion-primary {
+  min-width: 230px;
+  min-height: 46px;
+  font-size: 15px;
+}
+
+@media (max-width: 980px) {
+  .pending-media-grid,
+  .handoff-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .results-toolbar {
+    align-items: flex-start;
+    gap: 16px;
+  }
+}

@@ -12,6 +12,11 @@ const {
   preparePendingMedia,
 } = require('../src/services/pending-media-service');
 const { inspectHyperframesEnvironment } = require('../src/services/hyperframes-service');
+const { readCodexProjectResult } = require('../src/services/codex-project-result-service');
+const {
+  readHandoffTask,
+  updateHandoffTask,
+} = require('../src/services/handoff-task-service');
 
 const BOOLEAN_OPTIONS = new Set(['json', 'open-fcpxml', 'hyperframes', 'help']);
 
@@ -43,6 +48,32 @@ function required(options, key) {
     throw Object.assign(new Error(`缺少必填参数 --${key}。`), { code: 'MISSING_ARGUMENT' });
   }
   return value;
+}
+
+function optionalJson(value, label) {
+  if (value == null) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    throw Object.assign(new Error(`${label} 必须是有效 JSON：${error.message}`), {
+      code: 'INVALID_ARGUMENT',
+    });
+  }
+}
+
+function handoffReporter(options) {
+  const taskPath = options['handoff-task'];
+  if (!taskPath) return async () => {};
+  return async (status, stageMessage, patch = {}) => {
+    const task = await readHandoffTask(taskPath);
+    if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)
+      && task.status !== status) return task;
+    return updateHandoffTask(taskPath, {
+      status,
+      stageMessage,
+      ...patch,
+    });
+  };
 }
 
 function formatOptions(options) {
@@ -87,8 +118,11 @@ function helpText() {
   video-skill hyperframes-doctor [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--json]
   video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--preview-width <像素>] [--preview-height <像素>] [--preview-fps <帧率>] [--hyperframes] [--hyperframes-flow <流程 JSON>] [--reuse-hyperframes-project <已验收项目>] [--hyperframes-duration <秒>] [--hyperframes-quality draft|standard|high] [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--open-fcpxml] [--json]
   video-skill verify --project <v3 正式项目目录> [--json]
+  video-skill handoff-update --handoff-task <task.json> --stage <状态> [--message <说明>] [--hyperframes-decision <enabled|disabled|attempted-rejected>] [--hyperframes-reason <理由>] [--hyperframes-gap <表达缺口>] [--hyperframes-quality-review <复核结果>] [--json]
+  video-skill handoff-complete --handoff-task <task.json> --project <v3 正式项目目录> [--json]
+  video-skill handoff-return --handoff-task <task.json> [--json]
 
-CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。正式时间线默认使用生产规格，粗剪预览默认保持 640×360。
+CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。正式时间线默认使用生产规格，粗剪预览默认保持 640×360。由 v3 发起时，把 --handoff-task 传给 prepare、validate-analysis、build 和 verify。
 `;
 }
 
@@ -142,6 +176,15 @@ function humanOutput(command, result) {
   if (command === 'verify') {
     return `项目完整性验证通过：${result.projectPath}\nFCPXML 独立镜头：${result.fcpxml.clipCount}\n`;
   }
+  if (command === 'handoff-update') {
+    return `交接任务已更新：${result.taskId}｜${result.stageMessage}\n`;
+  }
+  if (command === 'handoff-return') {
+    return `已请求返回视频剪辑编排器 v3：${result.taskId}\n`;
+  }
+  if (command === 'handoff-complete') {
+    return `交接任务已完成并写回验收结果：${result.resultProjectPath}\n`;
+  }
   return `${JSON.stringify(result, null, 2)}\n`;
 }
 
@@ -156,8 +199,10 @@ async function execute(argv) {
   if (command === 'help' || options.help) return { command: 'help', options, result: helpText() };
 
   if (command === 'prepare') {
+    const report = handoffReporter(options);
     const result = await preparePendingMedia(required(options, 'source'), {
       cacheRoot: options['cache-root'],
+      onStage: report,
     });
     return { command, options, result };
   }
@@ -172,11 +217,14 @@ async function execute(argv) {
     return { command, options, result };
   }
   if (command === 'validate-analysis') {
+    const report = handoffReporter(options);
+    await report('planning_story', '正在校验镜头编排、素材区间和轻字幕 Marker。');
     const validated = await validateAnalysisFile(
       required(options, 'manifest'),
       required(options, 'analysis'),
       formatOptions(options),
     );
+    await report('deciding_hyperframes', '真实素材初步时间线已通过协议校验，正在判断 HyperFrames。');
     return {
       command,
       options,
@@ -198,6 +246,7 @@ async function execute(argv) {
     return { command, options, result };
   }
   if (command === 'build') {
+    const report = handoffReporter(options);
     const result = await buildCodexVideoProject({
       manifestPath: required(options, 'manifest'),
       analysisPath: required(options, 'analysis'),
@@ -207,11 +256,121 @@ async function execute(argv) {
       timelineFormat: formatOptions(options).timeline,
       previewFormat: formatOptions(options).preview,
       hyperframes: hyperframesOptions(options),
+      onStage: report,
     });
+    const warnings = result.verification?.warnings || [];
+    const titleCount = result.verification?.fcpxml?.titleCount || 0;
+    const markerCount = result.verification?.fcpxml?.markerCount || 0;
+    const durationSec = result.verification?.previewMetadata?.durationSec || null;
+    await report('verifying', '正式项目已生成并通过机器验证，等待 Codex 观看复核后完成交接。', {
+        resultProjectPath: result.projectPath,
+        resultProjectId: result.project?.projectId || result.project?.projectName || null,
+        artifacts: {
+          previewPath: result.artifacts.previewPath,
+          fcpxmlPath: result.artifacts.fcpxmlPath,
+          summaryPath: result.artifacts.summaryPath,
+          hyperframesMp4Path: result.artifacts.hyperframesMp4Path,
+        },
+        verification: {
+          ...result.verification,
+          shotCount: result.assetMappings ? result.verification.fcpxml?.clipCount : null,
+          durationSec,
+          markerCount,
+          titleCount,
+          hyperframesCount: result.hyperframes?.enabled ? 1 : 0,
+          timelineFormat: result.formats.timeline,
+          previewFormat: result.formats.preview,
+        },
+        warnings,
+      });
     return { command, options, result };
   }
   if (command === 'verify') {
+    const report = handoffReporter(options);
+    await report('verifying', '正在重新执行正式项目只读完整验证。');
     const result = await verifyCodexVideoProject(required(options, 'project'));
+    return { command, options, result };
+  }
+  if (command === 'handoff-update') {
+    const taskPath = required(options, 'handoff-task');
+    const stage = required(options, 'stage');
+    const result = await updateHandoffTask(taskPath, {
+      status: stage,
+      stageMessage: options.message,
+      hyperframesDecision: options['hyperframes-decision'],
+      hyperframesReason: options['hyperframes-reason'],
+      hyperframesGap: options['hyperframes-gap'],
+      hyperframesQualityReview: options['hyperframes-quality-review'],
+      warnings: optionalJson(options.warnings, '--warnings'),
+      errors: optionalJson(options.errors, '--errors'),
+    });
+    return { command, options, result };
+  }
+  if (command === 'handoff-complete') {
+    const taskPath = required(options, 'handoff-task');
+    const projectPath = required(options, 'project');
+    const task = await readHandoffTask(taskPath);
+    if (!task.hyperframesDecision || !task.hyperframesReason) {
+      throw Object.assign(new Error('完成交接前必须记录 HyperFrames 决策与理由。'), {
+        code: 'MISSING_HYPERFRAMES_DECISION',
+      });
+    }
+    if (task.hyperframesDecision === 'enabled' && !task.hyperframesQualityReview) {
+      throw Object.assign(new Error('启用 HyperFrames 时必须先实际观看并记录质量复核。'), {
+        code: 'MISSING_HYPERFRAMES_REVIEW',
+      });
+    }
+    const verification = await verifyCodexVideoProject(projectPath);
+    const result = await readCodexProjectResult(projectPath);
+    const warnings = [...new Set([
+      ...(task.warnings || []),
+      ...(verification.warnings || []),
+      ...(result.verification.warnings || []),
+    ])];
+    const status = warnings.length ? 'completed_with_warnings' : 'completed';
+    const completed = await updateHandoffTask(taskPath, {
+      status,
+      stageMessage: warnings.length
+        ? '正式项目已完成并通过验证，但存在需要确认的警告。'
+        : '正式项目、粗剪、FCPXML、观看复核与完整验证均已完成。',
+      resultProjectPath: result.project.path,
+      resultProjectId: result.project.name,
+      artifacts: {
+        previewPath: result.artifacts.preview?.path || null,
+        fcpxmlPath: result.artifacts.fcpxml?.path || null,
+        summaryPath: task.artifacts?.summaryPath || null,
+        hyperframesMp4Path: result.artifacts.hyperframesMp4?.path || null,
+      },
+      verification: {
+        ...verification,
+        shotCount: result.timeline.shotCount,
+        durationSec: result.timeline.totalDurationSec,
+        markerCount: result.timeline.markers.length,
+        titleCount: result.formats.fcpxmlTitleCount,
+        hyperframesCount: result.hyperframes.count || 0,
+        timelineFormat: result.formats.timeline,
+        previewFormat: result.formats.preview,
+      },
+      warnings,
+    });
+    return { command, options, result: completed };
+  }
+  if (command === 'handoff-return') {
+    const taskPath = required(options, 'handoff-task');
+    const task = await readHandoffTask(taskPath);
+    if (!['completed', 'completed_with_warnings', 'failed'].includes(task.status)) {
+      throw Object.assign(new Error('只有完成、警告或失败任务可以触发回流。'), {
+        code: 'HANDOFF_NOT_TERMINAL',
+      });
+    }
+    const result = await updateHandoffTask(taskPath, {
+      status: task.status,
+      returnState: {
+        ...(task.returnState || {}),
+        requestedAt: new Date().toISOString(),
+      },
+      stageMessage: task.stageMessage,
+    });
     return { command, options, result };
   }
   throw Object.assign(new Error(`未知命令：${command}`), { code: 'INVALID_COMMAND' });
@@ -229,6 +388,27 @@ async function main() {
       process.stdout.write(humanOutput(parsed.command, parsed.result));
     }
   } catch (error) {
+    try {
+      const parsedArgs = parseArguments(process.argv.slice(2));
+      const taskPath = parsedArgs.options?.['handoff-task'];
+      if (taskPath) {
+        const task = await readHandoffTask(taskPath);
+        if (!['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)) {
+          await updateHandoffTask(taskPath, {
+            status: 'failed',
+            stageMessage: `处理失败：${error.message}`,
+            errors: [{
+              code: error.code || 'VIDEO_SKILL_FAILED',
+              message: error.message,
+              stage: task.stage,
+              at: new Date().toISOString(),
+            }],
+          });
+        }
+      }
+    } catch {
+      // The original CLI error remains the primary failure.
+    }
     const payload = {
       ok: false,
       error: {

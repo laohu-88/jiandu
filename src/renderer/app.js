@@ -30,6 +30,11 @@ const state = {
   selectedCatalogProjectPath: null,
   selectedProjectResult: null,
   resultPlayback: null,
+  pendingCatalog: null,
+  selectedPendingEpisode: null,
+  activeHandoffTask: null,
+  handoffPollTimer: null,
+  completionResult: null,
 };
 
 const TEXT_PREVIEW_MAX_BYTES = 64 * 1024;
@@ -67,10 +72,44 @@ const AUDIO_LABELS = {
 const elements = {
   version: document.querySelector('#version'),
   viewEyebrow: document.querySelector('#viewEyebrow'),
+  pendingMediaView: document.querySelector('#pendingMediaView'),
+  handoffConfirmView: document.querySelector('#handoffConfirmView'),
+  handoffTaskView: document.querySelector('#handoffTaskView'),
+  handoffCompletionView: document.querySelector('#handoffCompletionView'),
   resultsCenterView: document.querySelector('#resultsCenterView'),
   workspaceView: document.querySelector('#workspaceView'),
+  showPendingMediaButton: document.querySelector('#showPendingMediaButton'),
   showResultsCenterButton: document.querySelector('#showResultsCenterButton'),
   showWorkspaceButton: document.querySelector('#showWorkspaceButton'),
+  refreshPendingButton: document.querySelector('#refreshPendingButton'),
+  pendingCatalogSummary: document.querySelector('#pendingCatalogSummary'),
+  pendingCatalogError: document.querySelector('#pendingCatalogError'),
+  pendingMediaList: document.querySelector('#pendingMediaList'),
+  pendingMediaEmpty: document.querySelector('#pendingMediaEmpty'),
+  autoOpenFcpSetting: document.querySelector('#autoOpenFcpSetting'),
+  handoffSourceSummary: document.querySelector('#handoffSourceSummary'),
+  handoffWorkList: document.querySelector('#handoffWorkList'),
+  handoffArtifactList: document.querySelector('#handoffArtifactList'),
+  cancelHandoffConfirmButton: document.querySelector('#cancelHandoffConfirmButton'),
+  launchCodexButton: document.querySelector('#launchCodexButton'),
+  handoffTaskName: document.querySelector('#handoffTaskName'),
+  handoffTaskStatus: document.querySelector('#handoffTaskStatus'),
+  handoffTaskWarnings: document.querySelector('#handoffTaskWarnings'),
+  activateCodexButton: document.querySelector('#activateCodexButton'),
+  showHandoffSourceButton: document.querySelector('#showHandoffSourceButton'),
+  retryCodexButton: document.querySelector('#retryCodexButton'),
+  copyPromptButton: document.querySelector('#copyPromptButton'),
+  cancelHandoffTaskButton: document.querySelector('#cancelHandoffTaskButton'),
+  completionEyebrow: document.querySelector('#completionEyebrow'),
+  completionTitle: document.querySelector('#completionTitle'),
+  completionNotice: document.querySelector('#completionNotice'),
+  completionMetrics: document.querySelector('#completionMetrics'),
+  completionPreview: document.querySelector('#completionPreview'),
+  completionOpenFcpButton: document.querySelector('#completionOpenFcpButton'),
+  completionPlayButton: document.querySelector('#completionPlayButton'),
+  completionDetailsButton: document.querySelector('#completionDetailsButton'),
+  completionReturnCodexButton: document.querySelector('#completionReturnCodexButton'),
+  completionShowProjectButton: document.querySelector('#completionShowProjectButton'),
   refreshCatalogButton: document.querySelector('#refreshCatalogButton'),
   catalogSummary: document.querySelector('#catalogSummary'),
   catalogError: document.querySelector('#catalogError'),
@@ -358,14 +397,237 @@ function createTextElement(tag, text, className = '') {
 }
 
 function switchMainView(view) {
+  const showPending = view === 'pending';
+  const showConfirm = view === 'handoff-confirm';
+  const showTask = view === 'handoff-task';
+  const showCompletion = view === 'handoff-completion';
   const showResults = view === 'results';
+  const showWorkspace = view === 'workspace';
+  elements.pendingMediaView.classList.toggle('hidden', !showPending);
+  elements.handoffConfirmView.classList.toggle('hidden', !showConfirm);
+  elements.handoffTaskView.classList.toggle('hidden', !showTask);
+  elements.handoffCompletionView.classList.toggle('hidden', !showCompletion);
   elements.resultsCenterView.classList.toggle('hidden', !showResults);
-  elements.workspaceView.classList.toggle('hidden', showResults);
+  elements.workspaceView.classList.toggle('hidden', !showWorkspace);
+  elements.showPendingMediaButton.classList.toggle('active', showPending || showConfirm || showTask || showCompletion);
   elements.showResultsCenterButton.classList.toggle('active', showResults);
-  elements.showWorkspaceButton.classList.toggle('active', !showResults);
-  elements.viewEyebrow.textContent = showResults
-    ? 'CODEX · 项目结果中心'
-    : 'STAGE 1 · 素材筛选台';
+  elements.showWorkspaceButton.classList.toggle('active', showWorkspace);
+  elements.viewEyebrow.textContent = showResults ? 'CODEX · 项目结果中心'
+    : showWorkspace ? 'STAGE 1 · 素材筛选台'
+      : showCompletion ? 'STAGE 4D · 完成验收'
+        : showTask ? 'STAGE 4D · 任务状态'
+          : showConfirm ? 'STAGE 4D · CODEX 交接'
+            : 'STAGE 4D · 待处理素材';
+}
+
+const PENDING_STATUS_LABELS = {
+  pending: '待处理',
+  awaiting_user_send: '已交接，等待在 Codex 发送',
+  processing: '正在处理',
+  completed: '已完成',
+  completed_with_warnings: '已完成但有警告',
+  failed: '处理失败',
+  existing_result: '已有正式结果',
+  empty: '素材为空',
+  warning: '存在素材警告',
+  unreadable: '无法读取',
+};
+
+const HANDOFF_STAGE_LABELS = {
+  ready: '准备交接', launching_codex: '正在打开 Codex', awaiting_user_send: '等待在 Codex 中发送',
+  scanning_media: '正在扫描素材', extracting_metadata: '正在读取素材信息', extracting_frames: '正在抽帧',
+  analyzing_media: '正在分析素材', planning_story: '正在编排镜头', deciding_hyperframes: '正在判断 HyperFrames',
+  designing_hyperframes: '正在设计 HyperFrames', rendering_hyperframes: '正在渲染 HyperFrames',
+  reviewing_hyperframes: '正在复核 HyperFrames', building_project: '正在创建正式项目',
+  rendering_preview: '正在生成粗剪', generating_fcpxml: '正在生成 FCPXML', verifying: '正在完整验证',
+  completed: '已完成', completed_with_warnings: '已完成但有警告', failed: '已失败', cancelled: '已取消',
+};
+
+function renderPendingMedia() {
+  const episodes = state.pendingCatalog?.episodes || [];
+  elements.pendingMediaList.replaceChildren();
+  elements.pendingMediaEmpty.classList.toggle('hidden', episodes.length > 0);
+  episodes.forEach((episode) => {
+    const card = document.createElement('article');
+    card.className = `card pending-media-card pending-status-${episode.status}`;
+    const heading = document.createElement('div');
+    heading.className = 'pending-card-heading';
+    heading.append(
+      createTextElement('h3', episode.name),
+      createTextElement('span', PENDING_STATUS_LABELS[episode.status] || episode.status, `pending-status ${episode.status}`),
+    );
+    card.append(
+      heading,
+      createTextElement('p', episode.safePathSummary, 'result-path'),
+      createDefinitionGrid([
+        ['图片', String(episode.counts.image)], ['视频', String(episode.counts.video)],
+        ['音频', String(episode.counts.audio)], ['文本/支持', String(episode.counts.support)],
+        ['总文件', String(episode.totalFileCount)], ['视频总时长', formatResultDuration(episode.totalVideoDurationSec)],
+        ['总大小', formatBytes(episode.totalSizeBytes)], ['最近修改', formatDateTime(episode.latestModifiedAt)],
+        ['不支持格式', episode.hasUnsupported ? `${episode.counts.unsupported} 个` : '无'],
+        ['正式结果', episode.existingProject?.projectPath || '无'],
+        ['最近交接', episode.latestTask ? HANDOFF_STAGE_LABELS[episode.latestTask.status] || episode.latestTask.status : '无'],
+        ['最近项目', episode.latestTask?.resultProjectPath || episode.existingProject?.projectPath || '无'],
+      ], 'pending-definition-grid'),
+    );
+    if (episode.warnings.length || episode.hasUnsupported) {
+      card.appendChild(createTextElement('p', [
+        ...episode.warnings,
+        ...(episode.hasUnsupported ? [`存在 ${episode.counts.unsupported} 个不支持文件`] : []),
+      ].join('；'), 'pending-warning'));
+    }
+    const actions = document.createElement('div');
+    actions.className = 'result-actions';
+    const handoff = createTextElement('button', '交给 Codex 处理', 'button primary');
+    handoff.disabled = episode.empty || episode.unreadable;
+    handoff.addEventListener('click', () => openHandoffConfirm(episode));
+    const finder = createTextElement('button', '在 Finder 中显示', 'button secondary');
+    finder.addEventListener('click', () => window.plannerApi.showPendingMediaInFinder(episode.sourceDirectory));
+    actions.append(handoff, finder);
+    const resultPath = episode.latestTask?.resultProjectPath || episode.existingProject?.projectPath;
+    if (resultPath) {
+      const latest = createTextElement('button', '查看最新结果', 'button ghost');
+      latest.addEventListener('click', async () => {
+        await loadProjectCatalog();
+        switchMainView('results');
+        await loadCatalogProject(resultPath);
+      });
+      actions.appendChild(latest);
+    }
+    if (episode.latestTask && !['cancelled'].includes(episode.latestTask.status)) {
+      const taskButton = createTextElement('button', '查看交接任务', 'button ghost');
+      taskButton.addEventListener('click', () => showHandoffTask(episode.latestTask));
+      actions.appendChild(taskButton);
+    }
+    card.appendChild(actions);
+    elements.pendingMediaList.appendChild(card);
+  });
+}
+
+async function loadPendingCatalog() {
+  elements.pendingCatalogError.classList.add('hidden');
+  state.pendingCatalog = await window.plannerApi.scanPendingMedia();
+  const episodes = state.pendingCatalog.episodes || [];
+  elements.pendingCatalogSummary.textContent = state.pendingCatalog.exists
+    ? `${state.pendingCatalog.rootPath} · 发现 ${episodes.length} 期直属素材`
+    : `待处理目录不存在：${state.pendingCatalog.rootPath}`;
+  if (state.pendingCatalog.errors?.length || state.pendingCatalog.handoffs?.corrupt?.length) {
+    elements.pendingCatalogError.textContent = [
+      ...(state.pendingCatalog.errors || []).map((item) => item.message),
+      ...(state.pendingCatalog.handoffs?.corrupt || []).map((item) => `损坏任务已隔离显示：${item.filePath}`),
+    ].join('；');
+    elements.pendingCatalogError.classList.remove('hidden');
+  }
+  renderPendingMedia();
+}
+
+function fillList(list, values) {
+  list.replaceChildren(...values.map((value) => createTextElement('li', value)));
+}
+
+function openHandoffConfirm(episode) {
+  state.selectedPendingEpisode = episode;
+  elements.handoffSourceSummary.replaceChildren(createDefinitionGrid([
+    ['期名', episode.name], ['素材目录', episode.sourceDirectoryRealPath],
+    ['图片', String(episode.counts.image)], ['视频', String(episode.counts.video)],
+    ['音频', String(episode.counts.audio)], ['总文件', String(episode.totalFileCount)],
+    ['视频总时长', formatResultDuration(episode.totalVideoDurationSec)],
+    ['警告', episode.warnings.join('；') || (episode.hasUnsupported ? '存在不支持格式' : '无')],
+  ]));
+  fillList(elements.handoffWorkList, [
+    '扫描和验证素材', 'ffprobe 元数据', '抽帧与场景变化抽帧', '素材语义分析',
+    '主题与标题判断', '采用、候选和淘汰判断', '有效区间与镜头编排', '连贯度检查',
+    '少量轻字幕 Marker 与 FCP 原生可编辑 Title', 'HyperFrames 决策',
+    '正式 v3 项目、粗剪预览、FCPXML 和完整验证',
+  ]);
+  fillList(elements.handoffArtifactList, [
+    '结构化素材清单', 'Codex 分析结果', '正式项目目录', '精选独立素材',
+    '粗剪预览', 'FCPXML', 'HyperFrames 动画（仅决定启用时）', '验证状态',
+  ]);
+  switchMainView('handoff-confirm');
+}
+
+function renderHandoffTask(task) {
+  state.activeHandoffTask = task;
+  elements.handoffTaskName.textContent = task.sourceSummary?.name || task.sourceDirectoryRealPath;
+  const heartbeatAge = task.lastHeartbeatAt ? Date.now() - Date.parse(task.lastHeartbeatAt) : Infinity;
+  const stale = !['completed', 'completed_with_warnings', 'failed', 'cancelled', 'awaiting_user_send'].includes(task.status)
+    && heartbeatAge > 120_000;
+  elements.handoffTaskStatus.replaceChildren(createDefinitionGrid([
+    ['当前阶段', HANDOFF_STAGE_LABELS[task.status] || task.status],
+    ['阶段说明', task.stageMessage],
+    ['阶段开始', formatDateTime(task.stageStartedAt)],
+    ['最近心跳', `${formatDateTime(task.lastHeartbeatAt)}${stale ? '（可能已暂停、等待审批或状态未知）' : ''}`],
+    ['HyperFrames 模式', task.hyperframesMode],
+    ['HyperFrames 决策', task.hyperframesDecision || '尚未决定'],
+    ['决策理由', task.hyperframesReason || '—'],
+    ['表达缺口', task.hyperframesGap || '—'],
+    ['任务 ID', task.taskId],
+  ]));
+  const warnings = [...(task.warnings || []), ...(task.errors || []).map((item) => item.message || item)];
+  elements.handoffTaskWarnings.textContent = warnings.join('；');
+  elements.handoffTaskWarnings.classList.toggle('hidden', warnings.length === 0);
+  const cancellable = ['draft', 'ready', 'launching_codex', 'awaiting_user_send'].includes(task.status);
+  elements.cancelHandoffTaskButton.classList.toggle('hidden', !cancellable);
+  const launchFailed = task.status === 'launching_codex' && (task.errors || []).length > 0;
+  elements.retryCodexButton.classList.toggle('hidden', !launchFailed);
+  elements.copyPromptButton.classList.toggle('hidden', !launchFailed);
+}
+
+function showHandoffTask(task) {
+  renderHandoffTask(task);
+  switchMainView('handoff-task');
+  clearInterval(state.handoffPollTimer);
+  if (!['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)) {
+    state.handoffPollTimer = setInterval(async () => {
+      try {
+        const latest = await window.plannerApi.readHandoffTask(task.taskFilePath);
+        renderHandoffTask(latest);
+        if (['completed', 'completed_with_warnings', 'failed'].includes(latest.status)) {
+          clearInterval(state.handoffPollTimer);
+          await showHandoffCompletion(latest);
+        }
+      } catch { /* transient atomic replace/read race is retried */ }
+    }, 2000);
+  }
+}
+
+async function showHandoffCompletion(task) {
+  state.activeHandoffTask = task;
+  clearInterval(state.handoffPollTimer);
+  let result = null;
+  if (task.resultProjectPath) result = await window.plannerApi.openHandoffResult(task.taskFilePath).catch(() => null);
+  state.completionResult = result;
+  const failed = task.status === 'failed';
+  const warning = task.status === 'completed_with_warnings';
+  elements.completionEyebrow.textContent = failed ? '处理失败' : warning ? '完成验收 · 有警告' : '完成验收 · 验证通过';
+  elements.completionTitle.textContent = failed ? '本期处理未完成' : '本期粗剪已完成';
+  elements.completionNotice.className = `notice ${failed || warning ? 'warning' : 'neutral'}`;
+  elements.completionNotice.textContent = failed
+    ? `${task.stageMessage}；${(task.errors || []).map((item) => item.message || item).join('；')}`
+    : warning ? `已完成但有警告：${(task.warnings || []).join('；')}` : '验证：通过';
+  const verification = task.verification || {};
+  elements.completionMetrics.replaceChildren(createDefinitionGrid([
+    ['建议标题', result?.summary?.recommendedTitle || '—'],
+    ['正式项目名称', result?.project?.name || task.resultProjectId || '—'],
+    ['镜头数', String(result?.timeline?.shotCount ?? verification.shotCount ?? '—')],
+    ['总时长', formatResultDuration(result?.timeline?.totalDurationSec ?? verification.durationSec)],
+    ['Marker 数', String(result?.timeline?.markers?.length ?? verification.markerCount ?? '—')],
+    ['FCP Title 数', String(result?.formats?.fcpxmlTitleCount ?? verification.titleCount ?? '—')],
+    ['HyperFrames', result?.hyperframes?.enabled ? '启用' : '未启用'],
+    ['HyperFrames 数量', String(result?.hyperframes?.count ?? verification.hyperframesCount ?? 0)],
+    ['粗剪', result?.artifacts?.preview?.exists ? '已生成' : '未生成'],
+    ['FCPXML', result?.artifacts?.fcpxml?.exists ? '已生成' : '未生成'],
+    ['正式项目规格', formatVideoSpec(result?.formats?.timeline || verification.timelineFormat)],
+    ['粗剪规格', formatVideoSpec(result?.formats?.preview || verification.previewFormat)],
+  ], 'completion-grid'));
+  elements.completionPreview.src = result?.artifacts?.preview?.fileUrl || '';
+  elements.completionPreview.classList.toggle('hidden', !result?.artifacts?.preview?.fileUrl);
+  elements.completionOpenFcpButton.disabled = failed || !result?.artifacts?.fcpxml?.exists;
+  elements.completionPlayButton.disabled = !result?.artifacts?.preview?.fileUrl;
+  elements.completionDetailsButton.disabled = !result;
+  elements.completionShowProjectButton.disabled = !result;
+  switchMainView('handoff-completion');
 }
 
 function formatDateTime(value) {
@@ -2112,10 +2374,15 @@ async function runAiBatchAnalysis(mode) {
 async function init() {
   assetViewModel = await loadAssetViewModel();
   window.plannerApi.onBatchAnalysisProgress(handleAiBatchProgress);
+  window.plannerApi.onHandoffTerminal((task) => {
+    showHandoffCompletion(task).catch((error) => showToast(getUserErrorMessage(error), true));
+  });
   const config = await window.plannerApi.getConfig();
   elements.version.textContent = config.version;
   elements.projectRoot.value = config.defaultProjectRoot;
-  await Promise.all([loadRecentProjects(), loadAiSettingsState()]);
+  const settings = await window.plannerApi.loadHandoffSettings();
+  elements.autoOpenFcpSetting.checked = settings.autoOpenFcp === true;
+  await Promise.all([loadRecentProjects(), loadAiSettingsState(), loadPendingCatalog()]);
   try {
     await loadProjectCatalog();
   } catch (error) {
@@ -2125,8 +2392,93 @@ async function init() {
   }
 }
 
+elements.showPendingMediaButton.addEventListener('click', () => {
+  clearInterval(state.handoffPollTimer);
+  switchMainView('pending');
+  loadPendingCatalog().catch((error) => showToast(getUserErrorMessage(error), true));
+});
 elements.showResultsCenterButton.addEventListener('click', () => switchMainView('results'));
 elements.showWorkspaceButton.addEventListener('click', () => switchMainView('workspace'));
+elements.refreshPendingButton.addEventListener('click', () =>
+  withBusy(elements.refreshPendingButton, async () => {
+    await loadPendingCatalog();
+    showToast('待处理素材与交接任务已刷新。');
+  }, '正在刷新…'));
+elements.autoOpenFcpSetting.addEventListener('change', async () => {
+  const settings = await window.plannerApi.saveHandoffSettings({
+    autoOpenFcp: elements.autoOpenFcpSetting.checked,
+  });
+  elements.autoOpenFcpSetting.checked = settings.autoOpenFcp;
+  showToast(settings.autoOpenFcp
+    ? '已开启：仅在完整验证通过且无警告时自动打开 Final Cut Pro。'
+    : '已关闭自动打开 Final Cut Pro。');
+});
+elements.cancelHandoffConfirmButton.addEventListener('click', () => switchMainView('pending'));
+elements.launchCodexButton.addEventListener('click', () =>
+  withBusy(elements.launchCodexButton, async () => {
+    const episode = state.selectedPendingEpisode;
+    if (!episode) throw new Error('请重新选择一期素材。');
+    const mode = document.querySelector('input[name="hyperframesMode"]:checked')?.value || 'auto';
+    let task = await window.plannerApi.createHandoffTask({
+      sourceDirectory: episode.sourceDirectory,
+      hyperframesMode: mode,
+    });
+    showHandoffTask(task);
+    task = await window.plannerApi.launchCodexHandoff(task.taskFilePath);
+    renderHandoffTask(task);
+  }, '正在打开 Codex…'));
+elements.activateCodexButton.addEventListener('click', () => {
+  if (state.activeHandoffTask) window.plannerApi.activateCodexHandoff(state.activeHandoffTask.taskFilePath);
+});
+elements.showHandoffSourceButton.addEventListener('click', () => {
+  if (state.activeHandoffTask) {
+    window.plannerApi.showPendingMediaInFinder(state.activeHandoffTask.sourceDirectory);
+  }
+});
+elements.retryCodexButton.addEventListener('click', () =>
+  withBusy(elements.retryCodexButton, async () => {
+    const task = await window.plannerApi.launchCodexHandoff(state.activeHandoffTask.taskFilePath);
+    renderHandoffTask(task);
+  }, '正在重试…'));
+elements.copyPromptButton.addEventListener('click', async () => {
+  await window.plannerApi.copyHandoffPrompt(state.activeHandoffTask.taskFilePath);
+  showToast('完整提示词已复制；这是深链接失败时的故障恢复方式。');
+});
+elements.cancelHandoffTaskButton.addEventListener('click', () =>
+  withBusy(elements.cancelHandoffTaskButton, async () => {
+    const task = await window.plannerApi.cancelHandoffTask(state.activeHandoffTask.taskFilePath);
+    renderHandoffTask(task);
+    await loadPendingCatalog();
+    switchMainView('pending');
+  }, '正在取消…'));
+elements.completionOpenFcpButton.addEventListener('click', () =>
+  withBusy(elements.completionOpenFcpButton, async () => {
+    const result = state.completionResult;
+    if (!result) throw new Error('没有可打开的正式项目结果。');
+    const opened = await window.plannerApi.openProjectFcpxmlInFinalCut(result.project.path);
+    showToast(`已通过 ${opened.strategy === 'bundle-id' ? 'Bundle ID' : '应用路径'} 打开 Final Cut Pro。`);
+  }, '正在打开…'));
+elements.completionPlayButton.addEventListener('click', () => {
+  elements.completionPreview.classList.remove('hidden');
+  elements.completionPreview.play().catch(() => {});
+});
+elements.completionDetailsButton.addEventListener('click', async () => {
+  const result = state.completionResult;
+  if (!result) return;
+  await loadProjectCatalog();
+  switchMainView('results');
+  await loadCatalogProject(result.project.path);
+});
+elements.completionReturnCodexButton.addEventListener('click', () => {
+  if (state.activeHandoffTask) window.plannerApi.activateCodexHandoff(state.activeHandoffTask.taskFilePath);
+});
+elements.completionShowProjectButton.addEventListener('click', () => {
+  const result = state.completionResult;
+  if (result) window.plannerApi.runProjectArtifactAction({
+    projectPath: result.project.path,
+    target: 'projectRoot',
+  });
+});
 elements.refreshCatalogButton.addEventListener('click', () =>
   withBusy(elements.refreshCatalogButton, async () => {
     await loadProjectCatalog();

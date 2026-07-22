@@ -678,6 +678,7 @@ async function verifyCodexVideoProject(projectPath) {
 }
 
 async function buildCodexVideoProject(options) {
+  const onStage = typeof options.onStage === 'function' ? options.onStage : async () => {};
   const { manifest, analysis, formats } = await validateAnalysisFile(
     options.manifestPath,
     options.analysisPath,
@@ -685,6 +686,14 @@ async function buildCodexVideoProject(options) {
   );
   const target = await assertProjectTargetAvailable(options.projectRoot, options.projectName);
   const hyperframesOptions = options.hyperframes || {};
+  await onStage(
+    hyperframesOptions.enabled || hyperframesOptions.reuseProjectPath
+      ? 'designing_hyperframes'
+      : 'building_project',
+    hyperframesOptions.enabled || hyperframesOptions.reuseProjectPath
+      ? '正在校验 HyperFrames 方案与真实素材关系。'
+      : '正在校验分析并创建正式 v3 项目。',
+  );
   let hyperframesFlow = hyperframesOptions.flowSpecPath
     ? normalizeFlowSpec(await readJson(hyperframesOptions.flowSpecPath, 'HyperFrames 流程输入'))
     : null;
@@ -737,6 +746,7 @@ async function buildCodexVideoProject(options) {
     let effectiveAnalysis = analysis;
     let hyperframes = null;
     if (hyperframesOptions.reuseProjectPath) {
+      await onStage('rendering_hyperframes', '正在复制并登记已验收 HyperFrames 独立素材。');
       const reused = await copyReusableHyperframes(projectPath, hyperframesOptions.reuseProjectPath);
       hyperframesFlow = reused.flow;
       const rendered = reused.rendered;
@@ -768,7 +778,9 @@ async function buildCodexVideoProject(options) {
         commands: rendered.commands,
         reusedFromProject: reused.sourceProjectPath,
       };
+      await onStage('reviewing_hyperframes', '已复用通过 check 的 HyperFrames，等待最终复核。');
     } else if (hyperframesOptions.enabled) {
+      await onStage('rendering_hyperframes', '正在渲染 HyperFrames 独立动画。');
       const durationSec = Number(hyperframesOptions.durationSec || (hyperframesFlow ? 5 : 2));
       const visualSources = resolveHyperframesVisualSources(hyperframesFlow, mappings);
       const outputFilename = hyperframesOutputFilename(
@@ -827,21 +839,25 @@ async function buildCodexVideoProject(options) {
         check: rendered.check,
         commands: rendered.commands,
       };
+      await onStage('reviewing_hyperframes', 'HyperFrames 已渲染并通过本地 check，等待质量复核。');
     }
+    await onStage('building_project', '正在登记独立素材并完成正式 v3 项目。');
     const outputBase = safeFilename(analysis.titles.recommended, target.name);
     const fcpxmlPath = path.join(projectPath, CODEX_VIDEO_FCPXML_DIR, `${outputBase}.fcpxml`);
     const previewPath = path.join(projectPath, CODEX_VIDEO_PREVIEW_DIR, `${outputBase}-roughcut-preview.mp4`);
-    const fcpxmlResult = await writeFcpxml(fcpxmlPath, {
-      projectName: target.name,
-      analysis: effectiveAnalysis,
-      assetMappings: mappings,
-    });
+    await onStage('rendering_preview', '正在按轻量预览规格生成粗剪。');
     const previewResult = await generateRoughcutPreview(
       previewPath,
       effectiveAnalysis,
       mappings,
       formats.preview,
     );
+    await onStage('generating_fcpxml', '正在生成引用独立素材的 FCPXML。');
+    const fcpxmlResult = await writeFcpxml(fcpxmlPath, {
+      projectName: target.name,
+      analysis: effectiveAnalysis,
+      assetMappings: mappings,
+    });
     const sourceCurrent = await snapshotSource(manifest.sourceDirectory);
     const sourceVerification = compareSourceSnapshots(manifest.sourceSnapshot, sourceCurrent);
     if (!sourceVerification.unchanged) {
@@ -888,6 +904,7 @@ async function buildCodexVideoProject(options) {
       sourceVerification,
     };
     await writeJson(path.join(projectPath, CODEX_VIDEO_STATUS_FILE), status);
+    await onStage('verifying', '正在执行素材、预览、FCPXML 与源快照完整验证。');
     const verification = await verifyCodexVideoProject(projectPath);
     status = { ...status, status: 'verified', verifiedAt: verification.verifiedAt, verification };
     await writeJson(path.join(projectPath, CODEX_VIDEO_STATUS_FILE), status);

@@ -1,6 +1,7 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { watch } = require('node:fs');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require('electron');
 
 const {
   APP_NAME,
@@ -97,10 +98,27 @@ const {
   validateAnalysisFile,
   verifyCodexVideoProject,
 } = require('./services/codex-video-service');
+const {
+  DEFAULT_PENDING_ROOT,
+  scanPendingMediaCatalog,
+} = require('./services/pending-media-catalog-service');
+const {
+  TERMINAL_STATUSES,
+  assertUserDataTask,
+  createHandoffTask,
+  listHandoffTasks,
+  loadHandoffSettings,
+  saveHandoffSettings,
+  taskRoot,
+  updateHandoffTask,
+} = require('./services/handoff-task-service');
 
 let mainWindow;
 let aiAnalysisRunning = false;
 const authorizedProjectPaths = new Set();
+const terminalTaskVersions = new Map();
+let handoffWatcher = null;
+let handoffRefreshTimer = null;
 
 function authorizeProject(projectPath) {
   const resolved = path.resolve(projectPath);
@@ -214,13 +232,195 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  mainWindow.webContents.once('did-finish-load', () => {
+    refreshTerminalHandoffs({ includeExisting: true }).catch(() => {});
+  });
+}
+
+async function scanHandoffsAndPending() {
+  const handoffs = await listHandoffTasks(app.getPath('userData'));
+  const catalog = await scanPendingMediaCatalog({
+    rootPath: DEFAULT_PENDING_ROOT,
+    projectRoot: DEFAULT_PROJECT_ROOT,
+    tasks: handoffs.tasks,
+  });
+  return { ...catalog, handoffs };
+}
+
+async function validateTerminalProject(task) {
+  if (!task.resultProjectPath) return null;
+  const projectPath = await assertCatalogProject(DEFAULT_PROJECT_ROOT, task.resultProjectPath);
+  const result = await readCodexProjectResult(projectPath);
+  if (result.verification.status === 'failed' || !result.artifacts.fcpxml?.exists) return null;
+  return { projectPath, result };
+}
+
+async function focusPlannerOnTask(task) {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  mainWindow.show();
+  mainWindow.focus();
+  app.focus({ steal: true });
+  mainWindow.webContents.send('handoff:terminal', task);
+}
+
+async function refreshTerminalHandoffs(options = {}) {
+  const payload = await listHandoffTasks(app.getPath('userData'));
+  for (const task of payload.tasks) {
+    if (!TERMINAL_STATUSES.has(task.status)) continue;
+    const version = `${task.updatedAt}:${task.returnState?.requestedAt || ''}`;
+    const requestedAt = Date.parse(task.returnState?.requestedAt || 0) || 0;
+    const acknowledgedAt = Date.parse(task.returnState?.acknowledgedAt || 0) || 0;
+    if (acknowledgedAt >= requestedAt && acknowledgedAt > 0) {
+      terminalTaskVersions.set(task.taskId, version);
+      continue;
+    }
+    if (!options.includeExisting && terminalTaskVersions.get(task.taskId) === version) continue;
+    terminalTaskVersions.set(task.taskId, version);
+    await focusPlannerOnTask(task);
+    const acknowledgmentTime = new Date().toISOString();
+    const acknowledged = await updateHandoffTask(task.taskFilePath, {
+      status: task.status,
+      returnState: { ...(task.returnState || {}), acknowledgedAt: acknowledgmentTime },
+    }).catch(() => {});
+    if (acknowledged) {
+      terminalTaskVersions.set(
+        task.taskId,
+        `${acknowledged.updatedAt}:${acknowledged.returnState?.requestedAt || ''}`,
+      );
+    }
+    if (task.status === 'completed' && task.autoOpenFcp) {
+      const validated = await validateTerminalProject(task).catch(() => null);
+      if (validated && validated.result.verification.warnings.length === 0) {
+        await openInFinalCut(validated.result.artifacts.fcpxml.path).catch(async (error) => {
+          await updateHandoffTask(task.taskFilePath, {
+            status: task.status,
+            errors: [...(task.errors || []), {
+              code: 'FINAL_CUT_OPEN_FAILED',
+              message: error.message,
+              at: new Date().toISOString(),
+            }],
+          }).catch(() => {});
+        });
+      }
+    }
+  }
+}
+
+async function startHandoffWatcher() {
+  const root = taskRoot(app.getPath('userData'));
+  await fs.mkdir(root, { recursive: true });
+  handoffWatcher?.close();
+  handoffWatcher = watch(root, { persistent: false }, () => {
+    clearTimeout(handoffRefreshTimer);
+    handoffRefreshTimer = setTimeout(() => refreshTerminalHandoffs().catch(() => {}), 150);
+  });
 }
 
 function registerIpc() {
   ipcMain.handle('app:get-config', () => ({
     version: APP_VERSION,
     defaultProjectRoot: DEFAULT_PROJECT_ROOT,
+    defaultPendingRoot: DEFAULT_PENDING_ROOT,
   }));
+
+  ipcMain.handle('pending:scan', () => scanHandoffsAndPending());
+
+  ipcMain.handle('pending:show-in-finder', async (_event, sourceDirectory) => {
+    const payload = await scanHandoffsAndPending();
+    const episode = payload.episodes.find((item) => item.sourceDirectory === path.resolve(sourceDirectory));
+    if (!episode) throw new Error('所选素材目录未通过待处理目录授权。');
+    shell.showItemInFolder(episode.sourceDirectoryRealPath);
+    return { shown: true };
+  });
+
+  ipcMain.handle('handoff:create', async (_event, args) => {
+    const payload = await scanHandoffsAndPending();
+    const sourcePath = path.resolve(String(args?.sourceDirectory || ''));
+    const episode = payload.episodes.find((item) => item.sourceDirectory === sourcePath);
+    if (!episode) throw new Error('所选素材目录未通过待处理目录授权。');
+    if (episode.empty || episode.unreadable) throw new Error('空目录或无法读取目录不能启动生产。');
+    const settings = await loadHandoffSettings(app.getPath('userData'));
+    return createHandoffTask(app.getPath('userData'), {
+      pendingRoot: DEFAULT_PENDING_ROOT,
+      sourceDirectory: episode.sourceDirectory,
+      sourceSnapshot: episode.sourceSnapshot,
+      sourceSummary: {
+        name: episode.name,
+        counts: episode.counts,
+        totalFileCount: episode.totalFileCount,
+        totalVideoDurationSec: episode.totalVideoDurationSec,
+        totalSizeBytes: episode.totalSizeBytes,
+        warnings: episode.warnings,
+      },
+      appWorkspace: path.resolve(__dirname, '..'),
+      hyperframesMode: args?.hyperframesMode || 'auto',
+      autoOpenFcp: settings.autoOpenFcp,
+    });
+  });
+
+  ipcMain.handle('handoff:launch-codex', async (_event, taskPath) => {
+    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    const launching = await updateHandoffTask(task.taskFilePath, {
+      status: 'launching_codex',
+      stageMessage: '正在使用官方深链接打开 Codex。',
+    });
+    try {
+      await shell.openExternal(launching.codexDeepLink, { activate: true });
+      return updateHandoffTask(task.taskFilePath, {
+        status: 'awaiting_user_send',
+        stageMessage: 'Codex 已打开并预填提示词，等待用户按一次发送。',
+      });
+    } catch (error) {
+      await updateHandoffTask(task.taskFilePath, {
+        status: 'launching_codex',
+        stageMessage: `Codex 深链接打开失败：${error.message}`,
+        errors: [{ code: 'CODEX_DEEP_LINK_FAILED', message: error.message, at: new Date().toISOString() }],
+      });
+      throw error;
+    }
+  });
+
+  ipcMain.handle('handoff:read', async (_event, taskPath) => {
+    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    return task;
+  });
+
+  ipcMain.handle('handoff:list', () => listHandoffTasks(app.getPath('userData')));
+
+  ipcMain.handle('handoff:cancel', async (_event, taskPath) => {
+    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    if (!['draft', 'ready', 'launching_codex', 'awaiting_user_send'].includes(task.status)) {
+      throw new Error('只有尚未进入生产的交接任务可以取消。');
+    }
+    return updateHandoffTask(task.taskFilePath, {
+      status: 'cancelled',
+      stageMessage: '交接任务已取消。',
+    });
+  });
+
+  ipcMain.handle('handoff:activate-codex', async (_event, taskPath) => {
+    await assertUserDataTask(app.getPath('userData'), taskPath);
+    await shell.openExternal('codex://', { activate: true });
+    return { activated: true };
+  });
+
+  ipcMain.handle('handoff:copy-prompt', async (_event, taskPath) => {
+    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    clipboard.writeText(task.prompt);
+    return { copied: true };
+  });
+
+  ipcMain.handle('handoff:settings-load', () => loadHandoffSettings(app.getPath('userData')));
+  ipcMain.handle('handoff:settings-save', (_event, settings) =>
+    saveHandoffSettings(app.getPath('userData'), settings));
+
+  ipcMain.handle('handoff:open-result', async (_event, taskPath) => {
+    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    const validated = await validateTerminalProject(task);
+    if (!validated) throw new Error('交接任务没有可安全打开的正式项目结果。');
+    authorizeProject(validated.projectPath);
+    return validated.result;
+  });
 
   ipcMain.handle('dialog:select-root', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -566,6 +766,7 @@ app.setName(APP_NAME);
 app.whenReady().then(() => {
   registerIpc();
   createWindow();
+  startHandoffWatcher().catch(() => {});
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -574,4 +775,9 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  handoffWatcher?.close();
+  clearTimeout(handoffRefreshTimer);
 });

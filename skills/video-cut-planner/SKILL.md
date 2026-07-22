@@ -16,6 +16,24 @@ Use Codex's current-session image understanding for semantic decisions and the v
 
 If the CLI path is missing, stop and report that the v3 repository is unavailable. Do not recreate the project system inside the Skill.
 
+## Visible handoff tasks
+
+When the prompt contains a handoff task ID and an absolute task JSON path, this is a visible v3 → Codex production handoff:
+
+- Pass `--handoff-task "<task.json>"` to `prepare`, `validate-analysis`, `build`, and any later `verify` command.
+- Use `handoff-update` at the real Codex-only stages `analyzing_media`, `planning_story`, `deciding_hyperframes`, and, when applicable, `designing_hyperframes` and `reviewing_hyperframes`. Record a short stage message and keep heartbeats current during long visual review.
+- Respect the task's `hyperframesMode`: `disabled` forbids generation; `auto` decides only after a truthful real-media first cut; `force-attempt` requires a serious design attempt but still rejects work that fails the quality gate.
+- Always record `hyperframesDecision`, `hyperframesReason`, the expression gap, whether ordinary editing/subtitles/transitions are sufficient, and the final quality review. Do not mark an enabled animation reviewed without viewing its rendered output.
+- `build` leaves a handoff in `verifying` so Codex can watch the rough cut and any HyperFrames render. After this visual review, run `handoff-complete --handoff-task "<task.json>" --project "<v3 project>" --json`; then run `handoff-return --handoff-task "<task.json>" --json` even for warning/failure outcomes.
+- If a command fails, preserve the partial project and task record. The CLI writes `failed`; still run `handoff-return` when possible. Never fabricate a stage from a timer.
+
+Example semantic updates:
+
+```bash
+node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-update --handoff-task "<task.json>" --stage analyzing_media --message "正在查看全部图片预览和视频故事板" --json
+node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-update --handoff-task "<task.json>" --stage deciding_hyperframes --hyperframes-decision disabled --hyperframes-reason "真实素材与一条轻字幕已能清楚表达流程" --hyperframes-gap "无必须由动画补足的表达缺口" --json
+```
+
 ## Workflow
 
 1. Resolve one explicit issue folder. If only the pending root is given and multiple subfolders exist, list them and ask which issue to process. Never rename, move, delete, overwrite, or edit source files.
@@ -59,7 +77,7 @@ If the CLI path is missing, stop and report that the v3 repository is unavailabl
     node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js build --manifest "<manifest.json>" --analysis "<analysis.json>" --project-root "/Users/example/Desktop/视频素材库" --project-name "<项目名>" --json
     ```
 
-14. When the user explicitly requests HyperFrames, first run
+14. When the user explicitly requests HyperFrames, or a handoff task uses `force-attempt`, first run
     `hyperframes-doctor --json`. Only add `--hyperframes` when Node.js, FFmpeg,
     FFprobe, and Chrome are available. HyperFrames remains optional and disabled by
     default. Without a flow input it creates one independent title-card MP4. When
@@ -72,6 +90,12 @@ If the CLI path is missing, stop and report that the v3 repository is unavailabl
     MP4 is inserted at that exact narrative boundary and only later markers move. In
     either mode, register it as an independent v3 asset and FCPXML clip. Do not treat missing Docker,
     transcription, TTS, or BGM tools as a local-render failure.
+    For handoff `auto`, first make a real-media-only timeline and compare ordinary
+    editing, one light subtitle, and a normal transition against the concrete gap.
+    Enable HyperFrames only when it is materially clearer. After rendering, view the
+    independent MP4 and check clarity, continuity, easing, layout, black frames,
+    distortion, jitter, typography, and the transitions to adjacent real shots.
+    Revise and re-render if needed; reject it if it still does not improve the film.
 15. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs full verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`.
 16. When a release refinement must preserve an already accepted HyperFrames render, use `--reuse-hyperframes-project "<已验收 v3 项目>"` instead of rendering HyperFrames again. The source project is read-only; the build copies and registers its independent MP4, composition, and records into a new non-empty-safe project target.
 

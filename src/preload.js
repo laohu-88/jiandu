@@ -2,6 +2,24 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('plannerApi', {
   getConfig: () => ipcRenderer.invoke('app:get-config'),
+  scanPendingMedia: () => ipcRenderer.invoke('pending:scan'),
+  showPendingMediaInFinder: (sourceDirectory) =>
+    ipcRenderer.invoke('pending:show-in-finder', sourceDirectory),
+  createHandoffTask: (args) => ipcRenderer.invoke('handoff:create', args),
+  launchCodexHandoff: (taskPath) => ipcRenderer.invoke('handoff:launch-codex', taskPath),
+  readHandoffTask: (taskPath) => ipcRenderer.invoke('handoff:read', taskPath),
+  listHandoffTasks: () => ipcRenderer.invoke('handoff:list'),
+  cancelHandoffTask: (taskPath) => ipcRenderer.invoke('handoff:cancel', taskPath),
+  activateCodexHandoff: (taskPath) => ipcRenderer.invoke('handoff:activate-codex', taskPath),
+  copyHandoffPrompt: (taskPath) => ipcRenderer.invoke('handoff:copy-prompt', taskPath),
+  loadHandoffSettings: () => ipcRenderer.invoke('handoff:settings-load'),
+  saveHandoffSettings: (settings) => ipcRenderer.invoke('handoff:settings-save', settings),
+  openHandoffResult: (taskPath) => ipcRenderer.invoke('handoff:open-result', taskPath),
+  onHandoffTerminal: (callback) => {
+    const listener = (_event, task) => callback(task);
+    ipcRenderer.on('handoff:terminal', listener);
+    return () => ipcRenderer.removeListener('handoff:terminal', listener);
+  },
   selectRoot: () => ipcRenderer.invoke('dialog:select-root'),
   createProject: (args) => ipcRenderer.invoke('project:create', args),
   chooseAndOpenProject: () => ipcRenderer.invoke('project:choose-open'),

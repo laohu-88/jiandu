@@ -12,6 +12,8 @@ Write UTF-8 JSON matching `schemas/codex-video-analysis.schema.json`. The runtim
 
 The JSON is Codex's semantic decision record. Do not add source paths: identify source media only by stable `assetId` from the manifest.
 
+For a visible v3 handoff, keep operational state and HyperFrames decision/quality records in the authorized handoff task file through `handoff-update`; do not add ad-hoc handoff fields to this analysis JSON. Form the real-media-only timeline first. Record whether ordinary editing, a single light subtitle, or a normal transition can close the expression gap before enabling HyperFrames. An enabled render is not accepted until Codex views the independent MP4 and records a quality review; a failed quality gate must result in revision or rejection.
+
 ## 2. Field rules
 
 - `theme`: actual theme, evidence, confidence, and folder/content conflict flag.

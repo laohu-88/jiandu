@@ -5,18 +5,38 @@ Electron 视频项目管理与剪辑编排工具。当前新增的 Codex 视频�
 ## Codex 视频工作流
 
 ```text
-一期待处理素材文件夹
-→ v3 CLI 探测媒体、抽帧并生成故事板
-→ Codex 查看实际画面并生成结构化分析
+v3 扫描待处理素材并显示交接摘要
+→ 用户选择 HyperFrames 模式并点击“打开 Codex 并开始”
+→ Codex 新会话在仓库工作目录中预填，用户只按一次发送
+→ Video Skill 探测媒体、抽帧并持续写入真实阶段状态
+→ Codex 查看实际画面、形成真实素材初剪并判断 HyperFrames
 → v3 共享核心创建正式项目并登记素材
-→ 可选：HyperFrames 根据现有分析生成独立标题卡或 process-flow MP4
+→ 可选：HyperFrames 根据表达缺口生成并观看复核独立 MP4
 → 独立素材组成的可编辑 FCPXML
 → 粗剪预览 MP4
-→ Electron 项目结果中心自动发现并汇总项目
+→ 完整验证后自动回到 v3 完成页
 → Final Cut Pro 精修
 ```
 
 CLI 和 Electron IPC 调用同一组 `src/services`，不会复制项目创建、素材登记、FCPXML、预览或验证逻辑。CLI 不接入外部模型；主题、标题、素材判断和镜头顺序由当前 Codex 会话完成。
+
+## Stage 4D 可视化交接
+
+Electron 默认打开“待处理素材”，只扫描 `/Users/example/Desktop/视频待处理` 的直属子目录。卡片显示图片、视频、音频、支持文件、总数、视频总时长、大小、修改时间、读取/格式警告、最近任务和正式结果。已有结果优先按正式项目 `sourceDirectory`、原始快照 digest 和规范化真实路径匹配，不按目录名猜测。
+
+点击“交给 Codex 处理”先进入确认页，查看素材摘要、Codex 工作、正式产物并选择：
+
+- `auto`：默认；先形成真实素材初剪，再判断动画是否明显优于普通剪辑、轻字幕或转场；
+- `disabled`：本期禁止 HyperFrames；
+- `force-attempt`：必须认真设计尝试，但质量门不通过时放弃。
+
+“打开 Codex 并开始”创建 `<Electron userData>/handoffs/<UUID>.json`，使用 `codex://threads/new?prompt=<encoded>&path=<encoded>` 打开 Codex 并将应用置前。工作目录固定为本仓库，素材目录、任务 ID、任务文件和模式在完整提示词中传入；输入框预填但不会自动发送。唯一人工动作是用户按一次发送。
+
+任务快照用临时文件原子替换，旁边保留追加式 NDJSON 事件；损坏任务单点隔离显示，尾部不完整事件被忽略。真实 Skill/CLI 节点写入扫描、元数据、抽帧、分析、编排、HyperFrames、构建、预览、FCPXML、验证和心跳。v3 通过文件监听发现终态，自动置前并打开该任务完成页；应用中途关闭时，下次启动仍能恢复未查看终态。
+
+完成页是进入 FCP 前的短验收门，直接展示标题、镜头、时长、Marker、FCP Title、HyperFrames、正式/预览规格并播放粗剪。完整通过时主按钮“在 Final Cut Pro 中打开”可用；警告明确列出且不自动打开；失败时不显示“粗剪已完成”，无有效 FCPXML 时禁用 FCP。设置“验证全部通过后，自动打开 Final Cut Pro”默认关闭并持久化，只对无警告的完整成功执行。
+
+任务 schema、状态生命周期、路径安全和 CLI 回流命令见 [`docs/handoff-schema.md`](docs/handoff-schema.md)。普通 CLI 未传 `--handoff-task` 时保持原行为，不创建交接状态。
 
 ## Electron 项目结果中心
 
@@ -26,7 +46,7 @@ CLI 和 Electron IPC 调用同一组 `src/services`，不会复制项目创建�
 npm start
 ```
 
-应用默认打开“项目结果中心”，只读扫描 `/Users/example/Desktop/视频素材库` 的直属项目目录。Codex 创建正式 v3 项目后，不需要再次输入路径；点击列表项目即可查看：
+应用的“项目结果中心”只读扫描 `/Users/example/Desktop/视频素材库` 的直属项目目录。Codex 创建正式 v3 项目后，不需要再次输入路径；点击列表项目即可查看：
 
 - 项目状态、主题、主题依据、建议标题和标题候选；
 - 采用、候选、淘汰素材及理由、有效区间和精选素材复制状态；
@@ -134,6 +154,18 @@ node bin/video-skill.js build \
   --json
 ```
 
+由 v3 发起的可视化任务把同一个 `--handoff-task "/absolute/task.json"` 传给 `prepare`、`validate-analysis`、`build` 和 `verify`。Codex-only 决策用 `handoff-update` 写入；观看复核后执行：
+
+```bash
+node bin/video-skill.js handoff-complete \
+  --handoff-task "/absolute/task.json" \
+  --project "/Users/example/Desktop/视频素材库/本期项目" \
+  --json
+node bin/video-skill.js handoff-return \
+  --handoff-task "/absolute/task.json" \
+  --json
+```
+
 默认只生成 FCPXML，不自动打开。只有明确需要时才附加 `--open-fcpxml`。
 
 重新验证已有正式项目：
@@ -176,6 +208,8 @@ process-flow 是已实现能力，不只是标题卡描述。使用
 `--hyperframes-flow <流程.json>` 提供 3–6 个短节点、真实原因和
 `insertAfterShotId`；生成动画会在该镜头之后作为独立素材插入。HyperFrames
 仍默认关闭，只有用户明确启用时才运行，项目结果中心不提供重新渲染按钮。
+
+Stage 4D 的 `auto` 不等同于默认生成。Codex 必须先检查真实素材时间线的主题、衔接、工具切换和结果解释，再比较普通剪辑、单条轻字幕和普通转场。只有存在具体表达缺口且动画明显更有效时才启用。渲染后必须实际观看，检查运动、缓动、排版、黑帧、抖动、拉伸、前后镜头衔接和风格一致性；不合格时返工，仍不提升成片则放弃。
 
 当前没有把 HyperFrames 固定为 Electron 生产依赖：`0.7.63` 的传递依赖
 `adm-zip<0.6.0` 命中

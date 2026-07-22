@@ -13,12 +13,15 @@
     <main class="shell">
       <header class="app-header">
         <div>
-          <p id="viewEyebrow" class="eyebrow">CODEX · 项目结果中心</p>
+          <p id="viewEyebrow" class="eyebrow">STAGE 4D · 待处理素材</p>
           <h1>视频剪辑编排器 v3</h1>
         </div>
         <div class="header-actions">
           <nav class="view-switcher" aria-label="主视图">
-            <button id="showResultsCenterButton" class="view-tab active" type="button">
+            <button id="showPendingMediaButton" class="view-tab active" type="button">
+              待处理素材
+            </button>
+            <button id="showResultsCenterButton" class="view-tab" type="button">
               项目结果中心
             </button>
             <button id="showWorkspaceButton" class="view-tab" type="button">
@@ -29,7 +32,90 @@
         </div>
       </header>
 
-      <section id="resultsCenterView" class="results-center">
+      <section id="pendingMediaView" class="pending-media-view">
+        <div class="results-toolbar card">
+          <div>
+            <h2>待处理素材</h2>
+            <p id="pendingCatalogSummary">正在扫描默认待处理目录…</p>
+          </div>
+          <div class="actions">
+            <label class="setting-toggle">
+              <input id="autoOpenFcpSetting" type="checkbox">
+              <span>验证全部通过后，自动打开 Final Cut Pro</span>
+            </label>
+            <button id="refreshPendingButton" class="button primary" type="button">刷新素材</button>
+          </div>
+        </div>
+        <div id="pendingCatalogError" class="notice warning hidden"></div>
+        <div id="pendingMediaList" class="pending-media-grid"></div>
+        <div id="pendingMediaEmpty" class="card empty hidden">
+          <strong>尚未发现一期素材</strong>
+          <p>只读取待处理根目录下的直属子目录，不会把内部目录误识别为独立一期。</p>
+        </div>
+      </section>
+
+      <section id="handoffConfirmView" class="handoff-view hidden">
+        <div class="card handoff-panel">
+          <p class="eyebrow">CODEX 可视化交接</p>
+          <h2>确认交给 Codex 处理</h2>
+          <div id="handoffSourceSummary"></div>
+          <div class="handoff-columns">
+            <section>
+              <h3>Codex 将执行</h3>
+              <ul id="handoffWorkList" class="compact-list"></ul>
+            </section>
+            <section>
+              <h3>主要产物</h3>
+              <ul id="handoffArtifactList" class="compact-list"></ul>
+            </section>
+          </div>
+          <fieldset class="hyperframes-mode-picker">
+            <legend>HyperFrames 模式</legend>
+            <label><input type="radio" name="hyperframesMode" value="auto" checked><span><strong>Codex 自动判断</strong><small>根据真实素材完整度、镜头连贯性和表达缺口决定。</small></span></label>
+            <label><input type="radio" name="hyperframesMode" value="disabled"><span><strong>本期禁止 HyperFrames</strong><small>仅使用真实素材、普通剪辑、轻字幕、Marker 和转场。</small></span></label>
+            <label><input type="radio" name="hyperframesMode" value="force-attempt"><span><strong>本期明确尝试 HyperFrames</strong><small>认真设计并经过质量门；不提升成片时允许放弃。</small></span></label>
+          </fieldset>
+          <div class="result-actions handoff-actions">
+            <button id="cancelHandoffConfirmButton" class="button ghost" type="button">取消</button>
+            <button id="launchCodexButton" class="button primary" type="button">打开 Codex 并开始</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="handoffTaskView" class="handoff-view hidden">
+        <div class="card handoff-panel">
+          <p class="eyebrow">交接任务</p>
+          <h2 id="handoffTaskName">—</h2>
+          <div id="handoffTaskStatus" class="handoff-status-card"></div>
+          <div id="handoffTaskWarnings" class="notice warning hidden"></div>
+          <div class="result-actions handoff-actions">
+            <button id="activateCodexButton" class="button primary" type="button">切换到 Codex</button>
+            <button id="showHandoffSourceButton" class="button secondary" type="button">在 Finder 中显示素材</button>
+            <button id="retryCodexButton" class="button secondary hidden" type="button">重试打开 Codex</button>
+            <button id="copyPromptButton" class="button ghost hidden" type="button">复制完整提示词</button>
+            <button id="cancelHandoffTaskButton" class="button ghost" type="button">取消任务</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="handoffCompletionView" class="handoff-view hidden">
+        <div class="card handoff-panel completion-panel">
+          <p id="completionEyebrow" class="eyebrow">完成验收</p>
+          <h2 id="completionTitle">本期粗剪已完成</h2>
+          <div id="completionNotice" class="notice neutral"></div>
+          <div id="completionMetrics"></div>
+          <video id="completionPreview" class="result-video hidden" controls preload="metadata"></video>
+          <div class="result-actions completion-actions">
+            <button id="completionOpenFcpButton" class="button primary completion-primary" type="button">在 Final Cut Pro 中打开</button>
+            <button id="completionPlayButton" class="button secondary" type="button">播放粗剪</button>
+            <button id="completionDetailsButton" class="button secondary" type="button">查看详细结果</button>
+            <button id="completionReturnCodexButton" class="button secondary" type="button">返回 Codex</button>
+            <button id="completionShowProjectButton" class="button ghost" type="button">Finder 中显示项目</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="resultsCenterView" class="results-center hidden">
         <div class="results-toolbar card">
           <div>
             <h2>项目结果中心</h2>

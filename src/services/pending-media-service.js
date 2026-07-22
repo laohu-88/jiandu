@@ -430,6 +430,8 @@ function manifestArtifactsExist(manifest) {
 }
 
 async function preparePendingMedia(sourceDirectory, options = {}) {
+  const onStage = typeof options.onStage === 'function' ? options.onStage : async () => {};
+  await onStage('scanning_media', '正在扫描一期素材并生成原始快照。');
   const before = await snapshotSource(sourceDirectory);
   const cacheRoot = path.resolve(options.cacheRoot || path.join(
     os.tmpdir(),
@@ -441,6 +443,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
   const manifestPath = path.join(cacheDirectory, 'manifest.json');
   const cached = JSON.parse(await fs.readFile(manifestPath, 'utf8').catch(() => 'null'));
   if (cached?.sourceSnapshot?.digest === before.digest && await manifestArtifactsExist(cached)) {
+    await onStage('analyzing_media', '素材缓存有效，等待 Codex 查看真实预览并分析。');
     return {
       ...cached,
       manifestPath,
@@ -461,6 +464,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
 
   const warnings = [];
   const items = [];
+  await onStage('extracting_metadata', '正在使用 ffprobe 读取素材元数据。');
   for (const file of mediaFiles) {
     const snapshot = snapshotByPath.get(file.relativePath);
     const type = getMediaType(path.extname(file.relativePath).toLowerCase());
@@ -475,6 +479,9 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
       sha256: snapshot.sha256,
     };
     items.push(await prepareItem(item, cacheDirectory, warnings));
+    if (type === 'video' || type === 'image') {
+      await onStage('extracting_frames', `正在准备可视化预览：${item.filename}`);
+    }
   }
 
   const ignoredFiles = allFiles
@@ -531,6 +538,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
     fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8'),
     fs.writeFile(analysisRequestPath, `${JSON.stringify(analysisRequest, null, 2)}\n`, 'utf8'),
   ]);
+  await onStage('analyzing_media', '抽帧与素材清单已就绪，等待 Codex 语义分析。');
   return {
     ...manifest,
     manifestPath,
