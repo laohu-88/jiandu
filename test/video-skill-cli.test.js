@@ -8,6 +8,7 @@ const {
   formatOptions,
   hyperframesOptions,
   parseArguments,
+  shouldMarkHandoffFailed,
 } = require('../bin/video-skill');
 
 test('CLI help 列出准备、校验、构建和验证入口', () => {
@@ -70,4 +71,10 @@ test('CLI 缺少必填参数返回结构化错误和退出码 2', () => {
   assert.equal(result.status, 2);
   const payload = JSON.parse(result.stderr);
   assert.equal(payload.error.code, 'MISSING_ARGUMENT');
+});
+
+test('CLI 状态回退误用不会把仍可继续的交接任务降级为失败', () => {
+  assert.equal(shouldMarkHandoffFailed({ code: 'INVALID_HANDOFF_TRANSITION' }), false);
+  assert.equal(shouldMarkHandoffFailed({ code: 'HANDOFF_TERMINAL_STATE' }), false);
+  assert.equal(shouldMarkHandoffFailed({ code: 'VIDEO_BUILD_FAILED' }), true);
 });

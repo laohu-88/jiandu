@@ -20,6 +20,14 @@ const {
 const { openReturnUrl } = require('../src/protocol-service');
 
 const BOOLEAN_OPTIONS = new Set(['json', 'open-fcpxml', 'hyperframes', 'help']);
+const NON_FATAL_HANDOFF_COMMAND_ERRORS = new Set([
+  'HANDOFF_TERMINAL_STATE',
+  'INVALID_HANDOFF_TRANSITION',
+]);
+
+function shouldMarkHandoffFailed(error) {
+  return !NON_FATAL_HANDOFF_COMMAND_ERRORS.has(error?.code);
+}
 
 function parseArguments(argv) {
   if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) {
@@ -395,7 +403,8 @@ async function main() {
       const taskPath = parsedArgs.options?.['handoff-task'];
       if (taskPath) {
         const task = await readHandoffTask(taskPath);
-        if (!['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)) {
+        if (shouldMarkHandoffFailed(error)
+          && !['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)) {
           await updateHandoffTask(taskPath, {
             status: 'failed',
             stageMessage: `处理失败：${error.message}`,
@@ -433,4 +442,5 @@ module.exports = {
   hyperframesOptions,
   humanOutput,
   parseArguments,
+  shouldMarkHandoffFailed,
 };

@@ -8,7 +8,7 @@
 
 ## 1. Output contract
 
-Write UTF-8 JSON matching `schemas/codex-video-analysis.schema.json`. The runtime validator also checks cross-file facts: every manifest asset needs one analysis record, asset IDs and types must match the manifest, video ranges/shots cannot exceed probed duration, rejected assets cannot appear in shots, recommended title must be a candidate, shot duration must equal `outSec - inSec`, and markers must sit inside the final timeline.
+Write UTF-8 JSON matching `schemas/codex-video-analysis.schema.json`. The runtime validator also checks cross-file facts: every manifest asset needs one analysis record, asset IDs and types must match the manifest, video ranges/shots cannot exceed probed duration, rejected assets cannot appear in shots, recommended title must be a candidate, shot duration must equal `outSec - inSec`, markers must sit inside the final timeline, and chapter/subchapter order, duration policy, project brief constraints, chapter segments, and FCPXML clip order must remain consistent.
 
 The JSON is Codex's semantic decision record. Do not add source paths: identify source media only by stable `assetId` from the manifest.
 
@@ -18,6 +18,10 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
 
 - `theme`: actual theme, evidence, confidence, and folder/content conflict flag.
 - `titles`: 2–6 candidates, one exact candidate as `recommended`, and evidence-based rationale.
+- `projectBrief`: when the manifest provides it, preserve its source documents and hard constraints. The root brief's explicit chapter order is binding unless it explicitly allows a non-linear structure.
+- `contextDocumentsUsed`: record every explanatory Markdown, TXT, JSON, or HTML file actually used and its concise purpose. These documents are context, never timeline shots.
+- `chapters`: copy the manifest chapter IDs, names, order, relative paths, and subchapters, then add a concise `purpose` for each chapter.
+- `assets[].chapterId` and `subchapterId`: copy directory-derived ownership from the manifest. Never infer a different chapter from a filename.
 - `assets[].semanticLabels`: internal semantic labels, not filenames.
 - `assets[].contentSummary`: what is visibly present.
 - `assets[].suggestedUse`: short possible roles.
@@ -27,7 +31,9 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
 - `confidence`: number from 0 to 1. Use lower values and `reviewRequired: true` for sparse evidence.
 - `timeline.orientation`: `horizontal` or `vertical`, based on the actual adopted media and dominant video rather than the folder name, first image, or preview size.
 - `timeline.width`, `height`, `fps`: intended production sequence. Horizontal defaults to 1920×1080, vertical defaults to 1080×1920, and an unreliable or unavailable source frame rate defaults to 30 fps. Use even dimensions. The rough-cut preview is a separate lightweight artifact and does not set these values.
-- `shots`: ordered no-voiceover visual timeline. For still images, encode display length as `inSec: 0`, `outSec: <duration>`, `durationSec: <duration>`.
+- `shots`: ordered no-voiceover visual timeline. Every shot in a narrative-aware manifest must retain `chapterId` and `subchapterId`. Different chapters and ordered subchapters may not interleave unless the brief explicitly allows it. For still images, encode display length as `inSec: 0`, `outSec: <duration>`, `durationSec: <duration>`.
+- `timeline.chapterSegments`: record each contiguous chapter's first/last shot, timeline start/end, and shot count.
+- `timeline.durationPolicy`: copy the manifest policy. A timeline outside that range requires a concrete `durationException`; never apply the short single-demonstration target to a multi-chapter process-plus-results story.
 - `fitMode`: `contain` or `cover`.
 - `audioMode`: `keep` or `mute`; keep useful original audio when appropriate.
 - `markers`: zero or a few brief explanatory suggestions, not full subtitles. Existing

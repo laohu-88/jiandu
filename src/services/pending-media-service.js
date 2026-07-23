@@ -5,6 +5,13 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 
 const { probeMediaSafe, runMediaTool } = require('./media-tool-service');
+const {
+  CONTEXT_EXTENSIONS,
+  chapterForRelativePath,
+  computeDurationPolicy,
+  detectNarrativeStructure,
+  summarizeChapters,
+} = require('./narrative-structure-service');
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp',
@@ -17,6 +24,7 @@ const MAX_FOCUS_BYTES = 64 * 1024;
 const MAX_SCENE_FRAMES = 12;
 const MAX_TIMED_FRAMES = 10;
 const MAX_DENSE_FRAMES = 60;
+const MANIFEST_SCHEMA_VERSION = 2;
 let drawtextSupportPromise = null;
 
 function sha256Text(value) {
@@ -442,7 +450,9 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
   const cacheDirectory = path.join(cacheRoot, cacheKey);
   const manifestPath = path.join(cacheDirectory, 'manifest.json');
   const cached = JSON.parse(await fs.readFile(manifestPath, 'utf8').catch(() => 'null'));
-  if (cached?.sourceSnapshot?.digest === before.digest && await manifestArtifactsExist(cached)) {
+  if (cached?.schemaVersion === MANIFEST_SCHEMA_VERSION
+    && cached?.sourceSnapshot?.digest === before.digest
+    && await manifestArtifactsExist(cached)) {
     await onStage('analyzing_media', '素材缓存有效，等待 Codex 查看真实预览并分析。');
     return {
       ...cached,
@@ -455,6 +465,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
   await fs.mkdir(cacheDirectory, { recursive: true });
   const snapshotByPath = new Map(before.entries.map((entry) => [entry.relativePath, entry]));
   const allFiles = await walkRegularFiles(before.sourceDirectory);
+  const narrative = await detectNarrativeStructure(before.sourceDirectory, allFiles);
   const mediaFiles = allFiles.filter((file) => getMediaType(path.extname(file.relativePath).toLowerCase()));
   if (mediaFiles.length === 0) {
     throw Object.assign(new Error('素材目录中没有支持的图片或视频。'), {
@@ -468,11 +479,14 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
   for (const file of mediaFiles) {
     const snapshot = snapshotByPath.get(file.relativePath);
     const type = getMediaType(path.extname(file.relativePath).toLowerCase());
+    const chapter = chapterForRelativePath(narrative.chapters, file.relativePath);
     const item = {
       assetId: createAssetId(file.relativePath, snapshot.sha256),
       type,
       filename: path.basename(file.relativePath),
       relativePath: file.relativePath,
+      chapterId: chapter.chapterId,
+      subchapterId: chapter.subchapterId,
       originalPath: file.absolutePath,
       extension: path.extname(file.relativePath).slice(1).toLowerCase(),
       sizeBytes: snapshot.sizeBytes,
@@ -486,9 +500,11 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
 
   const ignoredFiles = allFiles
     .filter((file) => path.basename(file.relativePath) !== FOCUS_FILENAME
+      && !CONTEXT_EXTENSIONS.has(path.extname(file.relativePath).toLowerCase())
       && !getMediaType(path.extname(file.relativePath).toLowerCase()))
     .map((file) => file.relativePath);
   if (ignoredFiles.length > 0) warnings.push(`已忽略不支持的文件：${ignoredFiles.join('、')}`);
+  warnings.push(...narrative.warnings);
 
   const after = await snapshotSource(before.sourceDirectory);
   const sourceVerification = compareSourceSnapshots(before, after);
@@ -499,12 +515,30 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
     });
   }
 
+  const chapters = summarizeChapters(narrative.chapters, items);
+  const durationPolicy = computeDurationPolicy(chapters, {
+    imageCount: items.filter((item) => item.type === 'image').length,
+    videoCount: items.filter((item) => item.type === 'video').length,
+    totalVideoDurationSec: items
+      .filter((item) => item.type === 'video')
+      .reduce((sum, item) => sum + Number(item.metadata?.durationSec || 0), 0),
+  }, narrative.projectBrief);
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: MANIFEST_SCHEMA_VERSION,
     preparedAt: new Date().toISOString(),
     sourceDirectory: before.sourceDirectory,
     sourceFolderName: path.basename(before.sourceDirectory),
     optionalFocus: await readOptionalFocus(before.sourceDirectory),
+    projectBrief: narrative.projectBrief,
+    contextDocuments: narrative.contextDocuments,
+    chapters,
+    narrative: {
+      chapterCount: chapters.length,
+      allowChapterInterleave: narrative.allowChapterInterleave,
+      enforceChapterValidation: narrative.enforceChapterValidation,
+      briefFilesUsed: narrative.briefFilesUsed,
+      durationPolicy,
+    },
     sourceSnapshot: before,
     sourceVerification,
     cacheDirectory,
@@ -513,11 +547,13 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
   };
   const analysisRequestPath = path.join(cacheDirectory, 'analysis-request.json');
   const analysisRequest = {
-    schemaVersion: 1,
+    schemaVersion: MANIFEST_SCHEMA_VERSION,
     manifestPath,
     analysisSchemaPath: path.resolve(__dirname, '../../schemas/codex-video-analysis.schema.json'),
     priority: [
       '视频、截图和图片中的实际内容',
+      'projectBrief 的硬约束、章节顺序和说明文件上下文',
+      '素材的 chapterId、subchapterId 和 relativePath',
       '素材之间的共同主题、操作先后和结果变化',
       '明确可用的项目文档、运行结果或 Git 上下文',
       FOCUS_FILENAME,
@@ -525,10 +561,17 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
       '素材文件夹名称',
     ],
     instruction: '请用 Codex 当前会话查看 imagePreview、storyboard 和单帧，填写协议；不要调用外部模型 API。',
+    projectBrief: manifest.projectBrief,
+    chapters: manifest.chapters,
+    narrative: manifest.narrative,
+    contextDocuments: manifest.contextDocuments,
     items: items.map((item) => ({
       assetId: item.assetId,
       type: item.type,
       filename: item.filename,
+      relativePath: item.relativePath,
+      chapterId: item.chapterId,
+      subchapterId: item.subchapterId,
       metadata: item.metadata,
       metadataError: item.metadataError,
       analysisMedia: item.analysisMedia,

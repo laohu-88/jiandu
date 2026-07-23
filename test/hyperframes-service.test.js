@@ -117,6 +117,18 @@ test('HyperFrames 产品流程文件名包含输入指纹，避免 FCP 复用同
   assert.notEqual(first, otherProject);
 });
 
+test('HyperFrames 流程没有可映射视觉素材时仍可生成稳定文件名', () => {
+  const filename = hyperframesOutputFilename({
+    titles: { recommended: 'HotIngest 工作流' },
+  }, {
+    nodes: ['采集来源', '下载与验证', '人工审核', 'Selected 成果'],
+    reason: '补足流程关系。',
+    insertAfterShotId: 'shot-006',
+  }, null, 'HotIngest');
+
+  assert.match(filename, /^HyperFrames-流程解释-HotIngest 工作流-[0-9a-f]{10}\.mp4$/);
+});
+
 test('HyperFrames 渲染参数把 NTSC 小数帧率转换为 CLI 支持的有理数', () => {
   assert.equal(hyperframesFpsArgument(23.976), '24000/1001');
   assert.equal(hyperframesFpsArgument(29.97), '30000/1001');

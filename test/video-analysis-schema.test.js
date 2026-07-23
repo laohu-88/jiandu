@@ -144,6 +144,19 @@ test('协议拒绝时间线引用已淘汰素材', () => {
   );
 });
 
+test('协议拒绝时间线直接引用 Final Cut Pro 不支持的 WebM 素材', () => {
+  const analysis = validAnalysis();
+  manifest.items[0].extension = 'webm';
+  try {
+    assert.throws(
+      () => validateVideoAnalysis(analysis, manifest),
+      (error) => error.details.some((message) => /Final Cut Pro 不支持的 \.webm/.test(message)),
+    );
+  } finally {
+    delete manifest.items[0].extension;
+  }
+});
+
 test('协议要求建议标题来自候选并限制 marker 范围', () => {
   const analysis = validAnalysis();
   analysis.titles.recommended = '不存在的候选';

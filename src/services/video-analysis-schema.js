@@ -3,6 +3,7 @@ const FIT_MODES = new Set(['contain', 'cover']);
 const AUDIO_MODES = new Set(['keep', 'mute']);
 const SUBTITLE_POSITIONS = new Set(['bottom-safe', 'top-safe', 'center']);
 const TIMELINE_ORIENTATIONS = new Set(['horizontal', 'vertical']);
+const FCP_UNSUPPORTED_SOURCE_EXTENSIONS = new Set(['webm']);
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -33,6 +34,224 @@ function validateStringList(value, field, errors, options = {}) {
 
 function timelineDuration(shots) {
   return Number(shots.reduce((sum, shot) => sum + Number(shot.durationSec || 0), 0).toFixed(3));
+}
+
+function computeChapterSegments(shots) {
+  const segments = [];
+  let cursor = 0;
+  for (const shot of shots) {
+    const startSec = cursor;
+    cursor = Number((cursor + Number(shot.durationSec || 0)).toFixed(3));
+    const current = segments.at(-1);
+    if (current && current.chapterId === shot.chapterId) {
+      current.endShotId = shot.id;
+      current.endSec = cursor;
+      current.shotCount += 1;
+    } else {
+      segments.push({
+        chapterId: shot.chapterId,
+        startShotId: shot.id,
+        endShotId: shot.id,
+        startSec,
+        endSec: cursor,
+        shotCount: 1,
+      });
+    }
+  }
+  return segments;
+}
+
+function sameScalar(left, right, tolerance = 0.02) {
+  if (Number.isFinite(left) && Number.isFinite(right)) return Math.abs(left - right) <= tolerance;
+  return left === right;
+}
+
+function validateNarrativeAnalysis(analysis, manifest, errors) {
+  const manifestChapters = Array.isArray(manifest?.chapters) ? manifest.chapters : [];
+  if (manifestChapters.length === 0 || manifest.narrative?.enforceChapterValidation === false) return;
+  const manifestById = new Map(manifest.items.map((item) => [item.assetId, item]));
+  const chapterOrder = new Map(manifestChapters.map((chapter) => [
+    chapter.chapterId,
+    chapter.chapterOrder,
+  ]));
+  const subchapterOrder = new Map();
+  for (const chapter of manifestChapters) {
+    for (const subchapter of chapter.subchapters || []) {
+      subchapterOrder.set(
+        `${chapter.chapterId}:${subchapter.subchapterId}`,
+        subchapter.subchapterOrder,
+      );
+    }
+  }
+
+  if (!Array.isArray(analysis.chapters)) {
+    errors.push('多章节素材要求 analysis.chapters。');
+  } else {
+    const actual = analysis.chapters.map((chapter) => ({
+      chapterId: chapter?.chapterId,
+      chapterName: chapter?.chapterName,
+      chapterOrder: chapter?.chapterOrder,
+      relativePath: chapter?.relativePath,
+      subchapters: Array.isArray(chapter?.subchapters)
+        ? chapter.subchapters.map((subchapter) => ({
+          subchapterId: subchapter?.subchapterId,
+          subchapterName: subchapter?.subchapterName,
+          subchapterOrder: subchapter?.subchapterOrder,
+          relativePath: subchapter?.relativePath,
+        }))
+        : null,
+    }));
+    const expected = manifestChapters.map((chapter) => ({
+      chapterId: chapter.chapterId,
+      chapterName: chapter.chapterName,
+      chapterOrder: chapter.chapterOrder,
+      relativePath: chapter.relativePath,
+      subchapters: (chapter.subchapters || []).map((subchapter) => ({
+        subchapterId: subchapter.subchapterId,
+        subchapterName: subchapter.subchapterName,
+        subchapterOrder: subchapter.subchapterOrder,
+        relativePath: subchapter.relativePath,
+      })),
+    }));
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      errors.push('analysis.chapters 与素材清单检测到的章节/子章节顺序不一致。');
+    }
+    analysis.chapters.forEach((chapter, index) => {
+      if (!isNonEmptyString(chapter?.purpose, 500)) {
+        errors.push(`chapters[${index}].purpose 必须说明该章的叙事任务。`);
+      }
+    });
+  }
+
+  if (manifest.projectBrief) {
+    if (!isObject(analysis.projectBrief)) {
+      errors.push('检测到根目录本期说明，analysis.projectBrief 不能为空。');
+    } else {
+      const expectedHard = manifest.projectBrief.hardConstraints;
+      if (JSON.stringify(analysis.projectBrief.hardConstraints) !== JSON.stringify(expectedHard)) {
+        errors.push('analysis.projectBrief 未保留本期说明的章节硬约束。');
+      }
+      const expectedDocuments = manifest.projectBrief.sourceDocuments || [];
+      const actualDocuments = analysis.projectBrief.sourceDocuments || [];
+      for (const relativePath of expectedDocuments) {
+        if (!actualDocuments.includes(relativePath)) {
+          errors.push(`analysis.projectBrief 未记录已读取的说明文件：${relativePath}`);
+        }
+      }
+    }
+    const used = Array.isArray(analysis.contextDocumentsUsed)
+      ? analysis.contextDocumentsUsed.map((item) => item?.relativePath)
+      : [];
+    for (const relativePath of manifest.projectBrief.sourceDocuments || []) {
+      if (!used.includes(relativePath)) {
+        errors.push(`contextDocumentsUsed 未记录说明文件用途：${relativePath}`);
+      }
+    }
+  }
+
+  const analysisById = new Map((analysis.assets || []).map((asset) => [asset.assetId, asset]));
+  for (const item of manifest.items) {
+    const asset = analysisById.get(item.assetId);
+    if (!asset) continue;
+    if (asset.chapterId !== item.chapterId) {
+      errors.push(`素材 ${item.assetId} 的 chapterId 与目录章节不一致。`);
+    }
+    if ((asset.subchapterId ?? null) !== (item.subchapterId ?? null)) {
+      errors.push(`素材 ${item.assetId} 的 subchapterId 与目录子章节不一致。`);
+    }
+  }
+
+  const shots = Array.isArray(analysis.timeline?.shots) ? analysis.timeline.shots : [];
+  let previousChapterOrder = -Infinity;
+  const previousSubchapterByChapter = new Map();
+  const adoptedChapterIds = new Set();
+  for (const [index, shot] of shots.entries()) {
+    const source = manifestById.get(shot.assetId);
+    if (!isNonEmptyString(shot.chapterId, 100)) {
+      errors.push(`timeline.shots[${index}].chapterId 不能为空。`);
+      continue;
+    }
+    if (source && shot.chapterId !== source.chapterId) {
+      errors.push(`timeline.shots[${index}].chapterId 与素材所属章节不一致。`);
+    }
+    if (source && (shot.subchapterId ?? null) !== (source.subchapterId ?? null)) {
+      errors.push(`timeline.shots[${index}].subchapterId 与素材所属子章节不一致。`);
+    }
+    const order = chapterOrder.get(shot.chapterId);
+    if (!Number.isFinite(order)) {
+      errors.push(`timeline.shots[${index}].chapterId 不在章节计划中。`);
+      continue;
+    }
+    if (manifest.narrative?.allowChapterInterleave !== true && order < previousChapterOrder) {
+      errors.push(`章节交叉：${shot.chapterId} 在后续章节开始后再次出现。`);
+    }
+    previousChapterOrder = Math.max(previousChapterOrder, order);
+    adoptedChapterIds.add(shot.chapterId);
+    if (shot.subchapterId) {
+      const subOrder = subchapterOrder.get(`${shot.chapterId}:${shot.subchapterId}`);
+      if (!Number.isFinite(subOrder)) {
+        errors.push(`timeline.shots[${index}].subchapterId 不在子章节计划中。`);
+      } else {
+        const previous = previousSubchapterByChapter.get(shot.chapterId) || -Infinity;
+        if (subOrder < previous) {
+          errors.push(`子章节交叉：${shot.subchapterId} 在后续子章节开始后再次出现。`);
+        }
+        previousSubchapterByChapter.set(shot.chapterId, Math.max(previous, subOrder));
+      }
+    }
+  }
+  for (const chapter of manifestChapters.filter((item) => item.required !== false)) {
+    if (!adoptedChapterIds.has(chapter.chapterId)) {
+      errors.push(`要求章节 ${chapter.chapterId} 至少需要一个有效镜头。`);
+    }
+  }
+
+  const computedSegments = computeChapterSegments(shots);
+  if (!Array.isArray(analysis.timeline?.chapterSegments)) {
+    errors.push('多章节时间线必须记录 timeline.chapterSegments。');
+  } else {
+    const actualSegments = analysis.timeline.chapterSegments;
+    if (actualSegments.length !== computedSegments.length) {
+      errors.push('timeline.chapterSegments 数量与镜头章节边界不一致。');
+    } else {
+      computedSegments.forEach((expected, index) => {
+        const actual = actualSegments[index] || {};
+        for (const key of ['chapterId', 'startShotId', 'endShotId', 'shotCount']) {
+          if (actual[key] !== expected[key]) {
+            errors.push(`timeline.chapterSegments[${index}].${key} 与镜头顺序不一致。`);
+          }
+        }
+        for (const key of ['startSec', 'endSec']) {
+          if (!sameScalar(actual[key], expected[key])) {
+            errors.push(`timeline.chapterSegments[${index}].${key} 与镜头时长不一致。`);
+          }
+        }
+      });
+    }
+  }
+
+  const expectedPolicy = manifest.narrative?.durationPolicy;
+  const actualPolicy = analysis.timeline?.durationPolicy;
+  if (!isObject(actualPolicy)) {
+    errors.push('多章节时间线必须记录 timeline.durationPolicy。');
+  } else if (expectedPolicy && (
+    !sameScalar(actualPolicy.minSec, expectedPolicy.minSec)
+    || !sameScalar(actualPolicy.maxSec, expectedPolicy.maxSec)
+    || actualPolicy.source !== expectedPolicy.source
+  )) {
+    errors.push('timeline.durationPolicy 与素材扫描阶段的多章节策略不一致。');
+  }
+  if (expectedPolicy) {
+    const duration = timelineDuration(shots);
+    const outside = duration < expectedPolicy.minSec - 0.02
+      || duration > expectedPolicy.maxSec + 0.02;
+    if (outside && !isNonEmptyString(analysis.timeline?.durationException, 1000)) {
+      errors.push(
+        `时间线总时长 ${duration} 秒不在允许范围 `
+        + `${expectedPolicy.minSec}–${expectedPolicy.maxSec} 秒，且没有明确解释。`,
+      );
+    }
+  }
 }
 
 function validateVideoAnalysis(analysis, manifest) {
@@ -176,6 +395,11 @@ function validateVideoAnalysis(analysis, manifest) {
       const analyzed = analysisById.get(shot.assetId);
       if (!source) errors.push(`${field}.assetId 不在素材清单中。`);
       if (analyzed?.status === 'reject') errors.push(`${field} 使用了已淘汰素材。`);
+      if (source && FCP_UNSUPPORTED_SOURCE_EXTENSIONS.has(
+        String(source.extension || '').toLowerCase(),
+      )) {
+        errors.push(`${field} 使用了 Final Cut Pro 不支持的 .${source.extension} 素材。`);
+      }
       if (!Number.isFinite(shot.inSec) || shot.inSec < 0) errors.push(`${field}.inSec 无效。`);
       if (!Number.isFinite(shot.outSec) || shot.outSec <= shot.inSec) errors.push(`${field}.outSec 无效。`);
       if (!Number.isFinite(shot.durationSec) || shot.durationSec <= 0) {
@@ -246,6 +470,7 @@ function validateVideoAnalysis(analysis, manifest) {
       }
     });
   }
+  validateNarrativeAnalysis(analysis, manifest, errors);
 
   if (errors.length > 0) {
     throw Object.assign(new Error(`Codex 视频分析协议校验失败：${errors[0]}`), {
@@ -259,9 +484,11 @@ function validateVideoAnalysis(analysis, manifest) {
 module.exports = {
   ASSET_STATUSES,
   AUDIO_MODES,
+  FCP_UNSUPPORTED_SOURCE_EXTENSIONS,
   FIT_MODES,
   SUBTITLE_POSITIONS,
   TIMELINE_ORIENTATIONS,
+  computeChapterSegments,
   timelineDuration,
   validateVideoAnalysis,
 };

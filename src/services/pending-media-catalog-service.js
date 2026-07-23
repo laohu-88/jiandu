@@ -7,6 +7,12 @@ const {
 } = require('../constants');
 const { probeMediaSafe } = require('./media-tool-service');
 const { snapshotSource } = require('./pending-media-service');
+const {
+  chapterForRelativePath,
+  computeDurationPolicy,
+  detectNarrativeStructure,
+  summarizeChapters,
+} = require('./narrative-structure-service');
 
 const DEFAULT_PENDING_ROOT = '/Users/example/Desktop/视频待处理';
 const IMAGE_EXTENSIONS = new Set([
@@ -19,7 +25,7 @@ const AUDIO_EXTENSIONS = new Set([
   '.mp3', '.wav', '.m4a', '.aac', '.flac', '.aiff', '.aif', '.ogg', '.opus',
 ]);
 const SUPPORT_EXTENSIONS = new Set([
-  '.txt', '.md', '.json', '.csv', '.tsv', '.srt', '.vtt', '.xml', '.yaml', '.yml', '.pdf',
+  '.txt', '.md', '.json', '.html', '.htm', '.csv', '.tsv', '.srt', '.vtt', '.xml', '.yaml', '.yml', '.pdf',
 ]);
 
 function isInside(rootPath, targetPath) {
@@ -143,12 +149,16 @@ async function scanEpisode(directoryPath, options = {}) {
   const sourceDirectoryRealPath = await fs.realpath(sourceDirectory);
   const warnings = [];
   const files = await walkEpisodeFiles(sourceDirectory, sourceDirectory, [], warnings);
+  const narrative = await detectNarrativeStructure(sourceDirectory, files, { includeContext: false });
+  warnings.push(...narrative.warnings);
   const counts = { image: 0, video: 0, audio: 0, support: 0, unsupported: 0 };
   let totalSizeBytes = 0;
   let totalVideoDurationSec = 0;
   let latestModifiedMs = 0;
+  const mediaFacts = [];
   for (const file of files) {
     const kind = mediaKind(file.extension);
+    const chapter = chapterForRelativePath(narrative.chapters, file.relativePath);
     counts[kind] += 1;
     totalSizeBytes += file.sizeBytes;
     latestModifiedMs = Math.max(latestModifiedMs, file.mtimeMs);
@@ -156,11 +166,32 @@ async function scanEpisode(directoryPath, options = {}) {
       const probe = await (options.probeMediaSafeImpl || probeMediaSafe)(file.absolutePath);
       if (probe.ok && Number.isFinite(probe.metadata?.durationSec)) {
         totalVideoDurationSec += probe.metadata.durationSec;
+        mediaFacts.push({
+          ...file,
+          type: 'video',
+          chapterId: chapter.chapterId,
+          subchapterId: chapter.subchapterId,
+          metadata: probe.metadata,
+        });
       } else {
         warnings.push(`视频无法读取元数据：${file.relativePath}`);
       }
+    } else if (kind === 'image') {
+      mediaFacts.push({
+        ...file,
+        type: 'image',
+        chapterId: chapter.chapterId,
+        subchapterId: chapter.subchapterId,
+        metadata: null,
+      });
     }
   }
+  const chapters = summarizeChapters(narrative.chapters, mediaFacts);
+  const durationPolicy = computeDurationPolicy(chapters, {
+    imageCount: counts.image,
+    videoCount: counts.video,
+    totalVideoDurationSec,
+  }, narrative.projectBrief);
   let sourceSnapshot = null;
   try {
     sourceSnapshot = await (options.snapshotSourceImpl || snapshotSource)(sourceDirectoryRealPath);
@@ -173,6 +204,12 @@ async function scanEpisode(directoryPath, options = {}) {
     sourceDirectoryRealPath,
     safePathSummary: sourceDirectoryRealPath,
     counts,
+    chapters,
+    projectBrief: narrative.projectBrief,
+    briefFilesUsed: narrative.briefFilesUsed,
+    durationPolicy,
+    allowChapterInterleave: narrative.allowChapterInterleave,
+    enforceChapterValidation: narrative.enforceChapterValidation,
     totalFileCount: files.length,
     totalVideoDurationSec: Number(totalVideoDurationSec.toFixed(3)),
     totalSizeBytes,

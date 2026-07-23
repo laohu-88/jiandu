@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
@@ -24,7 +25,11 @@ const {
   hashFile,
   snapshotSource,
 } = require('./pending-media-service');
-const { timelineDuration, validateVideoAnalysis } = require('./video-analysis-schema');
+const {
+  computeChapterSegments,
+  timelineDuration,
+  validateVideoAnalysis,
+} = require('./video-analysis-schema');
 const { resolvePreviewFormat, resolveVideoFormats } = require('./video-format-service');
 const { collectFcpTitles, validateFcpxmlStructure, writeFcpxml } = require('./fcpxml-service');
 const {
@@ -49,9 +54,10 @@ function safeFilename(value, fallback = 'video-project') {
 }
 
 function hyperframesFlowFingerprint(flow, visualSources = {}, projectIdentity = null) {
-  const visuals = Object.fromEntries(Object.keys(visualSources).sort().map((key) => [
+  const resolvedVisualSources = visualSources || {};
+  const visuals = Object.fromEntries(Object.keys(resolvedVisualSources).sort().map((key) => [
     key,
-    visualSources[key]?.sha256 || visualSources[key]?.assetId || null,
+    resolvedVisualSources[key]?.sha256 || resolvedVisualSources[key]?.assetId || null,
   ]));
   return crypto.createHash('sha256')
     .update(JSON.stringify({ flow, visuals, projectIdentity }))
@@ -466,6 +472,32 @@ function buildHumanSummary({
   if (analysis.theme.folderNameConflict) {
     lines.push('文件夹名称与素材实际内容存在差异，本次主题以素材内容为准。', '');
   }
+  if (manifest.projectBrief || analysis.chapters) {
+    lines.push(
+      '## 叙事结构',
+      '',
+      `- 使用的说明文件：${(analysis.projectBrief?.sourceDocuments || []).join('、') || '无'}`,
+      `- 章节交叉：${manifest.narrative?.allowChapterInterleave ? '允许' : '禁止'}`,
+      `- 允许时长：${analysis.timeline.durationPolicy?.minSec ?? '—'}`
+        + `–${analysis.timeline.durationPolicy?.maxSec ?? '—'} 秒`,
+    );
+    const segments = computeChapterSegments(timelineAnalysis.timeline.shots);
+    for (const chapter of analysis.chapters || []) {
+      const segment = segments.find((item) => item.chapterId === chapter.chapterId);
+      lines.push(
+        `- ${chapter.chapterOrder}. ${chapter.chapterName}`
+        + `｜镜头 ${segment?.shotCount || 0}`
+        + `｜时长 ${segment ? Number((segment.endSec - segment.startSec).toFixed(3)) : 0} 秒`
+        + `｜子章节 ${(chapter.subchapters || []).map((item) => item.subchapterName).join('、') || '无'}`,
+      );
+    }
+    lines.push('', '## 使用的上下文文件', '');
+    if ((analysis.contextDocumentsUsed || []).length === 0) lines.push('- 无');
+    else for (const document of analysis.contextDocumentsUsed) {
+      lines.push(`- ${document.relativePath}｜${document.purpose}`);
+    }
+    lines.push('');
+  }
   if (hyperframes?.enabled) {
     lines.push(
       '## HyperFrames 可选生成素材',
@@ -489,7 +521,13 @@ function buildHumanSummary({
     const ranges = asset.ranges.length
       ? asset.ranges.map((range) => `${range.startSec}-${range.endSec}s（可信度 ${range.confidence}${range.reviewRequired ? '，需复核' : ''}）`).join('；')
       : '无视频区间';
-    lines.push(`- ${source?.filename || asset.assetId}｜${asset.status}｜${asset.reason}｜${ranges}`);
+    lines.push(
+      `- ${source?.filename || asset.assetId}`
+      + (asset.chapterId
+        ? `｜${asset.chapterId}${asset.subchapterId ? `/${asset.subchapterId}` : ''}`
+        : '')
+      + `｜${asset.status}｜${asset.reason}｜${ranges}`,
+    );
   }
   lines.push('', '## 镜头顺序', '');
   timelineAnalysis.timeline.shots.forEach((shot, index) => {
@@ -497,6 +535,9 @@ function buildHumanSummary({
     const mapping = mappingById.get(shot.assetId);
     lines.push(
       `${index + 1}. ${source?.filename || mapping?.projectFilename || shot.assetId}`
+      + (shot.chapterId
+        ? `｜${shot.chapterId}${shot.subchapterId ? `/${shot.subchapterId}` : ''}`
+        : '')
       + `｜${shot.inSec}-${shot.outSec}s`
       + `｜${shot.durationSec}s｜${shot.purpose}｜可信度 ${shot.confidence}`
       + `${shot.reviewRequired ? '｜需复核' : ''}`,
@@ -584,6 +625,10 @@ async function verifyCodexVideoProject(projectPath) {
     width: timelineFormat.width,
     height: timelineFormat.height,
     fps: timelineFormat.fps,
+    clipMediaUrls: effectiveAnalysis.timeline.shots.map((shot) => {
+      const mapping = status.assetMappings.find((item) => item.assetId === shot.assetId);
+      return mapping ? pathToFileURL(mapping.projectAbsolutePath).href.replace(/&/g, '&amp;') : null;
+    }),
   });
   errors.push(...fcpxmlReport.errors);
   let xmlSyntax = { ok: false, message: '未运行 xmllint。' };
@@ -666,6 +711,14 @@ async function verifyCodexVideoProject(projectPath) {
     xmlSyntax,
     previewMetadata,
     hyperframes,
+    narrative: {
+      ok: true,
+      chapterCount: manifest.chapters?.length || 0,
+      chapterSegments: computeChapterSegments(effectiveAnalysis.timeline.shots),
+      durationSec: timelineDuration(effectiveAnalysis.timeline.shots),
+      durationPolicy: manifest.narrative?.durationPolicy || null,
+      fcpxmlOrderMatchesAnalysis: fcpxmlReport.errors.every((error) => !/镜头素材顺序/.test(error)),
+    },
     formats: { timeline: timelineFormat, preview: previewFormat },
   };
   if (!report.ok) {

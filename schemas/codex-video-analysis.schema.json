@@ -7,6 +7,16 @@
   "required": ["schemaVersion", "theme", "titles", "assets", "timeline"],
   "properties": {
     "schemaVersion": { "const": 1 },
+    "projectBrief": { "$ref": "#/$defs/projectBrief" },
+    "contextDocumentsUsed": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/contextDocumentUse" }
+    },
+    "chapters": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/chapter" }
+    },
     "theme": {
       "type": "object",
       "additionalProperties": false,
@@ -48,6 +58,13 @@
         "width": { "type": "integer", "minimum": 320, "multipleOf": 2 },
         "height": { "type": "integer", "minimum": 320, "multipleOf": 2 },
         "fps": { "type": "number", "minimum": 1, "maximum": 120 },
+        "durationPolicy": { "$ref": "#/$defs/durationPolicy" },
+        "durationException": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "chapterSegments": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/chapterSegment" }
+        },
         "shots": {
           "type": "array",
           "minItems": 1,
@@ -63,6 +80,113 @@
   },
   "$defs": {
     "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "projectBrief": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceDocuments",
+        "theme",
+        "narrativeOrder",
+        "chapterRelationships",
+        "styleRequirements",
+        "durationRequirement",
+        "hyperframesRequirement",
+        "specialConstraints",
+        "hardConstraints"
+      ],
+      "properties": {
+        "sourceDocuments": { "$ref": "#/$defs/stringList" },
+        "theme": { "type": ["string", "null"], "maxLength": 2000 },
+        "narrativeOrder": { "$ref": "#/$defs/stringList" },
+        "chapterRelationships": { "$ref": "#/$defs/stringList" },
+        "styleRequirements": { "$ref": "#/$defs/stringList" },
+        "durationRequirement": {
+          "type": ["object", "null"],
+          "properties": {
+            "minSec": { "type": "number", "minimum": 0 },
+            "maxSec": { "type": ["number", "null"], "minimum": 0 },
+            "source": { "type": "string", "minLength": 1 }
+          },
+          "required": ["minSec", "maxSec", "source"],
+          "additionalProperties": false
+        },
+        "hyperframesRequirement": { "type": ["string", "null"], "maxLength": 2000 },
+        "specialConstraints": { "$ref": "#/$defs/stringList" },
+        "hardConstraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["chapterOrder", "allowChapterInterleave"],
+          "properties": {
+            "chapterOrder": { "$ref": "#/$defs/stringList" },
+            "allowChapterInterleave": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "contextDocumentUse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relativePath", "purpose"],
+      "properties": {
+        "relativePath": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "chapterId": { "type": ["string", "null"], "maxLength": 100 },
+        "subchapterId": { "type": ["string", "null"], "maxLength": 100 },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "subchapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subchapterId", "subchapterName", "subchapterOrder", "relativePath"],
+      "properties": {
+        "subchapterId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "subchapterName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "subchapterOrder": { "type": "integer", "minimum": 1 },
+        "relativePath": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
+    "chapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chapterId", "chapterName", "chapterOrder", "relativePath", "subchapters", "purpose"],
+      "properties": {
+        "chapterId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "chapterName": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "chapterOrder": { "type": "integer", "minimum": 1 },
+        "relativePath": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "subchapters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/subchapter" }
+        },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "durationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minSec", "maxSec", "source", "rationale"],
+      "properties": {
+        "minSec": { "type": "number", "minimum": 0 },
+        "maxSec": { "type": "number", "exclusiveMinimum": 0 },
+        "source": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
+    "chapterSegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chapterId", "startShotId", "endShotId", "startSec", "endSec", "shotCount"
+      ],
+      "properties": {
+        "chapterId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "startShotId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "endShotId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "startSec": { "type": "number", "minimum": 0 },
+        "endSec": { "type": "number", "exclusiveMinimum": 0 },
+        "shotCount": { "type": "integer", "minimum": 1 }
+      }
+    },
     "stringList": {
       "type": "array",
       "items": { "type": "string", "minLength": 1, "maxLength": 200 }
@@ -95,6 +219,8 @@
       "properties": {
         "assetId": { "type": "string", "minLength": 1 },
         "type": { "enum": ["image", "video"] },
+        "chapterId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "subchapterId": { "type": ["string", "null"], "maxLength": 100 },
         "semanticLabels": {
           "type": "array",
           "minItems": 1,
@@ -131,6 +257,8 @@
       "properties": {
         "id": { "type": "string", "minLength": 1 },
         "assetId": { "type": "string", "minLength": 1 },
+        "chapterId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "subchapterId": { "type": ["string", "null"], "maxLength": 100 },
         "inSec": { "type": "number", "minimum": 0 },
         "outSec": { "type": "number", "exclusiveMinimum": 0 },
         "durationSec": { "type": "number", "exclusiveMinimum": 0 },

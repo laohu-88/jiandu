@@ -315,6 +315,11 @@ function validateFcpxmlStructure(xml, expected = {}) {
     duration: match[1].match(/\bduration="([^"]+)"/)?.[1] || null,
   }));
   const mediaRepresentations = [...xml.matchAll(/<media-rep\s+[^>]*src="([^"]+)"/g)];
+  const resourceMediaById = new Map(
+    [...xml.matchAll(/<asset\s+id="([^"]+)"[\s\S]*?<media-rep\s+[^>]*src="([^"]+)"/g)]
+      .map((match) => [match[1], match[2]]),
+  );
+  const clipMediaUrls = clips.map((clip) => resourceMediaById.get(clip[1]) || null);
   const sequenceFormatId = xml.match(/<sequence\b[^>]*\bformat="([^"]+)"/)?.[1] || null;
   const formatTags = [...xml.matchAll(/<format\s+([^>]+)\/>/g)].map((match) => {
     const attributes = match[1];
@@ -351,6 +356,10 @@ function validateFcpxmlStructure(xml, expected = {}) {
   if (Number.isInteger(expected.titleCount) && titles.length !== expected.titleCount) {
     errors.push(`title 数量 ${titles.length} 与分析结果 ${expected.titleCount} 不一致。`);
   }
+  if (Array.isArray(expected.clipMediaUrls)
+    && JSON.stringify(clipMediaUrls) !== JSON.stringify(expected.clipMediaUrls)) {
+    errors.push('FCPXML 镜头素材顺序与 analysis 章节化镜头顺序不一致。');
+  }
   if (titles.length > 0 && !effects.some((effect) => effect.uid === BASIC_TITLE_EFFECT.uid)) {
     errors.push('原生标题缺少 FCP 12.3 基础标题 effect 资源。');
   }
@@ -376,6 +385,7 @@ function validateFcpxmlStructure(xml, expected = {}) {
     effectCount: effects.length,
     version,
     mediaUrls: mediaRepresentations.map((match) => match[1]),
+    clipMediaUrls,
     sequenceFormat,
   };
 }
@@ -390,6 +400,10 @@ async function writeFcpxml(outputPath, payload) {
     width: payload.analysis.timeline.width,
     height: payload.analysis.timeline.height,
     fps: payload.analysis.timeline.fps,
+    clipMediaUrls: payload.analysis.timeline.shots.map((shot) => {
+      const mapping = payload.assetMappings.find((item) => item.assetId === shot.assetId);
+      return mapping ? pathToFileURL(mapping.projectAbsolutePath).href.replace(/&/g, '&amp;') : null;
+    }),
   });
   if (!report.ok) {
     throw Object.assign(new Error(`FCPXML 结构校验失败：${report.errors[0]}`), {

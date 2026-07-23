@@ -88,6 +88,7 @@ const elements = {
   pendingMediaEmpty: document.querySelector('#pendingMediaEmpty'),
   autoOpenFcpSetting: document.querySelector('#autoOpenFcpSetting'),
   handoffSourceSummary: document.querySelector('#handoffSourceSummary'),
+  handoffNarrativePreview: document.querySelector('#handoffNarrativePreview'),
   handoffWorkList: document.querySelector('#handoffWorkList'),
   handoffArtifactList: document.querySelector('#handoffArtifactList'),
   cancelHandoffConfirmButton: document.querySelector('#cancelHandoffConfirmButton'),
@@ -534,6 +535,27 @@ function openHandoffConfirm(episode) {
     ['视频总时长', formatResultDuration(episode.totalVideoDurationSec)],
     ['警告', episode.warnings.join('；') || (episode.hasUnsupported ? '存在不支持格式' : '无')],
   ]));
+  const chapters = episode.chapters || [];
+  const narrativeHeading = createTextElement('h3', '叙事结构');
+  const narrativeList = document.createElement('ol');
+  narrativeList.replaceChildren(...chapters.map((chapter) => createTextElement(
+    'li',
+    `${chapter.chapterName}（图片 ${chapter.imageCount}，视频 ${chapter.videoCount}，`
+      + `视频总时长 ${formatResultDuration(chapter.totalVideoDurationSec)}）`,
+  )));
+  const narrativeFacts = createDefinitionGrid([
+    ['检测到的章节数', String(chapters.length)],
+    ['使用的本期说明文件', (episode.briefFilesUsed || []).join('、') || '无'],
+    ['预计成片时长范围', episode.durationPolicy
+      ? `${episode.durationPolicy.minSec}–${episode.durationPolicy.maxSec} 秒`
+      : '待分析'],
+    ['章节交叉', episode.allowChapterInterleave ? '允许' : '禁止'],
+  ]);
+  elements.handoffNarrativePreview.replaceChildren(narrativeHeading, narrativeList, narrativeFacts);
+  elements.handoffNarrativePreview.classList.toggle(
+    'hidden',
+    chapters.length === 0 && (episode.briefFilesUsed || []).length === 0,
+  );
   fillList(elements.handoffWorkList, [
     '扫描和验证素材', 'ffprobe 元数据', '抽帧与场景变化抽帧', '素材语义分析',
     '主题与标题判断', '采用、候选和淘汰判断', '有效区间与镜头编排', '连贯度检查',

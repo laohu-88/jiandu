@@ -1954,6 +1954,24 @@ tbody tr:last-child td {
   margin-top: 0;
 }
 
+.handoff-narrative-preview {
+  padding: 18px;
+  border: 1px solid #dfe4ed;
+  border-radius: 14px;
+  background: #f7f9fd;
+}
+
+.handoff-narrative-preview h3 {
+  margin: 0 0 10px;
+}
+
+.handoff-narrative-preview ol {
+  margin: 0 0 14px;
+  padding-left: 22px;
+  color: #4f596b;
+  line-height: 1.7;
+}
+
 .compact-list {
   margin: 0;
   padding-left: 20px;
