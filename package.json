@@ -14,31 +14,12 @@
     "check": "node scripts/check-js.js",
     "video-skill": "node bin/video-skill.js",
     "hyperframes:doctor": "node bin/video-skill.js hyperframes-doctor",
-    "build:mac": "electron-builder --mac dir --arm64"
-  },
-  "build": {
-    "appId": "com.laohu.video-cut-planner-v3",
-    "productName": "视频剪辑编排器 v3",
-    "electronDist": "node_modules/electron/dist",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "src/**/*",
-      "package.json"
-    ],
-    "mac": {
-      "target": [
-        {
-          "target": "dir",
-          "arch": [
-            "arm64"
-          ]
-        }
-      ],
-      "category": "public.app-category.video",
-      "identity": null
-    }
+    "icon:mac": "node scripts/generate-mac-icon.js",
+    "package:mac": "node scripts/package-mac.js",
+    "build:mac": "npm run package:mac",
+    "verify:package": "node scripts/verify-package.js",
+    "install:mac:local": "node scripts/install-mac-local.js",
+    "launch:installed": "node scripts/launch-installed.js"
   },
   "devDependencies": {
     "electron": "^37.0.0",

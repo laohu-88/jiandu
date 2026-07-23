@@ -4,12 +4,22 @@ const { watch } = require('node:fs');
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require('electron');
 
 const {
+  APP_ID,
   APP_NAME,
-  APP_VERSION,
+  CODEX_WORKSPACE_ROOT,
   DEFAULT_PROJECT_ROOT,
   FCP_EXPORT_DIR,
   RAW_SRT_FILE,
 } = require('./constants');
+const {
+  getRuntimePaths,
+  stableUserDataPath,
+} = require('./runtime-paths');
+const {
+  PROTOCOL_SCHEME,
+  ProtocolQueue,
+  protocolUrlFromArgv,
+} = require('./protocol-service');
 const {
   createProject,
   openProject,
@@ -119,6 +129,8 @@ const authorizedProjectPaths = new Set();
 const terminalTaskVersions = new Map();
 let handoffWatcher = null;
 let handoffRefreshTimer = null;
+const protocolQueue = new ProtocolQueue();
+let appReady = false;
 
 function authorizeProject(projectPath) {
   const resolved = path.resolve(projectPath);
@@ -216,6 +228,8 @@ async function ensureBatchFailureRecord(projectPath, item, error) {
 }
 
 function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  const runtimePaths = getRuntimePaths(app);
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
@@ -224,17 +238,21 @@ function createWindow() {
     title: APP_NAME,
     backgroundColor: '#f5f6f8',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: runtimePaths.preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  mainWindow.loadFile(runtimePaths.rendererPath);
   mainWindow.webContents.once('did-finish-load', () => {
     refreshTerminalHandoffs({ includeExisting: true }).catch(() => {});
   });
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+  return mainWindow;
 }
 
 async function scanHandoffsAndPending() {
@@ -257,10 +275,42 @@ async function validateTerminalProject(task) {
 
 async function focusPlannerOnTask(task) {
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.webContents.isLoadingMainFrame()) {
+    await new Promise((resolve) => mainWindow.webContents.once('did-finish-load', resolve));
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
   app.focus({ steal: true });
   mainWindow.webContents.send('handoff:terminal', task);
+}
+
+function restoreMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  app.focus({ steal: true });
+}
+
+async function handleReturnProtocol(entry) {
+  const taskPath = path.join(taskRoot(app.getPath('userData')), `${entry.taskId}.json`);
+  const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+  if (!TERMINAL_STATUSES.has(task.status)) {
+    throw Object.assign(new Error('只有终态任务可以通过协议回流。'), {
+      code: 'HANDOFF_NOT_TERMINAL',
+    });
+  }
+  await focusPlannerOnTask(task);
+}
+
+function queueReturnUrl(rawUrl) {
+  try {
+    protocolQueue.enqueue(rawUrl);
+    if (appReady) protocolQueue.drain(handleReturnProtocol).catch(() => {});
+  } catch {
+    // 单个非法或恶意 URL 被拒绝，不影响应用生命周期。
+  }
 }
 
 async function refreshTerminalHandoffs(options = {}) {
@@ -318,7 +368,7 @@ async function startHandoffWatcher() {
 
 function registerIpc() {
   ipcMain.handle('app:get-config', () => ({
-    version: APP_VERSION,
+    version: app.getVersion(),
     defaultProjectRoot: DEFAULT_PROJECT_ROOT,
     defaultPendingRoot: DEFAULT_PENDING_ROOT,
   }));
@@ -352,7 +402,7 @@ function registerIpc() {
         totalSizeBytes: episode.totalSizeBytes,
         warnings: episode.warnings,
       },
-      appWorkspace: path.resolve(__dirname, '..'),
+      appWorkspace: CODEX_WORKSPACE_ROOT,
       hyperframesMode: args?.hyperframesMode || 'auto',
       autoOpenFcp: settings.autoOpenFcp,
     });
@@ -762,14 +812,36 @@ function registerIpc() {
 }
 
 app.setName(APP_NAME);
+app.setPath('userData', stableUserDataPath(app.getPath('appData')));
 
-app.whenReady().then(() => {
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('open-url', (event, rawUrl) => {
+    event.preventDefault();
+    queueReturnUrl(rawUrl);
+  });
+
+  app.on('second-instance', (_event, argv) => {
+    const rawUrl = protocolUrlFromArgv(argv);
+    if (rawUrl) queueReturnUrl(rawUrl);
+    else if (appReady) restoreMainWindow();
+  });
+}
+
+app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
+  appReady = true;
+  app.setAppUserModelId?.(APP_ID);
+  app.setAsDefaultProtocolClient(PROTOCOL_SCHEME);
   registerIpc();
   createWindow();
   startHandoffWatcher().catch(() => {});
+  await protocolQueue.drain(handleReturnProtocol).catch(() => {});
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    restoreMainWindow();
   });
 });
 

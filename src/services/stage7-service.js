@@ -133,24 +133,20 @@ async function checkSubtitleCommand(command = 'ww') {
       detail: '字幕命令包含空格或特殊字符。请填写真实命令路径或脚本路径。',
     };
   }
-  try {
-    const result = await execFileAsync('/bin/zsh', ['-ilc', `command -v ${cleanCommand}`], {
-      timeout: 5000,
-      maxBuffer: 1024 * 1024,
-    });
-    const commandPath = String(result.stdout || '').trim();
-    return {
-      available: Boolean(commandPath),
-      message: commandPath ? '可用' : '可能不可用',
-      detail: commandPath || '未找到命令。可以手动生成 raw.srt 后用“整理已有 SRT”。',
-    };
-  } catch (error) {
+  const commandPath = await resolveToolPath(cleanCommand);
+  if (!commandPath) {
     return {
       available: false,
       message: '可能不可用',
-      detail: error.stderr || error.message,
+      detail: '未找到可执行文件。可以手动生成 raw.srt 后用“整理已有 SRT”。',
     };
   }
+  return {
+    available: true,
+    message: '可用',
+    detail: commandPath,
+    executablePath: commandPath,
+  };
 }
 
 async function detectEnvironment(subtitleCommand = 'ww') {

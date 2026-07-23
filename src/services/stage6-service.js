@@ -23,6 +23,7 @@ const {
 } = require('../constants');
 const { writeProjectState } = require('./project-service');
 const { compileTimeline } = require('./timeline-engine');
+const { resolveToolPath } = require('./stage7-service');
 
 const execFileAsync = promisify(execFile);
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v']);
@@ -546,10 +547,6 @@ async function organizeSrtFile(projectPath, inputSrtPath = null, inputVideo = ''
   };
 }
 
-function shellQuote(value) {
-  return `'${String(value).replace(/'/g, "'\\''")}'`;
-}
-
 function commandNotFoundMessage(command) {
   return `${command} 可能是 iTerm2/zsh alias，Electron 无法直接识别。`
     + '请在设置里填写真实命令路径或脚本路径。';
@@ -626,10 +623,9 @@ async function generateSubtitlesFromVideo(projectPath, inputVideo, command = 'ww
   let collected = { found: [], moved: [] };
 
   try {
-    commandOutput = await execFileAsync('/bin/zsh', [
-      '-ilc',
-      `${cleanCommand} ${shellQuote(videoPath)}`,
-    ], {
+    const executable = await resolveToolPath(cleanCommand);
+    if (!executable) throw new Error(commandNotFoundMessage(cleanCommand));
+    commandOutput = await execFileAsync(executable, [videoPath], {
       cwd: subtitlePath,
       timeout: 60 * 60 * 1000,
       maxBuffer: 32 * 1024 * 1024,

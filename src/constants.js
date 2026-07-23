@@ -1,8 +1,12 @@
 const path = require('node:path');
+const { version: PACKAGE_VERSION } = require('../package.json');
 
 const APP_NAME = '视频剪辑编排器 v3';
 const INTERNAL_APP_NAME = 'Video Cut Planner V3';
-const APP_VERSION = 'v3.1.0-stage1';
+const APP_VERSION = `v${PACKAGE_VERSION}`;
+const APP_ID = 'com.laohu.video-cut-planner-v3';
+const USER_DATA_DIRNAME = APP_NAME;
+const CODEX_WORKSPACE_ROOT = '/Users/example/Projects/video-cut-planner-v3';
 const DEFAULT_PROJECT_ROOT = '/Users/example/Desktop/视频素材库';
 
 const PROJECT_DIRS = [
@@ -72,6 +76,10 @@ module.exports = {
   APP_NAME,
   INTERNAL_APP_NAME,
   APP_VERSION,
+  APP_ID,
+  PACKAGE_VERSION,
+  USER_DATA_DIRNAME,
+  CODEX_WORKSPACE_ROOT,
   DEFAULT_PROJECT_ROOT,
   PROJECT_DIRS,
   LEGACY_PROJECT_DIRS,

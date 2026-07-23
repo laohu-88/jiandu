@@ -283,6 +283,48 @@ node bin/video-skill.js build \
 - 原生 Title 使用本机 Final Cut Pro 12.3 导出的“基本字幕”结构；无标题项目继续保持 FCPXML 1.10，带标题项目使用 FCPXML 1.14。
 - 生成并通过 `xmllint` 校验不等于已经在 Final Cut Pro 中人工导入验证。
 
+## macOS 本机安装版
+
+日常使用不再需要进入仓库或运行 `npm start`：
+
+1. 打开 `/Applications/视频剪辑编排器 v3.app`；
+2. 在“待处理素材”选择一期素材并交给 Codex；
+3. Codex 新任务会预填完整提示词，用户按一次发送；
+4. 生产完成后通过 `video-cut-planner://` 自动回到已安装 App；
+5. 完成短验收后再进入 Final Cut Pro。
+
+正式 App 与开发模式明确共用固定数据目录：
+
+```text
+~/Library/Application Support/视频剪辑编排器 v3
+```
+
+历史 handoff、自动打开 FCP 设置和最近项目都保存在此目录。内部资源从
+`app.getAppPath()` 与 `process.resourcesPath` 解析；状态、任务和日志不会写入
+App Bundle 或 `app.asar`。Codex 深链接的工作目录仍固定为真实源码仓库：
+
+```text
+/Users/example/Projects/video-cut-planner-v3
+```
+
+本机构建、验证、安装与启动：
+
+```bash
+npm run package:mac
+npm run verify:package
+npm run install:mac:local
+npm run launch:installed
+```
+
+`package:mac` 只生成 arm64 `dir` 目标，开启 ASAR，并使用 electron-builder
+完成 ad-hoc 签名。`install:mac:local` 先验证新构建；如已有旧 App，会把经验证
+的时间戳备份保存在固定 userData 的 `install-backups/`，再安全替换，失败时恢复。
+它不会静默使用 `sudo`，也不会删除 userData、源码仓库或旧备份。
+
+此构建仅供当前 Apple Silicon Mac 本机日常使用：它采用 ad-hoc 签名，未做
+Developer ID 签名与 Apple notarization，不是 Gatekeeper 公证的公开分发包；
+不生成 DMG、PKG 或自动更新。
+
 ## 开发与验证
 
 ```bash
@@ -290,10 +332,15 @@ npm install
 npm test
 npm run hyperframes:doctor
 npm start
-npm run build:mac
+npm run package:mac
+npm run verify:package
 ```
 
-项目使用 npm、CommonJS 和 Electron。`ffmpeg` 与 `ffprobe` 继续通过现有环境探测服务从 PATH 或 Homebrew 常用路径解析，不安装第二套媒体工具。打包产物默认位于 `dist/mac-arm64/视频剪辑编排器 v3.app`。
+源码开发仍可使用 `npm start` 或 `npm run dev`。项目使用 npm、CommonJS 和
+Electron。`ffmpeg` 与 `ffprobe` 继续通过现有环境探测服务从配置、Finder
+继承的 PATH、`/opt/homebrew/bin`、`/usr/local/bin` 和系统目录解析，不启动
+login shell，也不安装第二套媒体工具。打包产物默认位于
+`dist/mac-arm64/视频剪辑编排器 v3.app`。
 
 常见故障：
 

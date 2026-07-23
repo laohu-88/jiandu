@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
+  checkSubtitleCommand,
   loadRecentProjects,
   saveRecentProject,
   detectEnvironment,
@@ -63,4 +64,16 @@ test('环境检测函数返回 ffmpeg、ffprobe、字幕命令状态', async () 
   assert.equal(typeof result.subtitleCommand.available, 'boolean');
   assert.ok(result.subtitleCommand.message);
   assert.ok(Array.isArray(result.notes));
+});
+
+test('Finder 启动环境从绝对路径与常见目录解析，不启动 login shell', async () => {
+  const executable = await checkSubtitleCommand(process.execPath);
+  assert.equal(executable.available, true);
+  assert.equal(executable.executablePath, process.execPath);
+  const source = await fs.readFile(path.join(__dirname, '../src/services/stage7-service.js'), 'utf8');
+  assert.doesNotMatch(source, /\/bin\/zsh|-[il]+c|command -v/);
+  const stage2 = await fs.readFile(path.join(__dirname, '../src/services/stage2-service.js'), 'utf8');
+  assert.doesNotMatch(stage2, /execFileAsync\('ffprobe'/);
+  const stage6 = await fs.readFile(path.join(__dirname, '../src/services/stage6-service.js'), 'utf8');
+  assert.doesNotMatch(stage6, /\/bin\/zsh|shellQuote|shell:\s*true/);
 });

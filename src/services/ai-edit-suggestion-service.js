@@ -3,6 +3,7 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const {
+  APP_VERSION,
   AI_EDIT_SUGGESTION_FILE,
   AI_MATERIAL_REPORT_FILE,
 } = require('../constants');
@@ -104,7 +105,7 @@ function buildEditSuggestionPrompt(reportText) {
   return `你是一个视频剪辑规划助手。请基于下面的 AI 素材报告，生成一份适合用户手动进入 FCP 剪辑的视频剪辑建议。
 
 当前工具定位（必须作为唯一的当前视频主线）：
-- 当前产品是“视频剪辑编排器 v3”（v3.1.0-stage1）。
+- 当前产品是“视频剪辑编排器 v3”（${APP_VERSION}）。
 - Electron 内的本地模型主线是：素材筛选、人工审核、文本/图片 AI 分析、批量分析、AI 素材报告、剪辑建议。
 - Codex 视频 Skill 可通过共享核心创建正式 v3 项目、独立素材 FCPXML 和粗剪预览；本提示只负责较粗粒度的人工剪辑建议，不替代该结构化流程。
 - 如果素材中出现上述旧流程的界面或截图，只能明确描述为“历史版本”“旧流程”“过往尝试”或“旧版本截图”，不能推荐为当前视频主线。

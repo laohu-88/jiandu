@@ -3,7 +3,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const roots = ['bin', 'scripts', 'src', 'test'];
-const files = [];
+const files = [path.resolve(__dirname, '..', 'electron-builder.config.js')];
 
 function collect(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {

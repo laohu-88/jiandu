@@ -17,6 +17,7 @@ const {
   getSegmentDuration,
   parsePauseDirectives,
 } = require('./timeline-engine');
+const { resolveToolPath } = require('./stage7-service');
 
 const execFileAsync = promisify(execFile);
 const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.m4a', '.aac']);
@@ -242,8 +243,10 @@ async function importVideoPlan(projectPath, planText) {
 }
 
 async function hasFfprobe() {
+  const executable = await resolveToolPath('ffprobe');
+  if (!executable) return false;
   try {
-    await execFileAsync('ffprobe', ['-version'], { timeout: 5000 });
+    await execFileAsync(executable, ['-version'], { timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -251,8 +254,10 @@ async function hasFfprobe() {
 }
 
 async function readAudioDuration(filePath) {
+  const executable = await resolveToolPath('ffprobe');
+  if (!executable) throw new Error('找不到 ffprobe，无法读取配音时长。');
   const { stdout } = await execFileAsync(
-    'ffprobe',
+    executable,
     [
       '-v',
       'error',

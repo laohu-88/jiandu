@@ -17,6 +17,7 @@ const {
   readHandoffTask,
   updateHandoffTask,
 } = require('../src/services/handoff-task-service');
+const { openReturnUrl } = require('../src/protocol-service');
 
 const BOOLEAN_OPTIONS = new Set(['json', 'open-fcpxml', 'hyperframes', 'help']);
 
@@ -371,6 +372,7 @@ async function execute(argv) {
       },
       stageMessage: task.stageMessage,
     });
+    await openReturnUrl(result.taskId);
     return { command, options, result };
   }
   throw Object.assign(new Error(`未知命令：${command}`), { code: 'INVALID_COMMAND' });
