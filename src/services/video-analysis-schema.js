@@ -4,6 +4,10 @@ const AUDIO_MODES = new Set(['keep', 'mute']);
 const SUBTITLE_POSITIONS = new Set(['bottom-safe', 'top-safe', 'center']);
 const TIMELINE_ORIENTATIONS = new Set(['horizontal', 'vertical']);
 const FCP_UNSUPPORTED_SOURCE_EXTENSIONS = new Set(['webm']);
+const NARRATIVE_ROLES = new Set([
+  'hook', 'setup', 'context', 'process', 'evidence', 'transition',
+  'result', 'comparison', 'conclusion', 'supporting',
+]);
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -254,6 +258,191 @@ function validateNarrativeAnalysis(analysis, manifest, errors) {
   }
 }
 
+function validateEvidenceDecision(value, field, errors) {
+  if (!isObject(value)) {
+    errors.push(`${field} 必须是对象。`);
+    return;
+  }
+  validateStringList(value.visualEvidenceUsed, `${field}.visualEvidenceUsed`, errors, {
+    maximum: 12,
+    itemMaxLength: 500,
+  });
+  validateStringList(value.contextEvidenceUsed, `${field}.contextEvidenceUsed`, errors, {
+    maximum: 12,
+    itemMaxLength: 500,
+  });
+  validateStringList(value.inference, `${field}.inference`, errors, {
+    maximum: 12,
+    itemMaxLength: 500,
+  });
+}
+
+function validateStoryUnitAnalysis(analysis, manifest, errors, analysisById) {
+  const manifestUnits = Array.isArray(manifest?.storyUnits) ? manifest.storyUnits : [];
+  if (manifestUnits.length === 0) return;
+  if (!Array.isArray(analysis.storyUnits)) {
+    errors.push('含上下文的 Stage 5B 素材要求 analysis.storyUnits。');
+    return;
+  }
+  const manifestById = new Map(manifest.items.map((item) => [item.assetId, item]));
+  const expectedById = new Map(manifestUnits.map((unit) => [unit.storyUnitId, unit]));
+  const actualById = new Map();
+  for (const [index, unit] of analysis.storyUnits.entries()) {
+    const field = `storyUnits[${index}]`;
+    if (!isObject(unit)) {
+      errors.push(`${field} 必须是对象。`);
+      continue;
+    }
+    if (!isNonEmptyString(unit.storyUnitId, 100)) errors.push(`${field}.storyUnitId 无效。`);
+    if (actualById.has(unit.storyUnitId)) errors.push(`${field}.storyUnitId 重复。`);
+    actualById.set(unit.storyUnitId, unit);
+    const expected = expectedById.get(unit.storyUnitId);
+    if (!expected) errors.push(`${field}.storyUnitId 不在 manifest.storyUnits 中。`);
+    validateStringList(unit.assetIds, `${field}.assetIds`, errors, {
+      minimum: 1,
+      maximum: expected?.assetIds?.length || manifest.items.length,
+      itemMaxLength: 100,
+    });
+    const assetIds = Array.isArray(unit.assetIds) ? unit.assetIds : [];
+    for (const assetId of assetIds) {
+      if (!manifestById.has(assetId)) errors.push(`${field}.assetIds 引用了不存在的素材 ${assetId}。`);
+      if (expected && !expected.assetIds.includes(assetId)) {
+        errors.push(`${field}.assetIds 包含不属于该 Story Unit 的素材 ${assetId}。`);
+      }
+    }
+    if (expected && JSON.stringify([...assetIds].sort()) !== JSON.stringify([...expected.assetIds].sort())) {
+      errors.push(`${field}.assetIds 必须完整保留 manifest 的 Story Unit 成员。`);
+    }
+    const expectedContextFiles = expected?.evidence?.contextSourceFiles || [];
+    validateStringList(unit.contextSourceFiles, `${field}.contextSourceFiles`, errors, {
+      minimum: expectedContextFiles.length > 0 ? 1 : 0,
+      maximum: expectedContextFiles.length,
+      itemMaxLength: 1000,
+    });
+    for (const relativePath of unit.contextSourceFiles || []) {
+      if (!expectedContextFiles.includes(relativePath)) {
+        errors.push(`${field}.contextSourceFiles 包含未绑定的上下文：${relativePath}`);
+      }
+    }
+    if ((expected?.chapterIds || []).length === 1
+      && unit.chapterId !== expected.chapterIds[0]) {
+      errors.push(`${field}.chapterId 必须服从素材所属顶层章节。`);
+    }
+    if ((expected?.chapterIds || []).length > 1 && unit.chapterId != null) {
+      errors.push(`${field}.chapterId 在跨章节 Story Unit 中必须为 null，并保留警告。`);
+    }
+    const classificationKeys = [
+      'representativeAssetIds', 'supportingAssetIds', 'alternateAssetIds',
+      'duplicateAssetIds', 'unusableAssetIds',
+    ];
+    for (const key of classificationKeys) {
+      validateStringList(unit[key], `${field}.${key}`, errors, {
+        minimum: key === 'representativeAssetIds' ? 1 : 0,
+        maximum: assetIds.length,
+        itemMaxLength: 100,
+      });
+      for (const assetId of Array.isArray(unit[key]) ? unit[key] : []) {
+        if (!assetIds.includes(assetId)) {
+          errors.push(`${field}.${key} 的 ${assetId} 不属于该 Story Unit。`);
+        }
+      }
+    }
+    const classified = classificationKeys.flatMap((key) => unit[key] || []);
+    if (new Set(classified).size !== classified.length) {
+      errors.push(`${field} 的 representative/supporting/alternate/duplicate/unusable 分类不能重叠。`);
+    }
+    if (assetIds.some((assetId) => !classified.includes(assetId))) {
+      errors.push(`${field} 必须为每个视觉素材记录变体选择分类。`);
+    }
+    if (!isNonEmptyString(unit.selectionReason, 1000)) {
+      errors.push(`${field}.selectionReason 必须解释代表素材选择。`);
+    }
+    if (!NARRATIVE_ROLES.has(unit.narrativeRole)) {
+      errors.push(`${field}.narrativeRole 无效。`);
+    }
+    if (!isConfidence(unit.confidence)) errors.push(`${field}.confidence 必须在 0 到 1 之间。`);
+    validateStringList(unit.conflicts, `${field}.conflicts`, errors, {
+      maximum: 20,
+      itemMaxLength: 500,
+    });
+    validateStringList(unit.warnings, `${field}.warnings`, errors, {
+      maximum: 20,
+      itemMaxLength: 500,
+    });
+    for (const warning of expected?.warnings || []) {
+      if (!(unit.warnings || []).includes(warning)) {
+        errors.push(`${field}.warnings 未保留 manifest 中的归组警告。`);
+      }
+    }
+    validateEvidenceDecision(unit.evidence, `${field}.evidence`, errors);
+  }
+  for (const expected of manifestUnits) {
+    if (!actualById.has(expected.storyUnitId)) {
+      errors.push(`缺少 Story Unit ${expected.storyUnitId} 的分析记录。`);
+    }
+  }
+
+  for (const item of manifest.items) {
+    const asset = analysisById.get(item.assetId);
+    if (!asset) continue;
+    if (asset.storyUnitId !== item.storyUnitId) {
+      errors.push(`素材 ${item.assetId} 的 storyUnitId 与 manifest 不一致。`);
+    }
+    if (!NARRATIVE_ROLES.has(asset.narrativeRole)) {
+      errors.push(`素材 ${item.assetId} 的 narrativeRole 无效。`);
+    }
+    if (!isNonEmptyString(asset.selectionReason, 1000)) {
+      errors.push(`素材 ${item.assetId} 缺少 selectionReason。`);
+    }
+    validateStringList(asset.conflicts, `素材 ${item.assetId}.conflicts`, errors, {
+      maximum: 20,
+      itemMaxLength: 500,
+    });
+    validateStringList(asset.warnings, `素材 ${item.assetId}.warnings`, errors, {
+      maximum: 20,
+      itemMaxLength: 500,
+    });
+    validateEvidenceDecision(asset.evidence, `素材 ${item.assetId}.evidence`, errors);
+    for (const conflict of item.semanticProfile?.conflicts || []) {
+      if (!(asset.conflicts || []).includes(conflict)) {
+        errors.push(`素材 ${item.assetId}.conflicts 未保留上下文冲突。`);
+      }
+    }
+    for (const warning of item.semanticProfile?.warnings || []) {
+      if (!(asset.warnings || []).includes(warning)) {
+        errors.push(`素材 ${item.assetId}.warnings 未保留上下文警告。`);
+      }
+    }
+  }
+
+  const analyzedUnits = new Map(analysis.storyUnits.map((unit) => [unit.storyUnitId, unit]));
+  for (const [index, shot] of (analysis.timeline?.shots || []).entries()) {
+    const field = `timeline.shots[${index}]`;
+    const source = manifestById.get(shot.assetId);
+    const unit = analyzedUnits.get(shot.storyUnitId);
+    if (!source?.storyUnitId || shot.storyUnitId !== source.storyUnitId || !unit) {
+      errors.push(`${field}.storyUnitId 无法追溯到真实视觉素材。`);
+    }
+    if (!NARRATIVE_ROLES.has(shot.narrativeRole)) errors.push(`${field}.narrativeRole 无效。`);
+    if (!isNonEmptyString(shot.selectionReason, 1000)) {
+      errors.push(`${field}.selectionReason 必须解释镜头选择。`);
+    }
+    validateEvidenceDecision(shot.evidence, `${field}.evidence`, errors);
+    if (unit && !(unit.representativeAssetIds || []).includes(shot.assetId)
+      && !(unit.supportingAssetIds || []).includes(shot.assetId)) {
+      errors.push(`${field} 使用了未列为 representative/supporting 的 Story Unit 素材。`);
+    }
+    const conflicts = [
+      ...(Array.isArray(unit?.conflicts) ? unit.conflicts : []),
+      ...(Array.isArray(analysisById.get(shot.assetId)?.conflicts)
+        ? analysisById.get(shot.assetId).conflicts : []),
+    ];
+    if (conflicts.length > 0 && (shot.reviewRequired !== true || shot.confidence > 0.6)) {
+      errors.push(`${field} 存在上下文/画面冲突，必须降低 confidence 并标记 reviewRequired。`);
+    }
+  }
+}
+
 function validateVideoAnalysis(analysis, manifest) {
   const errors = [];
   if (!isObject(analysis)) {
@@ -383,6 +572,7 @@ function validateVideoAnalysis(analysis, manifest) {
   for (const item of manifestItems) {
     if (!analysisById.has(item.assetId)) errors.push(`缺少素材 ${item.assetId} 的分析记录。`);
   }
+  validateStoryUnitAnalysis(analysis, manifest, errors, analysisById);
 
   if (!isObject(analysis.timeline)) {
     errors.push('timeline 必须是对象。');
@@ -515,6 +705,7 @@ module.exports = {
   AUDIO_MODES,
   FCP_UNSUPPORTED_SOURCE_EXTENSIONS,
   FIT_MODES,
+  NARRATIVE_ROLES,
   SUBTITLE_POSITIONS,
   TIMELINE_ORIENTATIONS,
   computeChapterSegments,

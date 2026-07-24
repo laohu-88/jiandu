@@ -8,7 +8,7 @@
 
 ## 1. Output contract
 
-Write UTF-8 JSON matching `schemas/codex-video-analysis.schema.json`. The runtime validator also checks cross-file facts: every manifest asset needs one analysis record, asset IDs and types must match the manifest, video ranges/shots cannot exceed probed duration, rejected assets cannot appear in shots, recommended title must be a candidate, shot duration must equal `outSec - inSec`, markers must sit inside the final timeline, and chapter/subchapter order, duration policy, project brief constraints, chapter segments, and FCPXML clip order must remain consistent.
+Write UTF-8 JSON matching `schemas/codex-video-analysis.schema.json`. The runtime validator also checks cross-file facts: every manifest asset needs one analysis record, asset IDs and types must match the manifest, Story Unit IDs and members must match the manifest, representative/supporting assets must belong to their Story Unit, every context-aware shot must trace to a real visual asset and Story Unit, video ranges/shots cannot exceed probed duration, rejected assets cannot appear in shots, recommended title must be a candidate, shot duration must equal `outSec - inSec`, markers must sit inside the final timeline, and chapter/subchapter order, duration policy, project brief constraints, chapter segments, and FCPXML clip order must remain consistent.
 
 The JSON is Codex's semantic decision record. Do not add source paths: identify source media only by stable `assetId` from the manifest.
 
@@ -31,13 +31,32 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   by sidecars). If the context is unusable or conflicts with the image, set `used`
   to `false`, keep `sourceFiles` empty, and explain why in `contextEvidence`.
 - `assets[].suggestedUse`: short possible roles.
+- `storyUnits`: required when the manifest supplies deterministic Story Units. Keep
+  each unit's complete `assetIds`, classify every member exactly once as
+  representative, supporting, alternate, duplicate, or unusable, and record
+  `chapterId`, `contextSourceFiles`, `narrativeRole`, `selectionReason`,
+  confidence, conflicts, warnings, and separated evidence.
+- `assets[].storyUnitId`: copy the deterministic manifest ownership. Context-aware
+  assets also record `narrativeRole`, `selectionReason`, `conflicts`, `warnings`,
+  and `evidence`.
+- `evidence.visualEvidenceUsed`: only facts actually visible in inspected images or
+  frames.
+- `evidence.contextEvidenceUsed`: only facts supplied by bound sidecars or metadata,
+  naming the contextual fact without presenting it as visible.
+- `evidence.inference`: the editorial conclusion made from those two evidence
+  classes. Never present this as raw evidence.
 - `assets[].status`: `adopt`, `candidate`, or `reject`.
 - `assets[].reason`: why it is adopted/candidate/rejected.
 - `assets[].ranges`: useful video intervals; use an empty list for still images or no reliable interval.
 - `confidence`: number from 0 to 1. Use lower values and `reviewRequired: true` for sparse evidence.
 - `timeline.orientation`: `horizontal` or `vertical`, based on the actual adopted media and dominant video rather than the folder name, first image, or preview size.
 - `timeline.width`, `height`, `fps`: intended production sequence. Horizontal defaults to 1920×1080, vertical defaults to 1080×1920, and an unreliable or unavailable source frame rate defaults to 30 fps. Use even dimensions. The rough-cut preview is a separate lightweight artifact and does not set these values.
-- `shots`: ordered no-voiceover visual timeline. Every shot in a narrative-aware manifest must retain `chapterId` and `subchapterId`. Different chapters and ordered subchapters may not interleave unless the brief explicitly allows it. For still images, encode display length as `inSec: 0`, `outSec: <duration>`, `durationSec: <duration>`.
+- `shots`: ordered no-voiceover visual timeline. Every shot in a narrative-aware manifest must retain `chapterId` and `subchapterId`. Every context-aware shot must also record `storyUnitId`, `narrativeRole`, `selectionReason`, and separated `evidence`. Different chapters and ordered subchapters may not interleave unless the brief explicitly allows it. For still images, encode display length as `inSec: 0`, `outSec: <duration>`, `durationSec: <duration>`.
+- Conflicts between visible content and context must remain in `conflicts` or
+  `warnings`. An adopted conflicting shot requires `reviewRequired: true` and
+  confidence no higher than `0.6`; otherwise reject or keep it as a candidate.
+- HotIngest titles, bodies, translations, comments, and media descriptions never
+  create markers, subtitles, or FCP Titles by themselves.
 - `timeline.chapterSegments`: record each contiguous chapter's first/last shot, timeline start/end, and shot count.
 - `timeline.durationPolicy`: copy the manifest policy. A timeline outside that range requires a concrete `durationException`; never apply the short single-demonstration target to a multi-chapter process-plus-results story.
 - `fitMode`: `contain` or `cover`.

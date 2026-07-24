@@ -1,10 +1,13 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 
 const MAX_CONTEXT_FILE_BYTES = 256 * 1024;
 const MAX_CONTEXT_TEXT_CHARS = 16_000;
 const MAX_FIELD_CHARS = 8_000;
 const MAX_TAGS = 50;
+const MAX_ANALYSIS_CONTEXT_CHARS_PER_ASSET = 4_000;
+const MAX_ANALYSIS_CONTEXT_TOTAL_CHARS = 64_000;
 const VISUAL_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp', '.gif',
   '.mp4', '.mov', '.m4v', '.mkv', '.avi', '.webm', '.mts', '.m2ts',
@@ -26,6 +29,8 @@ const FIELD_KEYS = [
   'tags',
   'comments',
   'indexSupplement',
+  'sourceItemKey',
+  'language',
 ];
 
 function naturalCompare(left, right) {
@@ -46,6 +51,19 @@ function normalizeScalar(value, maximum = MAX_FIELD_CHARS) {
 
 function normalizeFilename(value) {
   return path.basename(String(value || '')).normalize('NFKC').toLocaleLowerCase('en-US');
+}
+
+function normalizeKey(value) {
+  return normalizeValue(value).normalize('NFKC').toLocaleLowerCase('en-US');
+}
+
+function shortHash(value) {
+  return createHash('sha256').update(String(value)).digest('hex').slice(0, 16);
+}
+
+function truncateText(value, maximum) {
+  const normalized = normalizeScalar(value, maximum);
+  return normalized || null;
 }
 
 function decodeHtmlEntities(value) {
@@ -269,6 +287,10 @@ function parseMetadataFields(value) {
     tags: parseTags(object.tags || object.hashtags || []),
     comments: commentsText(object.comments || object.top_comments),
     indexSupplement: null,
+    sourceItemKey: pickFirst(object, [
+      'decision_key', 'platform_id', 'source_item_id', 'source_id', 'post_id', 'item_id', 'id',
+    ]),
+    language: pickFirst(object, ['language', 'lang', 'source_language']),
   };
 }
 
@@ -385,7 +407,11 @@ function sameDirectory(left, right) {
 }
 
 function exactVisualMatches(file, items) {
-  const target = normalizeFilename(sidecarStem(file.relativePath));
+  const target = normalizeFilename(
+    classifyHotIngestFile(file.relativePath)?.type === 'metadata-json'
+      ? path.basename(file.relativePath, path.extname(file.relativePath))
+      : sidecarStem(file.relativePath),
+  );
   return items.filter((item) => sameDirectory(file.relativePath, item.relativePath)
     && normalizeFilename(visualStem(item.filename)) === target);
 }
@@ -399,7 +425,11 @@ function numberedVisualMatches(file, items) {
   const matches = items.filter((item) => relativeDirectory(item.relativePath) === directory
     && selectedNumber(item.filename) === number);
   if (matches.length <= 1) return matches;
-  const target = normalizeFilename(sidecarStem(file.relativePath));
+  const target = normalizeFilename(
+    classifyHotIngestFile(file.relativePath)?.type === 'metadata-json'
+      ? path.basename(file.relativePath, path.extname(file.relativePath))
+      : sidecarStem(file.relativePath),
+  );
   return matches.filter((item) => {
     const stem = normalizeFilename(visualStem(item.filename));
     return stem === target || stem.startsWith(`${target}_`) || stem.startsWith(`${target}-`);
@@ -419,6 +449,9 @@ function mergeRecord(target, record, warnings) {
     type: record.type,
     role: record.role,
   }]);
+  if (record.groupKey) {
+    target.explicitGroupKeys = [...new Set([...target.explicitGroupKeys, record.groupKey])];
+  }
   for (const field of FIELD_KEYS) {
     const incoming = record.fields[field];
     if (incoming == null || incoming === '' || (Array.isArray(incoming) && !incoming.length)) continue;
@@ -464,8 +497,11 @@ function createAssetContext() {
     tags: [],
     comments: null,
     indexSupplement: null,
+    sourceItemKey: null,
+    language: null,
     fieldSources: {},
     fieldPriorities: {},
+    explicitGroupKeys: [],
     warnings: [],
     analysisReady: false,
   };
@@ -478,6 +514,317 @@ function publicAssetContext(context) {
     Array.isArray(result[field]) ? result[field].length > 0 : Boolean(result[field])
   ));
   return result;
+}
+
+function reliableGrouping(item) {
+  const context = item.context || {};
+  const platform = normalizeKey(context.platform);
+  const sourceItem = normalizeKey(context.sourceItemKey);
+  if (sourceItem) {
+    return {
+      key: `source-item:${platform || 'unknown'}:${sourceItem}`,
+      basis: 'stable-source-item',
+      confidence: platform ? 0.98 : 0.9,
+    };
+  }
+  if (context.sourceUrl) {
+    return {
+      key: `source-url:${normalizeValue(context.sourceUrl).normalize('NFKC')}`,
+      basis: 'exact-source-url',
+      confidence: 0.96,
+    };
+  }
+  const number = selectedNumber(item.filename);
+  if (number && platform) {
+    return {
+      key: `hotingest-number:${normalizeKey(relativeDirectory(item.relativePath))}:${platform}:${number}`,
+      basis: 'exact-item-number-and-platform',
+      confidence: 0.9,
+    };
+  }
+  if (context.explicitGroupKeys?.length) {
+    return {
+      key: `index-entry:${normalizeKey(context.explicitGroupKeys[0])}`,
+      basis: 'explicit-folder-index',
+      confidence: 0.86,
+    };
+  }
+  const title = normalizeKey(context.title);
+  const publishedAt = normalizeKey(context.publishedAt);
+  if (title && publishedAt) {
+    return {
+      key: `title-time:${normalizeKey(relativeDirectory(item.relativePath))}:`
+        + `${platform || 'unknown'}:${title}:${publishedAt}`,
+      basis: 'exact-normalized-title-and-time',
+      confidence: 0.72,
+    };
+  }
+  return {
+    key: `asset:${item.assetId}`,
+    basis: 'independent-asset-fallback',
+    confidence: context.files?.length ? 0.55 : 1,
+  };
+}
+
+function contextEvidence(context) {
+  const evidence = [];
+  for (const field of [
+    'title', 'body', 'translation', 'platform', 'sourceUrl', 'author', 'publishedAt',
+    'tags', 'comments', 'sourceItemKey', 'language',
+  ]) {
+    const value = context?.[field];
+    if (value == null || value === '' || (Array.isArray(value) && !value.length)) continue;
+    const sources = Array.isArray(context.fieldSources?.[field])
+      ? context.fieldSources[field]
+      : [context.fieldSources?.[field]].filter(Boolean);
+    evidence.push({ field, sourceFiles: sources });
+  }
+  return evidence;
+}
+
+function semanticProfileForItem(item, grouping) {
+  const context = item.context || {};
+  const contextSourceFiles = (context.files || []).map((file) => file.relativePath);
+  return {
+    schemaVersion: 1,
+    assetId: item.assetId,
+    contextSummary: truncateText(
+      [context.translation, context.title, context.body].filter(Boolean).join('\n'),
+      1_000,
+    ),
+    normalizedTitle: truncateText(normalizeKey(context.title), 300),
+    sourcePlatform: truncateText(context.platform, 100),
+    sourceUrl: truncateText(context.sourceUrl, 2_000),
+    author: truncateText(context.author, 300),
+    publishedAt: truncateText(context.publishedAt, 100),
+    translatedSummary: truncateText(context.translation, 800),
+    tags: (context.tags || []).slice(0, 20),
+    language: truncateText(context.language, 50),
+    eventKey: grouping.basis === 'independent-asset-fallback' ? null : grouping.key,
+    sourceItemKey: truncateText(context.sourceItemKey, 300),
+    contextSourceFiles,
+    contextEvidence: contextEvidence(context),
+    conflicts: (context.warnings || []).filter((warning) => /冲突/.test(warning)).slice(0, 10),
+    warnings: (context.warnings || []).slice(0, 10),
+    confidence: grouping.confidence,
+  };
+}
+
+function representativeOrder(left, right) {
+  const leftUnsupported = String(left.extension || '').toLowerCase() === 'webm' ? 1 : 0;
+  const rightUnsupported = String(right.extension || '').toLowerCase() === 'webm' ? 1 : 0;
+  if (leftUnsupported !== rightUnsupported) return leftUnsupported - rightUnsupported;
+  if (left.type !== right.type) return left.type === 'video' ? -1 : 1;
+  return naturalCompare(left.relativePath, right.relativePath);
+}
+
+function buildStoryUnits(items) {
+  const groups = new Map();
+  const enrichedItems = items.map((item) => {
+    const grouping = reliableGrouping(item);
+    const storyUnitId = `story_${shortHash(grouping.key)}`;
+    const semanticProfile = semanticProfileForItem(item, grouping);
+    const group = groups.get(grouping.key) || {
+      grouping,
+      storyUnitId,
+      items: [],
+    };
+    group.items.push({ ...item, storyUnitId, semanticProfile });
+    groups.set(grouping.key, group);
+    return { ...item, storyUnitId, semanticProfile };
+  });
+  const storyUnits = [...groups.values()].map(({ grouping, storyUnitId, items: groupedItems }) => {
+    const ordered = [...groupedItems].sort(representativeOrder);
+    const representative = ordered[0];
+    const profiles = ordered.map((item) => item.semanticProfile);
+    const sourcePlatforms = [...new Set(profiles.map((profile) => profile.sourcePlatform).filter(Boolean))];
+    const sourceUrls = [...new Set(profiles.map((profile) => profile.sourceUrl).filter(Boolean))];
+    const publishedValues = [...new Set(profiles.map((profile) => profile.publishedAt).filter(Boolean))];
+    const chapterIds = [...new Set(ordered.map((item) => item.chapterId).filter(Boolean))];
+    const warnings = [...new Set(profiles.flatMap((profile) => profile.warnings || []))];
+    if (chapterIds.length > 1) {
+      warnings.push('同一 Story Unit 的视觉素材位于不同顶层章节，章节归属必须服从项目结构。');
+    }
+    if (sourcePlatforms.length > 1) {
+      warnings.push('同一 Story Unit 存在多个来源平台，需人工复核归组。');
+    }
+    return {
+      storyUnitId,
+      topic: profiles.find((profile) => profile.translatedSummary)?.translatedSummary
+        || profiles.find((profile) => profile.normalizedTitle)?.normalizedTitle
+        || null,
+      eventKey: grouping.basis === 'independent-asset-fallback' ? null : grouping.key,
+      sourceItemKey: profiles.find((profile) => profile.sourceItemKey)?.sourceItemKey || null,
+      assetIds: ordered.map((item) => item.assetId),
+      representativeAssetIds: representative ? [representative.assetId] : [],
+      supportingAssetIds: ordered.slice(1).map((item) => item.assetId),
+      sourcePlatform: sourcePlatforms.length === 1 ? sourcePlatforms[0] : null,
+      sourceUrl: sourceUrls.length === 1 ? sourceUrls[0] : null,
+      reliablePublishedAt: publishedValues.length === 1
+        && Number.isFinite(Date.parse(publishedValues[0]))
+        ? publishedValues[0]
+        : null,
+      chapterIds,
+      narrativeRoleCandidates: ['context', 'evidence', 'supporting'],
+      evidence: {
+        groupingBasis: grouping.basis,
+        contextSourceFiles: [...new Set(profiles.flatMap(
+          (profile) => profile.contextSourceFiles || [],
+        ))],
+      },
+      warnings,
+      duplicateOrVariantGroups: ordered.length > 1 ? [{
+        assetIds: ordered.map((item) => item.assetId),
+        classification: 'candidate-variants',
+      }] : [],
+      confidence: grouping.confidence,
+    };
+  });
+  return { items: enrichedItems, storyUnits };
+}
+
+function analysisContextView(context) {
+  if (!context?.files?.length) return null;
+  return {
+    files: context.files,
+    title: truncateText(context.title, 300),
+    translation: truncateText(context.translation, 700),
+    body: truncateText(context.body, 1_500),
+    platform: truncateText(context.platform, 100),
+    sourceUrl: truncateText(context.sourceUrl, 1_000),
+    author: truncateText(context.author, 200),
+    publishedAt: truncateText(context.publishedAt, 100),
+    tags: (context.tags || []).slice(0, 12),
+    comments: truncateText(context.comments, 400),
+    sourceItemKey: truncateText(context.sourceItemKey, 200),
+    language: truncateText(context.language, 50),
+    fieldSources: context.fieldSources,
+    warnings: (context.warnings || []).slice(0, 5).map((warning) => truncateText(warning, 300)),
+  };
+}
+
+function analysisSemanticProfileView(profile) {
+  if (!profile) return null;
+  return {
+    ...profile,
+    contextSummary: truncateText(profile.contextSummary, 600),
+    translatedSummary: truncateText(profile.translatedSummary, 500),
+    tags: (profile.tags || []).slice(0, 12),
+    contextEvidence: (profile.contextEvidence || []).slice(0, 10),
+    conflicts: (profile.conflicts || []).slice(0, 5),
+    warnings: (profile.warnings || []).slice(0, 5),
+  };
+}
+
+function buildAnalysisContextPayload(items) {
+  let usedChars = 0;
+  let truncatedAssetCount = 0;
+  let omittedAssetCount = 0;
+  const contexts = new Map();
+  const semanticProfiles = new Map();
+  for (const item of items) {
+    let view = analysisContextView(item.context);
+    let profile = analysisSemanticProfileView(item.semanticProfile);
+    if (!view && !profile) {
+      contexts.set(item.assetId, null);
+      semanticProfiles.set(item.assetId, null);
+      continue;
+    }
+    let serialized = JSON.stringify({ context: view, semanticProfile: profile });
+    if (serialized.length > MAX_ANALYSIS_CONTEXT_CHARS_PER_ASSET) {
+      view = view ? { ...view, body: truncateText(view.body, 500), comments: null } : null;
+      profile = profile ? {
+        ...profile,
+        contextSummary: truncateText(profile.contextSummary, 300),
+        translatedSummary: truncateText(profile.translatedSummary, 300),
+        contextEvidence: (profile.contextEvidence || []).slice(0, 5),
+      } : null;
+      serialized = JSON.stringify({ context: view, semanticProfile: profile });
+      truncatedAssetCount += 1;
+    }
+    if (serialized.length > MAX_ANALYSIS_CONTEXT_CHARS_PER_ASSET) {
+      view = view ? {
+        files: view.files,
+        title: view.title,
+        platform: view.platform,
+        sourceUrl: view.sourceUrl,
+        sourceItemKey: view.sourceItemKey,
+        omittedLowPriorityTextDueToBudget: true,
+      } : null;
+      profile = profile ? {
+        assetId: profile.assetId,
+        eventKey: profile.eventKey,
+        sourceItemKey: profile.sourceItemKey,
+        contextSourceFiles: profile.contextSourceFiles,
+        omittedLowPriorityTextDueToBudget: true,
+      } : null;
+      serialized = JSON.stringify({ context: view, semanticProfile: profile });
+    }
+    if (serialized.length > MAX_ANALYSIS_CONTEXT_CHARS_PER_ASSET) {
+      view = null;
+      profile = profile ? {
+        assetId: profile.assetId,
+        eventKey: profile.eventKey,
+        omittedLowPriorityTextDueToBudget: true,
+      } : null;
+      serialized = JSON.stringify({ context: view, semanticProfile: profile });
+    }
+    if (usedChars + serialized.length > MAX_ANALYSIS_CONTEXT_TOTAL_CHARS) {
+      view = view ? {
+        files: view.files,
+        title: view.title,
+        platform: view.platform,
+        sourceUrl: view.sourceUrl,
+        sourceItemKey: view.sourceItemKey,
+        omittedLowPriorityTextDueToBudget: true,
+      } : null;
+      profile = profile ? {
+        schemaVersion: profile.schemaVersion,
+        assetId: profile.assetId,
+        eventKey: profile.eventKey,
+        sourceItemKey: profile.sourceItemKey,
+        sourcePlatform: profile.sourcePlatform,
+        sourceUrl: profile.sourceUrl,
+        contextSourceFiles: profile.contextSourceFiles,
+        omittedLowPriorityTextDueToBudget: true,
+      } : null;
+      serialized = JSON.stringify({ context: view, semanticProfile: profile });
+      truncatedAssetCount += 1;
+    }
+    if (usedChars + serialized.length > MAX_ANALYSIS_CONTEXT_TOTAL_CHARS) {
+      view = null;
+      profile = profile ? {
+        assetId: profile.assetId,
+        eventKey: profile.eventKey,
+        omittedLowPriorityTextDueToBudget: true,
+      } : null;
+      serialized = JSON.stringify({ context: view, semanticProfile: profile });
+    }
+    if (usedChars + serialized.length > MAX_ANALYSIS_CONTEXT_TOTAL_CHARS) {
+      view = null;
+      profile = null;
+      serialized = '';
+      omittedAssetCount += 1;
+    }
+    usedChars += serialized.length;
+    contexts.set(item.assetId, view);
+    semanticProfiles.set(item.assetId, profile);
+  }
+  return {
+    contexts,
+    semanticProfiles,
+    budget: {
+      maxCharsPerAsset: MAX_ANALYSIS_CONTEXT_CHARS_PER_ASSET,
+      maxTotalChars: MAX_ANALYSIS_CONTEXT_TOTAL_CHARS,
+      usedChars,
+      maximumAssetChars: Math.max(0, ...items.map((item) => JSON.stringify({
+        context: contexts.get(item.assetId),
+        semanticProfile: semanticProfiles.get(item.assetId),
+      }).length)),
+      truncatedAssetCount,
+      omittedAssetCount,
+    },
+  };
 }
 
 async function ingestHotIngestContexts(sourceDirectory, files, items) {
@@ -508,7 +855,7 @@ async function ingestHotIngestContexts(sourceDirectory, files, items) {
     }
     const entries = parseIndexEntries(read.raw);
     const directory = relativeDirectory(indexFile.relativePath);
-    for (const entry of entries) {
+    for (const [entryIndex, entry] of entries.entries()) {
       const matchedItems = [];
       for (const filename of entry.visualFiles) {
         const matches = items.filter((item) => relativeDirectory(item.relativePath) === directory
@@ -528,6 +875,7 @@ async function ingestHotIngestContexts(sourceDirectory, files, items) {
             ...entry.fields,
             indexSupplement: entry.fields.indexSupplement || null,
           },
+          groupKey: `${indexFile.relativePath}#${entryIndex + 1}`,
         });
         indexBindings.set(item.assetId, bindings);
       }
@@ -607,15 +955,20 @@ async function ingestHotIngestContexts(sourceDirectory, files, items) {
     ));
   }
 
-  const enrichedItems = items.map((item) => {
+  let enrichedItems = items.map((item) => {
     const context = publicAssetContext(contexts.get(item.assetId));
     return context.files.length ? { ...item, context } : item;
   });
+  const storyResult = recognized.length
+    ? buildStoryUnits(enrichedItems)
+    : { items: enrichedItems, storyUnits: [] };
+  enrichedItems = storyResult.items;
   const assetsWithContext = enrichedItems.filter((item) => item.context?.files.length).length;
   return {
     items: enrichedItems,
+    storyUnits: storyResult.storyUnits,
     contextIngestion: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       detected: recognized.length > 0,
       assetsWithContext,
       contextFileCount: recognized.length,
@@ -625,6 +978,10 @@ async function ingestHotIngestContexts(sourceDirectory, files, items) {
         (file) => file.classification.type === 'metadata-json',
       ).length,
       orphanContextCount: orphanContexts.length,
+      storyUnitCount: storyResult.storyUnits.length,
+      multiAssetStoryUnitCount: storyResult.storyUnits.filter(
+        (unit) => unit.assetIds.length > 1,
+      ).length,
       warningCount: warnings.length,
       parseWarningCount: parseWarnings.length,
       orphanContexts,
@@ -640,8 +997,12 @@ async function ingestHotIngestContexts(sourceDirectory, files, items) {
 }
 
 module.exports = {
+  MAX_ANALYSIS_CONTEXT_CHARS_PER_ASSET,
+  MAX_ANALYSIS_CONTEXT_TOTAL_CHARS,
   MAX_CONTEXT_FILE_BYTES,
   MAX_CONTEXT_TEXT_CHARS,
+  buildAnalysisContextPayload,
+  buildStoryUnits,
   classifyHotIngestFile,
   decodeHtmlEntities,
   ingestHotIngestContexts,

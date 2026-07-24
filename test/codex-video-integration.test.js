@@ -231,6 +231,14 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
     '只读验证不得改写项目 JSON、FCPXML 或粗剪预览',
   );
 
+  const movedProjectPath = path.join(projectRoot, '已改名项目');
+  await fs.rename(built.projectPath, movedProjectPath);
+  const movedVerification = await verifyCodexVideoProject(movedProjectPath);
+  assert.equal(movedVerification.ok, true);
+  assert.ok(movedVerification.warnings.some((message) => /移动或改名/.test(message)));
+  assert.equal(movedVerification.fcpxml.clipCount, 2);
+  assert.equal(movedVerification.fcpxml.markerCount, 2);
+
   const sourceAfter = await snapshotSource(source);
   assert.deepEqual(compareSourceSnapshots(sourceBefore, sourceAfter), {
     unchanged: true,

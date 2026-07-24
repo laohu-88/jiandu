@@ -177,13 +177,20 @@ test('prepare 只把七个视觉文件写入 manifest，HTML/索引/metadata 不
   assert.equal(prepared.contextIngestion.assetsWithContext, 7);
   assert.equal(prepared.contextIngestion.contextFileCount, 9);
   assert.equal(prepared.contextIngestion.orphanContextCount, 1);
+  assert.equal(prepared.storyUnits.length, 6);
+  assert.equal(prepared.contextIngestion.multiAssetStoryUnitCount, 1);
+  assert.ok(prepared.storyUnits.some((unit) => unit.assetIds.length === 2));
   assert.ok(prepared.chapters.every((chapter) => chapter.chapterName !== '.hotingest'));
 
   const request = JSON.parse(await fs.readFile(prepared.analysisRequestPath, 'utf8'));
   assert.equal(request.items.length, 7);
+  assert.equal(request.storyUnits.length, 6);
+  assert.ok(request.contextBudget.usedChars <= request.contextBudget.maxTotalChars);
   assert.ok(request.items.find((item) => item.filename === '001_9gag_Future.mp4').context);
+  assert.ok(request.items.find((item) => item.filename === '001_9gag_Future.mp4').semanticProfile);
   assert.match(request.instruction, /画面实际可见内容/);
   assert.match(request.instruction, /contextUsage/);
+  assert.match(request.instruction, /representativeAssetIds/);
 });
 
 function contextualAnalysis() {

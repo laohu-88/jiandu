@@ -6,6 +6,7 @@ const { createHash } = require('node:crypto');
 
 const { probeMediaSafe, runMediaTool } = require('./media-tool-service');
 const {
+  buildAnalysisContextPayload,
   classifyHotIngestFile,
   ingestHotIngestContexts,
 } = require('./hotingest-context-service');
@@ -28,8 +29,17 @@ const MAX_FOCUS_BYTES = 64 * 1024;
 const MAX_SCENE_FRAMES = 12;
 const MAX_TIMED_FRAMES = 10;
 const MAX_DENSE_FRAMES = 60;
-const MANIFEST_SCHEMA_VERSION = 3;
+const MANIFEST_SCHEMA_VERSION = 4;
 let drawtextSupportPromise = null;
+
+function isFinderMetadata(relativePath) {
+  const parts = String(relativePath || '').split(path.sep);
+  return parts.some((part) => (
+    part === '.DS_Store'
+    || part.startsWith('._')
+    || ['.Spotlight-V100', '.Trashes', '.fseventsd'].includes(part)
+  ));
+}
 
 function sha256Text(value) {
   return createHash('sha256').update(String(value)).digest('hex');
@@ -55,12 +65,14 @@ async function walkRegularFiles(directory, rootDirectory = directory, files = []
   const entries = await fs.readdir(directory, { withFileTypes: true });
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))) {
     const absolutePath = path.join(directory, entry.name);
+    const relativePath = path.relative(rootDirectory, absolutePath);
+    if (isFinderMetadata(relativePath)) continue;
     if (entry.isDirectory()) {
       await walkRegularFiles(absolutePath, rootDirectory, files);
     } else if (entry.isFile()) {
       files.push({
         absolutePath,
-        relativePath: path.relative(rootDirectory, absolutePath),
+        relativePath,
       });
     }
   }
@@ -102,8 +114,12 @@ async function snapshotSource(sourceDirectory) {
 
 function compareSourceSnapshots(before, after) {
   const errors = [];
-  const beforeByPath = new Map((before?.entries || []).map((entry) => [entry.relativePath, entry]));
-  const afterByPath = new Map((after?.entries || []).map((entry) => [entry.relativePath, entry]));
+  const beforeByPath = new Map((before?.entries || [])
+    .filter((entry) => !isFinderMetadata(entry.relativePath))
+    .map((entry) => [entry.relativePath, entry]));
+  const afterByPath = new Map((after?.entries || [])
+    .filter((entry) => !isFinderMetadata(entry.relativePath))
+    .map((entry) => [entry.relativePath, entry]));
   for (const [relativePath, entry] of beforeByPath) {
     const current = afterByPath.get(relativePath);
     if (!current) {
@@ -541,6 +557,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
     projectBrief: narrative.projectBrief,
     contextDocuments: narrative.contextDocuments,
     contextIngestion: contextResult.contextIngestion,
+    storyUnits: contextResult.storyUnits,
     chapters,
     narrative: {
       chapterCount: chapters.length,
@@ -556,6 +573,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
     items,
   };
   const analysisRequestPath = path.join(cacheDirectory, 'analysis-request.json');
+  const analysisContext = buildAnalysisContextPayload(items);
   const analysisRequest = {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     manifestPath,
@@ -575,11 +593,20 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
       '请用 Codex 当前会话查看 imagePreview、storyboard 和单帧，并结合每个素材的 context 填写协议；不要调用外部模型 API。',
       '必须区分“画面实际可见内容”和“上下文文件提供的信息”，上下文不得冒充画面事实。',
       '有 context 的素材必须填写 contextUsage，标明是否使用及实际使用的 sourceFiles。',
+      '必须按 storyUnits 归组并优先选择 representativeAssetIds；同一 Story Unit 的补充或变体素材只有在叙事必要且给出 selectionReason 时才可进入时间线。',
+      '每个 Story Unit 的全部 assetIds 必须不重叠地分入 representativeAssetIds、supportingAssetIds、alternateAssetIds、duplicateAssetIds 或 unusableAssetIds。',
+      '每个 Story Unit 必须保留 contextSourceFiles，并填写服从项目结构的 chapterId；跨顶层章节的异常归组使用 null 并保留 warning。',
+      '每个最终镜头必须填写 storyUnitId、narrativeRole、selectionReason，以及 evidence.visualEvidenceUsed、evidence.contextEvidenceUsed 和 evidence.inference；contextEvidence 不得冒充 visualEvidence。',
+      '上下文可改善素材相关性、章节内选择、叙事角色和章节内部顺序，但不得重排 chapters 的顶层顺序。',
+      '上下文与画面冲突时必须保留 conflicts/warnings、降低 confidence，并将自动入选镜头标为 reviewRequired；不得静默覆盖。',
+      'context 标题、正文、评论和翻译只用于理解，不能据此新增 Marker、字幕或 FCP Title。',
     ].join(''),
     projectBrief: manifest.projectBrief,
     chapters: manifest.chapters,
     narrative: manifest.narrative,
     contextDocuments: manifest.contextDocuments,
+    storyUnits: manifest.storyUnits,
+    contextBudget: analysisContext.budget,
     items: items.map((item) => ({
       assetId: item.assetId,
       type: item.type,
@@ -590,7 +617,9 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
       metadata: item.metadata,
       metadataError: item.metadataError,
       analysisMedia: item.analysisMedia,
-      context: item.context || null,
+      storyUnitId: item.storyUnitId || null,
+      semanticProfile: analysisContext.semanticProfiles.get(item.assetId) || null,
+      context: analysisContext.contexts.get(item.assetId) || null,
     })),
   };
   await Promise.all([
@@ -652,6 +681,7 @@ module.exports = {
   getMediaType,
   hashFile,
   inspectVideoRange,
+  isFinderMetadata,
   preparePendingMedia,
   snapshotSource,
 };

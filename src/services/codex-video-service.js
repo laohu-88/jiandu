@@ -515,6 +515,17 @@ function buildHumanSummary({
       '',
     );
   }
+  if ((analysis.storyUnits || []).length > 0) {
+    lines.push('## Story Units', '');
+    for (const unit of analysis.storyUnits) {
+      lines.push(
+        `- ${unit.storyUnitId}｜${unit.narrativeRole}｜代表素材 `
+        + `${unit.representativeAssetIds.join('、')}｜补充素材 `
+        + `${unit.supportingAssetIds.join('、') || '无'}｜${unit.selectionReason}`,
+      );
+    }
+    lines.push('');
+  }
   lines.push('## 素材判断', '');
   for (const asset of analysis.assets) {
     const source = manifestById.get(asset.assetId);
@@ -526,7 +537,10 @@ function buildHumanSummary({
       + (asset.chapterId
         ? `｜${asset.chapterId}${asset.subchapterId ? `/${asset.subchapterId}` : ''}`
         : '')
-      + `｜${asset.status}｜${asset.reason}｜${ranges}`,
+      + `｜${asset.status}｜${asset.reason}｜${ranges}`
+      + (asset.storyUnitId
+        ? `｜${asset.storyUnitId}｜${asset.narrativeRole}｜${asset.selectionReason}`
+        : ''),
     );
   }
   lines.push('', '## 镜头顺序', '');
@@ -540,6 +554,9 @@ function buildHumanSummary({
         : '')
       + `｜${shot.inSec}-${shot.outSec}s`
       + `｜${shot.durationSec}s｜${shot.purpose}｜可信度 ${shot.confidence}`
+      + (shot.storyUnitId
+        ? `｜${shot.storyUnitId}｜${shot.narrativeRole}｜${shot.selectionReason}`
+        : '')
       + `${shot.reviewRequired ? '｜需复核' : ''}`,
     );
   });
@@ -582,7 +599,9 @@ async function verifyCodexVideoProject(projectPath) {
   const effectiveAnalysis = status.effectiveAnalysis || analysis;
   const errors = [];
   const warnings = [];
-  if (project.projectPath !== resolved) errors.push('project.json 的 projectPath 与实际目录不一致。');
+  if (project.projectPath !== resolved) {
+    warnings.push('项目根目录已移动或改名；完整性检查已按当前目录和业务相对路径执行。');
+  }
   const sourceCurrent = await snapshotSource(manifest.sourceDirectory);
   const sourceVerification = compareSourceSnapshots(manifest.sourceSnapshot, sourceCurrent);
   errors.push(...sourceVerification.errors);

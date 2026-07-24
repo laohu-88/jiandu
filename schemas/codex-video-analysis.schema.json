@@ -17,6 +17,10 @@
       "minItems": 1,
       "items": { "$ref": "#/$defs/chapter" }
     },
+    "storyUnits": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/storyUnit" }
+    },
     "theme": {
       "type": "object",
       "additionalProperties": false,
@@ -191,6 +195,116 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1, "maxLength": 200 }
     },
+    "evidenceDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["visualEvidenceUsed", "contextEvidenceUsed", "inference"],
+      "properties": {
+        "visualEvidenceUsed": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "contextEvidenceUsed": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "inference": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "storyUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "storyUnitId",
+        "assetIds",
+        "contextSourceFiles",
+        "representativeAssetIds",
+        "supportingAssetIds",
+        "alternateAssetIds",
+        "duplicateAssetIds",
+        "unusableAssetIds",
+        "chapterId",
+        "narrativeRole",
+        "selectionReason",
+        "evidence",
+        "confidence",
+        "conflicts",
+        "warnings"
+      ],
+      "properties": {
+        "storyUnitId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "topic": { "type": ["string", "null"], "maxLength": 1000 },
+        "eventKey": { "type": ["string", "null"], "maxLength": 2000 },
+        "sourceItemKey": { "type": ["string", "null"], "maxLength": 300 },
+        "assetIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "contextSourceFiles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        },
+        "representativeAssetIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "supportingAssetIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "alternateAssetIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "duplicateAssetIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "unusableAssetIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 }
+        },
+        "sourcePlatform": { "type": ["string", "null"], "maxLength": 100 },
+        "sourceUrl": { "type": ["string", "null"], "maxLength": 2000 },
+        "reliablePublishedAt": { "type": ["string", "null"], "maxLength": 100 },
+        "chapterId": { "type": ["string", "null"], "maxLength": 100 },
+        "narrativeRole": { "$ref": "#/$defs/narrativeRole" },
+        "selectionReason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "evidence": { "$ref": "#/$defs/evidenceDecision" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "conflicts": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "narrativeRole": {
+      "enum": [
+        "hook", "setup", "context", "process", "evidence", "transition",
+        "result", "comparison", "conclusion", "supporting"
+      ]
+    },
     "range": {
       "type": "object",
       "additionalProperties": false,
@@ -251,6 +365,20 @@
             "visualEvidence": { "type": "string", "minLength": 1, "maxLength": 1000 },
             "contextEvidence": { "type": "string", "minLength": 1, "maxLength": 1000 }
           }
+        },
+        "storyUnitId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "narrativeRole": { "$ref": "#/$defs/narrativeRole" },
+        "selectionReason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "evidence": { "$ref": "#/$defs/evidenceDecision" },
+        "conflicts": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
         }
       }
     },
@@ -281,7 +409,11 @@
         "audioMode": { "enum": ["keep", "mute"] },
         "purpose": { "type": "string", "minLength": 1, "maxLength": 500 },
         "confidence": { "$ref": "#/$defs/confidence" },
-        "reviewRequired": { "type": "boolean" }
+        "reviewRequired": { "type": "boolean" },
+        "storyUnitId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "narrativeRole": { "$ref": "#/$defs/narrativeRole" },
+        "selectionReason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "evidence": { "$ref": "#/$defs/evidenceDecision" }
       }
     },
     "marker": {
