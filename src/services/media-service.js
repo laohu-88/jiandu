@@ -16,7 +16,7 @@ const { resolveToolPath } = require('./stage7-service');
 const execFileAsync = promisify(execFile);
 
 const IMAGE_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp',
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp',
 ]);
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.mov', '.m4v', '.mkv', '.avi', '.webm', '.mts', '.m2ts',

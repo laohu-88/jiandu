@@ -68,7 +68,7 @@ test('一级目录识别为章节，根目录本期说明形成硬顺序并覆�
   assert.deepEqual(narrative.briefFilesUsed, ['00-本期说明.md']);
 });
 
-test('二级目录识别为有序子章节，HTML 作为章节上下文而不是镜头', async () => {
+test('二级目录识别为有序子章节，HotIngest sidecar 留给单素材绑定而不是章节上下文', async () => {
   const { root, files } = await fixture();
   const narrative = await detectNarrativeStructure(root, files);
   const results = narrative.chapters[1];
@@ -76,10 +76,10 @@ test('二级目录识别为有序子章节，HTML 作为章节上下文而不是
     '2026-07-20',
     '2026-07-23',
   ]);
-  const html = narrative.contextDocuments.find((item) => item.relativePath.endsWith('.context.html'));
-  assert.equal(html.chapterId, 'chapter-2');
-  assert.equal(html.subchapterId, 'subchapter-1');
-  assert.match(html.content, /第一期审核完成/);
+  assert.equal(
+    narrative.contextDocuments.some((item) => item.relativePath.endsWith('.context.html')),
+    false,
+  );
 });
 
 test('扁平素材仍保留 relativePath，并获得兼容的默认章节', async () => {

@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { classifyHotIngestFile } = require('./hotingest-context-service');
 
 const CONTEXT_EXTENSIONS = new Set(['.md', '.txt', '.json', '.html', '.htm']);
 const MAX_CONTEXT_BYTES = 128 * 1024;
@@ -270,7 +271,8 @@ function summarizeChapters(chapters, items) {
 
 async function detectNarrativeStructure(sourceDirectory, files, options = {}) {
   const warnings = [];
-  const contextFiles = files.filter((file) => CONTEXT_EXTENSIONS.has(
+  const narrativeFiles = files.filter((file) => !classifyHotIngestFile(file.relativePath));
+  const contextFiles = narrativeFiles.filter((file) => CONTEXT_EXTENSIONS.has(
     path.extname(file.relativePath).toLowerCase(),
   ));
   const briefFile = contextFiles.filter((file) => isBriefCandidate(file.relativePath))
@@ -282,7 +284,7 @@ async function detectNarrativeStructure(sourceDirectory, files, options = {}) {
     projectBrief = extractProjectBrief(briefFile.relativePath, read.text);
   }
 
-  const directoryNames = detectChapterDirectories(files);
+  const directoryNames = detectChapterDirectories(narrativeFiles);
   const ordered = orderChapterNames(directoryNames, projectBrief);
   const chapterNames = ordered.names.length ? ordered.names : [path.basename(sourceDirectory)];
   let chapters = chapterNames.map((chapterName, index) => ({
@@ -292,7 +294,7 @@ async function detectNarrativeStructure(sourceDirectory, files, options = {}) {
     relativePath: directoryNames.length ? chapterName : '.',
     orderSource: directoryNames.length ? ordered.source : 'single-directory-default',
     required: true,
-    subchapters: directoryNames.length ? assignSubchapters(chapterName, files) : [],
+    subchapters: directoryNames.length ? assignSubchapters(chapterName, narrativeFiles) : [],
   }));
   if (projectBrief) {
     projectBrief = {

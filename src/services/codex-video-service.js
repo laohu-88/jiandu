@@ -785,6 +785,7 @@ async function buildCodexVideoProject(options) {
     createdAt: new Date().toISOString(),
     projectPath,
     sourceDirectory: manifest.sourceDirectory,
+    contextIngestion: manifest.contextIngestion || null,
     assetMappings: [],
     artifacts: {},
     error: null,

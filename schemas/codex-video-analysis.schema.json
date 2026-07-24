@@ -236,7 +236,22 @@
         "status": { "enum": ["adopt", "candidate", "reject"] },
         "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
         "ranges": { "type": "array", "items": { "$ref": "#/$defs/range" } },
-        "confidence": { "$ref": "#/$defs/confidence" }
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "contextUsage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["used", "sourceFiles", "visualEvidence", "contextEvidence"],
+          "properties": {
+            "used": { "type": "boolean" },
+            "sourceFiles": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+            },
+            "visualEvidence": { "type": "string", "minLength": 1, "maxLength": 1000 },
+            "contextEvidence": { "type": "string", "minLength": 1, "maxLength": 1000 }
+          }
+        }
       }
     },
     "shot": {

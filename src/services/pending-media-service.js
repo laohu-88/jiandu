@@ -6,6 +6,10 @@ const { createHash } = require('node:crypto');
 
 const { probeMediaSafe, runMediaTool } = require('./media-tool-service');
 const {
+  classifyHotIngestFile,
+  ingestHotIngestContexts,
+} = require('./hotingest-context-service');
+const {
   CONTEXT_EXTENSIONS,
   chapterForRelativePath,
   computeDurationPolicy,
@@ -14,7 +18,7 @@ const {
 } = require('./narrative-structure-service');
 
 const IMAGE_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp',
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp',
 ]);
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.mov', '.m4v', '.mkv', '.avi', '.webm', '.mts', '.m2ts',
@@ -24,7 +28,7 @@ const MAX_FOCUS_BYTES = 64 * 1024;
 const MAX_SCENE_FRAMES = 12;
 const MAX_TIMED_FRAMES = 10;
 const MAX_DENSE_FRAMES = 60;
-const MANIFEST_SCHEMA_VERSION = 2;
+const MANIFEST_SCHEMA_VERSION = 3;
 let drawtextSupportPromise = null;
 
 function sha256Text(value) {
@@ -474,7 +478,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
   }
 
   const warnings = [];
-  const items = [];
+  let items = [];
   await onStage('extracting_metadata', '正在使用 ffprobe 读取素材元数据。');
   for (const file of mediaFiles) {
     const snapshot = snapshotByPath.get(file.relativePath);
@@ -498,9 +502,14 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
     }
   }
 
+  const contextResult = await ingestHotIngestContexts(before.sourceDirectory, allFiles, items);
+  items = contextResult.items;
+  warnings.push(...contextResult.contextIngestion.warnings);
+
   const ignoredFiles = allFiles
     .filter((file) => path.basename(file.relativePath) !== FOCUS_FILENAME
       && !CONTEXT_EXTENSIONS.has(path.extname(file.relativePath).toLowerCase())
+      && !classifyHotIngestFile(file.relativePath)
       && !getMediaType(path.extname(file.relativePath).toLowerCase()))
     .map((file) => file.relativePath);
   if (ignoredFiles.length > 0) warnings.push(`已忽略不支持的文件：${ignoredFiles.join('、')}`);
@@ -531,6 +540,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
     optionalFocus: await readOptionalFocus(before.sourceDirectory),
     projectBrief: narrative.projectBrief,
     contextDocuments: narrative.contextDocuments,
+    contextIngestion: contextResult.contextIngestion,
     chapters,
     narrative: {
       chapterCount: chapters.length,
@@ -552,6 +562,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
     analysisSchemaPath: path.resolve(__dirname, '../../schemas/codex-video-analysis.schema.json'),
     priority: [
       '视频、截图和图片中的实际内容',
+      '每个视觉素材 context 中明确标注的 HotIngest 标题、正文、翻译、来源和事件背景',
       'projectBrief 的硬约束、章节顺序和说明文件上下文',
       '素材的 chapterId、subchapterId 和 relativePath',
       '素材之间的共同主题、操作先后和结果变化',
@@ -560,7 +571,11 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
       '单个素材文件名',
       '素材文件夹名称',
     ],
-    instruction: '请用 Codex 当前会话查看 imagePreview、storyboard 和单帧，填写协议；不要调用外部模型 API。',
+    instruction: [
+      '请用 Codex 当前会话查看 imagePreview、storyboard 和单帧，并结合每个素材的 context 填写协议；不要调用外部模型 API。',
+      '必须区分“画面实际可见内容”和“上下文文件提供的信息”，上下文不得冒充画面事实。',
+      '有 context 的素材必须填写 contextUsage，标明是否使用及实际使用的 sourceFiles。',
+    ].join(''),
     projectBrief: manifest.projectBrief,
     chapters: manifest.chapters,
     narrative: manifest.narrative,
@@ -575,6 +590,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
       metadata: item.metadata,
       metadataError: item.metadataError,
       analysisMedia: item.analysisMedia,
+      context: item.context || null,
     })),
   };
   await Promise.all([

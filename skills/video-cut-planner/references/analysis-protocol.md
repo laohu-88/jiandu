@@ -24,6 +24,12 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
 - `assets[].chapterId` and `subchapterId`: copy directory-derived ownership from the manifest. Never infer a different chapter from a filename.
 - `assets[].semanticLabels`: internal semantic labels, not filenames.
 - `assets[].contentSummary`: what is visibly present.
+- `assets[].contextUsage`: required when that manifest item has bound HotIngest
+  `context.files`. Set `used`, list only the bound `sourceFiles` actually used, and
+  keep `visualEvidence` (what the image/video visibly proves) separate from
+  `contextEvidence` (title, body, translation, source, or event background supplied
+  by sidecars). If the context is unusable or conflicts with the image, set `used`
+  to `false`, keep `sourceFiles` empty, and explain why in `contextEvidence`.
 - `assets[].suggestedUse`: short possible roles.
 - `assets[].status`: `adopt`, `candidate`, or `reject`.
 - `assets[].reason`: why it is adopted/candidate/rejected.

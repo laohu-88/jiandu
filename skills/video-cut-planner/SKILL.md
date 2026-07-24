@@ -43,7 +43,7 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
    node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js prepare --source "<一期素材目录>" --json
    ```
 
-3. Read `analysisRequestPath` and `manifestPath`, including `projectBrief`, `contextDocuments`, `chapters`, `narrative.durationPolicy`, and every asset's `relativePath`, `chapterId`, and `subchapterId`. View every image preview and every available video storyboard with `view_image`. Use individual scene/timed frames when the storyboard is unclear. Do not infer content from filenames alone.
+3. Read `analysisRequestPath` and `manifestPath`, including `projectBrief`, `contextDocuments`, `contextIngestion`, `chapters`, `narrative.durationPolicy`, and every asset's `relativePath`, `chapterId`, `subchapterId`, and optional HotIngest `context`. View every image preview and every available video storyboard with `view_image`. Use individual scene/timed frames when the storyboard is unclear. Treat bound title/body/translation/source data as contextual evidence, never as proof of what is visibly present. Do not infer content from filenames alone.
 4. For an important or low-confidence video interval, request denser frames:
 
    ```bash
@@ -53,11 +53,12 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
 5. Produce one analysis JSON following the protocol reference. Base decisions on this priority:
 
    1. actual video, screenshot, and image content;
-   2. common theme, operation order, and visible before/after results;
-   3. clearly available project documents, run results, or Git context;
-   4. optional `本期重点.txt`;
-   5. individual filenames;
-   6. folder name.
+   2. the same asset's explicitly bound HotIngest context, with visual facts and contextual facts kept separate;
+   3. common theme, operation order, and visible before/after results;
+   4. clearly available project documents, run results, or Git context;
+   5. optional `本期重点.txt`;
+   6. individual filenames;
+   7. folder name.
 
 6. If the folder name clearly conflicts with the media, set `folderNameConflict` to `true` and include this exact sentence in the user-facing reasoning: `文件夹名称与素材实际内容存在差异，本次主题以素材内容为准。`
 7. Design a visual story from the material itself. Treat detected first-level directories as ordered chapters and detected second-level directories as ordered subchapters. Root-brief order is a hard constraint; otherwise use numeric prefixes, natural directory order, and only then Codex inference. Do not interleave chapters unless the brief explicitly requests a non-linear structure. Favor meaningful result/change, necessary context, key operations, comparison, success evidence, final result, and a brief ending only when supported by the material. Do not force a fixed section count.

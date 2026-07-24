@@ -313,6 +313,35 @@ function validateVideoAnalysis(analysis, manifest) {
     const source = manifestById.get(asset.assetId);
     if (!source) errors.push(`${field}.assetId 不在素材清单中。`);
     if (source && asset.type !== source.type) errors.push(`${field}.type 与素材清单不一致。`);
+    const contextFiles = Array.isArray(source?.context?.files)
+      ? source.context.files.map((entry) => entry?.relativePath).filter(Boolean)
+      : [];
+    if (contextFiles.length > 0) {
+      const usage = asset.contextUsage;
+      if (!isObject(usage)) {
+        errors.push(`${field}.contextUsage 必须记录 HotIngest 上下文是否使用。`);
+      } else {
+        if (typeof usage.used !== 'boolean') {
+          errors.push(`${field}.contextUsage.used 必须是布尔值。`);
+        }
+        validateStringList(usage.sourceFiles, `${field}.contextUsage.sourceFiles`, errors, {
+          minimum: usage.used === true ? 1 : 0,
+          maximum: contextFiles.length,
+          itemMaxLength: 1000,
+        });
+        for (const relativePath of Array.isArray(usage.sourceFiles) ? usage.sourceFiles : []) {
+          if (!contextFiles.includes(relativePath)) {
+            errors.push(`${field}.contextUsage.sourceFiles 包含未绑定的上下文：${relativePath}`);
+          }
+        }
+        if (!isNonEmptyString(usage.visualEvidence, 1000)) {
+          errors.push(`${field}.contextUsage.visualEvidence 必须单独说明画面可见事实。`);
+        }
+        if (!isNonEmptyString(usage.contextEvidence, 1000)) {
+          errors.push(`${field}.contextUsage.contextEvidence 必须说明上下文用途或未使用原因。`);
+        }
+      }
+    }
     validateStringList(asset.semanticLabels, `${field}.semanticLabels`, errors, {
       minimum: 1,
       maximum: 12,
