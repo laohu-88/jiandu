@@ -323,6 +323,31 @@ test('Stage 5C 数据可加载到审核模型', async () => {
   assert.equal(model.summary.needsReview >= 1, true);
 });
 
+test('未审核视频字幕保留建议时间，不把 null 当成 0 秒', async () => {
+  const { root, analysis, manifest, status } = await createFixtureProject('stage5d-seek');
+  const merged = mergeEditorialReviews({
+    stored: null,
+    analysis,
+    manifest,
+    status,
+  });
+  const storedCaption = merged.reviews.vid_1.captions['cap-vid'];
+  assert.equal(storedCaption.approvedStartTime, null);
+  assert.equal(storedCaption.approvedEndTime, null);
+  assert.equal(storedCaption.originalSuggestion.startTime, 1);
+  assert.equal(storedCaption.originalSuggestion.endTime, 3);
+
+  const model = await buildEditorialReviewModel(root);
+  const videoCaption = model.items
+    .find((item) => item.assetId === 'vid_1')
+    .captions
+    .find((caption) => caption.captionId === 'cap-vid');
+  assert.equal(videoCaption.displayTiming.startTime, 1);
+  assert.equal(videoCaption.displayTiming.endTime, 3);
+  assert.equal(videoCaption.seekTimeSec, 1);
+  assert.equal(seekTimeForCaption(videoCaption), 1);
+});
+
 test('没有 Stage 5C 数据的旧项目正常打开', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'stage5d-old-'));
   await fs.mkdir(path.join(root, '00-项目总控'), { recursive: true });

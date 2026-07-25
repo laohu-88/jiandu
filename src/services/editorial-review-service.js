@@ -94,6 +94,9 @@ function stringOrEmpty(value) {
 }
 
 function finiteNumberOrNull(value) {
+  // Number(null) === 0; treat null/undefined/'' as unset so pending captions
+  // keep suggestion times instead of collapsing seek/display to 0s.
+  if (value == null || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
