@@ -20,6 +20,8 @@ const {
   collectFcpTitles,
   extractManagedCaptionTitles,
   fcpTime,
+  frameDuration,
+  quantizeCaptionTiming,
   writeFcpxml,
 } = require('./fcpxml-service');
 
@@ -474,6 +476,105 @@ function detectPlanConflicts(entries) {
   return conflicts;
 }
 
+/**
+ * After timeline mapping, quantize managed-caption start/end onto the sequence
+ * frame grid (actual frameDuration). Does not mutate confirmed source times in
+ * editorial-review.json — only export timeline times used for FCPXML.
+ */
+function alignExportPlanToFrameBoundaries(entries, shotEntries, fps) {
+  const conflicts = [];
+  const sequenceFrameDuration = frameDuration(fps);
+  const timelineEnd = shotEntries.length
+    ? shotEntries[shotEntries.length - 1].timelineEnd
+    : 0;
+  const shotsById = new Map(shotEntries.map((entry) => [entry.shot.id, entry]));
+
+  for (const entry of entries) {
+    if (!entry.exportable) continue;
+    const shotEntry = shotsById.get(entry.matchedShotId);
+    if (!shotEntry) {
+      entry.exportable = false;
+      entry.mappingReason = 'frame_alignment_missing_shot';
+      entry.warnings = [...asArray(entry.warnings), '对齐帧边界时找不到所属镜头。'];
+      conflicts.push({
+        type: 'frame_alignment_missing_shot',
+        captionId: entry.captionId,
+        titleKey: entry.titleKey,
+        message: `对齐帧边界时找不到镜头：${entry.matchedShotId}`,
+      });
+      continue;
+    }
+
+    const stillOffset = isImageLikeType(entry.mediaType) ? 3600 : 0;
+    const sourceStart = shotEntry.sourceIn
+      + (entry.timelineStartTime - shotEntry.timelineStart);
+    const sourceEnd = shotEntry.sourceIn
+      + (entry.timelineEndTime - shotEntry.timelineStart);
+    const minOffset = stillOffset + shotEntry.sourceIn;
+    const maxByShot = stillOffset + shotEntry.sourceIn + shotEntry.durationSec;
+    const maxByTimeline = stillOffset + shotEntry.sourceIn
+      + Math.max(0, timelineEnd - shotEntry.timelineStart);
+    const maxOffset = Math.min(maxByShot, maxByTimeline);
+
+    const quantized = quantizeCaptionTiming({
+      startSec: stillOffset + sourceStart,
+      endSec: stillOffset + sourceEnd,
+      minSec: minOffset,
+      maxSec: maxOffset,
+      frameDuration: sequenceFrameDuration,
+    });
+
+    if (!quantized.ok) {
+      entry.exportable = false;
+      entry.mappingReason = 'frame_alignment_insufficient';
+      entry.warnings = [
+        ...asArray(entry.warnings),
+        quantized.message || '对齐帧边界后不足一帧，已阻止导出。',
+      ];
+      conflicts.push({
+        type: 'frame_alignment_insufficient',
+        captionId: entry.captionId,
+        titleKey: entry.titleKey,
+        message: quantized.message || '对齐帧边界后不足一帧，已阻止导出。',
+      });
+      continue;
+    }
+
+    const alignedSourceStart = quantized.startSec - stillOffset;
+    const alignedSourceEnd = quantized.endSec - stillOffset;
+    entry.timelineStartTime = shotEntry.timelineStart + (alignedSourceStart - shotEntry.sourceIn);
+    entry.timelineEndTime = shotEntry.timelineStart + (alignedSourceEnd - shotEntry.sourceIn);
+    entry.timelineDuration = entry.timelineEndTime - entry.timelineStartTime;
+    entry.frameAlignment = {
+      adjusted: quantized.adjusted === true,
+      frameDuration: quantized.frameDuration,
+      startFrame: quantized.startFrame,
+      endFrame: quantized.endFrame,
+      durationFrames: quantized.durationFrames,
+      deltaStartSec: quantized.deltaStartSec,
+      deltaEndSec: quantized.deltaEndSec,
+      offsetTime: quantized.startTime,
+      durationTime: quantized.durationTime,
+    };
+
+    if (quantized.adjusted) {
+      entry.warnings = [
+        ...asArray(entry.warnings),
+        'frameAlignmentAdjusted: 字幕时间已吸附到项目帧边界（调整幅度小于半帧为正常）。',
+      ];
+    }
+
+    // Re-validate after quantization.
+    entry.validationErrors = validateExportPlanEntry(entry);
+    if (entry.validationErrors.length) {
+      entry.exportable = false;
+      entry.mappingReason = 'frame_alignment_invalid';
+    }
+  }
+
+  return conflicts;
+}
+
 function buildCaptionExportPlan({
   confirmedCaptions,
   analysis,
@@ -649,7 +750,12 @@ function buildCaptionExportPlan({
     });
   }
 
-  const conflicts = detectPlanConflicts(entries);
+  const frameConflicts = alignExportPlanToFrameBoundaries(
+    entries,
+    shotEntries,
+    analysis?.timeline?.fps,
+  );
+  const conflicts = [...frameConflicts, ...detectPlanConflicts(entries)];
   const exportableEntries = entries.filter((entry) => entry.exportable);
   return {
     entries,
@@ -663,6 +769,7 @@ function buildCaptionExportPlan({
       mappingFailureCount: entries.filter((entry) => !entry.exportable && entry.mappingReason !== 'asset_not_on_timeline').length,
       conflictCount: conflicts.length,
       splitSegmentCount: entries.filter((entry) => /:seg\d+$/.test(entry.titleKey)).length,
+      frameAlignmentAdjustedCount: exportableEntries.filter((entry) => entry.frameAlignment?.adjusted).length,
     },
   };
 }
@@ -678,6 +785,10 @@ function toManagedCaptionTitles(exportableEntries) {
     durationSec: entry.timelineDuration,
     text: entry.approvedText,
     note: `${MANAGED_CAPTION_NOTE_PREFIX}${entry.titleKey}`,
+    // Prefer exact frame-grid strings produced during plan alignment.
+    offsetFcpTime: entry.frameAlignment?.offsetTime || null,
+    durationFcpTime: entry.frameAlignment?.durationTime || null,
+    frameAlignment: entry.frameAlignment || null,
     index,
   }));
 }
@@ -1042,6 +1153,7 @@ async function exportConfirmedCaptionsToFcpxml(projectPath, options = {}) {
 
 module.exports = {
   MIN_READABLE_CAPTION_SEC,
+  alignExportPlanToFrameBoundaries,
   buildCaptionExportPlan,
   buildTitleKey,
   exportConfirmedCaptionsToFcpxml,

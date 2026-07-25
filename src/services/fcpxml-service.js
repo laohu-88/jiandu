@@ -30,6 +30,98 @@ function gcd(left, right) {
   return a || 1;
 }
 
+function reduceRational(numerator, denominator) {
+  const num = Number(numerator);
+  const den = Number(denominator);
+  if (!Number.isFinite(num) || !Number.isFinite(den) || den === 0) {
+    throw new Error(`无效有理数：${numerator}/${denominator}`);
+  }
+  const sign = (num < 0) !== (den < 0) ? -1 : 1;
+  const absNum = Math.abs(Math.round(num));
+  const absDen = Math.abs(Math.round(den));
+  const divisor = gcd(absNum, absDen);
+  return {
+    numerator: sign * (absNum / divisor),
+    denominator: absDen / divisor,
+  };
+}
+
+function parseFcpTimeRational(value) {
+  const raw = String(value || '').trim();
+  if (!raw) throw new Error('空 FCP 时间');
+  const match = raw.match(/^(-?\d+)(?:\/(-?\d+))?s$/);
+  if (!match) throw new Error(`无效 FCP 时间：${value}`);
+  return reduceRational(Number(match[1]), match[2] ? Number(match[2]) : 1);
+}
+
+function formatFcpRational(numerator, denominator = 1) {
+  const reduced = reduceRational(numerator, denominator);
+  if (reduced.numerator === 0) return '0s';
+  if (reduced.denominator === 1) return `${reduced.numerator}s`;
+  return `${reduced.numerator}/${reduced.denominator}s`;
+}
+
+function rationalToSeconds(rational) {
+  return Number(rational.numerator) / Number(rational.denominator);
+}
+
+function isRationalMultiple(value, base) {
+  // value / base must be an integer: (value.num * base.den) % (value.den * base.num) === 0
+  const valueNum = BigInt(value.numerator);
+  const valueDen = BigInt(value.denominator);
+  const baseNum = BigInt(base.numerator);
+  const baseDen = BigInt(base.denominator);
+  if (baseNum === 0n) return valueNum === 0n;
+  const product = valueNum * baseDen;
+  const divisor = valueDen * baseNum;
+  if (divisor < 0n) {
+    return product % -divisor === 0n;
+  }
+  return product % divisor === 0n;
+}
+
+function frameDuration(fps) {
+  const value = Number(fps);
+  if (Math.abs(value - 29.97) < 0.01) return '1001/30000s';
+  if (Math.abs(value - 59.94) < 0.01) return '1001/60000s';
+  const rounded = Math.round(value);
+  return `1/${rounded || 30}s`;
+}
+
+function frameDurationRational(fpsOrDuration) {
+  if (fpsOrDuration && typeof fpsOrDuration === 'object'
+    && Number.isFinite(fpsOrDuration.numerator)
+    && Number.isFinite(fpsOrDuration.denominator)) {
+    return reduceRational(fpsOrDuration.numerator, fpsOrDuration.denominator);
+  }
+  if (typeof fpsOrDuration === 'string' && /s$/.test(fpsOrDuration)) {
+    return parseFcpTimeRational(fpsOrDuration);
+  }
+  return parseFcpTimeRational(frameDuration(fpsOrDuration));
+}
+
+function secondsToFrameIndex(seconds, frameDur, mode = 'nearest') {
+  const value = Number(seconds);
+  if (!Number.isFinite(value)) throw new Error(`无效秒数：${seconds}`);
+  const fd = frameDurationRational(frameDur);
+  // frames = seconds / (num/den) = seconds * den / num
+  const scaled = (value * fd.denominator) / fd.numerator;
+  if (mode === 'floor') return Math.floor(scaled + 1e-9);
+  if (mode === 'ceil') return Math.ceil(scaled - 1e-9);
+  return Math.round(scaled);
+}
+
+function frameIndexToRational(frameIndex, frameDur) {
+  const fd = frameDurationRational(frameDur);
+  const frames = Math.trunc(frameIndex);
+  return reduceRational(frames * fd.numerator, fd.denominator);
+}
+
+function fcpTimeFromFrameIndex(frameIndex, frameDur) {
+  const rational = frameIndexToRational(frameIndex, frameDur);
+  return formatFcpRational(rational.numerator, rational.denominator);
+}
+
 function fcpTime(seconds) {
   const value = Number(seconds);
   if (!Number.isFinite(value) || value < 0) throw new Error(`无效 FCP 时间：${seconds}`);
@@ -39,12 +131,115 @@ function fcpTime(seconds) {
   return `${numerator / divisor}/${FCPXML_TIMESCALE / divisor}s`;
 }
 
-function frameDuration(fps) {
-  const value = Number(fps);
-  if (Math.abs(value - 29.97) < 0.01) return '1001/30000s';
-  if (Math.abs(value - 59.94) < 0.01) return '1001/60000s';
-  const rounded = Math.round(value);
-  return `1/${rounded || 30}s`;
+function fcpTimeAligned(seconds, fpsOrFrameDuration) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`无效 FCP 时间：${seconds}`);
+  if (value === 0) return '0s';
+  const frames = secondsToFrameIndex(value, fpsOrFrameDuration, 'nearest');
+  return fcpTimeFromFrameIndex(Math.max(0, frames), fpsOrFrameDuration);
+}
+
+/**
+ * Quantize a caption [start, end) range onto the project frame grid.
+ * Uses exact frameDuration (never hard-codes 30fps). Snaps start/end to the
+ * nearest legal frame, then clamps inward to [minSec, maxSec]. Guarantees at
+ * least one frame when the host range can fit it; otherwise returns ok:false.
+ */
+function quantizeCaptionTiming({
+  startSec,
+  endSec,
+  minSec,
+  maxSec,
+  fps,
+  frameDuration: frameDurationValue = null,
+}) {
+  const fd = frameDurationRational(frameDurationValue || fps);
+  const rawStart = Number(startSec);
+  const rawEnd = Number(endSec);
+  const rawMin = Number(minSec);
+  const rawMax = Number(maxSec);
+  if (![rawStart, rawEnd, rawMin, rawMax].every(Number.isFinite) || rawEnd <= rawStart) {
+    return {
+      ok: false,
+      reason: 'invalid_range',
+      message: '字幕时间范围无效，无法对齐帧边界。',
+    };
+  }
+  if (rawMax <= rawMin) {
+    return {
+      ok: false,
+      reason: 'invalid_host_range',
+      message: '镜头或时间线范围无效，无法对齐帧边界。',
+    };
+  }
+
+  const minFrame = secondsToFrameIndex(rawMin, fd, 'ceil');
+  const maxFrame = secondsToFrameIndex(rawMax, fd, 'floor');
+  if (maxFrame - minFrame < 1) {
+    return {
+      ok: false,
+      reason: 'insufficient_frame_room',
+      message: '镜头剩余时间不足一帧，已阻止导出该字幕。',
+      minFrame,
+      maxFrame,
+      frameDuration: formatFcpRational(fd.numerator, fd.denominator),
+    };
+  }
+
+  let startFrame = secondsToFrameIndex(rawStart, fd, 'nearest');
+  let endFrame = secondsToFrameIndex(rawEnd, fd, 'nearest');
+  startFrame = Math.min(Math.max(startFrame, minFrame), maxFrame - 1);
+  endFrame = Math.min(Math.max(endFrame, minFrame + 1), maxFrame);
+
+  if (startFrame >= endFrame) {
+    if (startFrame + 1 <= maxFrame) {
+      endFrame = startFrame + 1;
+    } else if (endFrame - 1 >= minFrame) {
+      startFrame = endFrame - 1;
+    } else {
+      return {
+        ok: false,
+        reason: 'insufficient_frame_room',
+        message: '吸附后不足一帧且镜头无法容纳，已阻止导出该字幕。',
+        minFrame,
+        maxFrame,
+        frameDuration: formatFcpRational(fd.numerator, fd.denominator),
+      };
+    }
+  }
+
+  if (endFrame - startFrame < 1 || startFrame < minFrame || endFrame > maxFrame) {
+    return {
+      ok: false,
+      reason: 'insufficient_frame_room',
+      message: '对齐帧边界后字幕无法落在镜头范围内。',
+      minFrame,
+      maxFrame,
+      frameDuration: formatFcpRational(fd.numerator, fd.denominator),
+    };
+  }
+
+  const alignedStart = rationalToSeconds(frameIndexToRational(startFrame, fd));
+  const alignedEnd = rationalToSeconds(frameIndexToRational(endFrame, fd));
+  const durationFrames = endFrame - startFrame;
+  const adjusted = Math.abs(alignedStart - rawStart) > 1e-9
+    || Math.abs(alignedEnd - rawEnd) > 1e-9;
+  return {
+    ok: true,
+    startSec: alignedStart,
+    endSec: alignedEnd,
+    durationSec: alignedEnd - alignedStart,
+    startFrame,
+    endFrame,
+    durationFrames,
+    startTime: fcpTimeFromFrameIndex(startFrame, fd),
+    endTime: fcpTimeFromFrameIndex(endFrame, fd),
+    durationTime: fcpTimeFromFrameIndex(durationFrames, fd),
+    frameDuration: formatFcpRational(fd.numerator, fd.denominator),
+    adjusted,
+    deltaStartSec: alignedStart - rawStart,
+    deltaEndSec: alignedEnd - rawEnd,
+  };
 }
 
 function createFormatKey(width, height, fps, isStill = false) {
@@ -133,6 +328,9 @@ function normalizeManagedCaptionTitles(managedCaptionTitles = []) {
         durationSec,
         text,
         note: item.note || `${MANAGED_CAPTION_NOTE_PREFIX}${titleKey}`,
+        offsetFcpTime: typeof item.offsetFcpTime === 'string' ? item.offsetFcpTime : null,
+        durationFcpTime: typeof item.durationFcpTime === 'string' ? item.durationFcpTime : null,
+        frameAlignment: item.frameAlignment || null,
       };
     })
     .filter(Boolean);
@@ -320,6 +518,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     ] : []),
   ].join('\n');
 
+  const sequenceFrameDuration = frameDuration(analysis.timeline.fps);
   let timelineOffset = 0;
   const clipsXml = analysis.timeline.shots.map((shot) => {
     const mapping = mappingById.get(shot.assetId);
@@ -333,15 +532,28 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     const stillTimeOffset = mapping.type === 'image' ? 3600 : 0;
     for (const title of titleByShotId.get(shot.id) || []) {
       const titleOffset = stillTimeOffset + title.sourceTimeSec;
+      // Managed light captions must land on the sequence frame grid. Marker
+      // subtitle titles keep legacy fcpTime() formatting.
+      const useFrameGrid = title.kind === 'managed_light_caption';
+      const offsetTime = (useFrameGrid && title.offsetFcpTime)
+        ? title.offsetFcpTime
+        : (useFrameGrid
+          ? fcpTimeAligned(titleOffset, sequenceFrameDuration)
+          : fcpTime(titleOffset));
+      const durationTime = (useFrameGrid && title.durationFcpTime)
+        ? title.durationFcpTime
+        : (useFrameGrid
+          ? fcpTimeAligned(title.durationSec, sequenceFrameDuration)
+          : fcpTime(title.durationSec));
       // FCPXML DTD: title children are param*, text*, text-style-def*, note?, ...
       // note is a child element — never a title attribute.
       const noteChild = title.note
         ? `            <note>${escapeXml(title.note)}</note>\n`
         : '';
       nested.push(
-        `          <title ref="${titleEffectId}" lane="1" offset="${fcpTime(titleOffset)}"`
+        `          <title ref="${titleEffectId}" lane="1" offset="${offsetTime}"`
         + ` name="${escapeXml(`${title.text} - ${BASIC_TITLE_EFFECT.name}`)}"`
-        + ` start="3600s" duration="${fcpTime(title.durationSec)}">\n`
+        + ` start="3600s" duration="${durationTime}">\n`
         + '            <param name="展平" key="9999/999166631/999166633/2/351" value="1"/>\n'
         + '            <param name="对齐" key="9999/999166631/999166633/2/354/999169573/401" value="1 (居中)"/>\n'
         + '            <text>\n'
@@ -469,6 +681,37 @@ function validateFcpxmlStructure(xml, expected = {}) {
     if (!media[1].startsWith('file://')) errors.push('素材资源不是 file URL。');
   }
   const managedTitleKeys = [];
+  const sequenceDurationMatch = xml.match(/<sequence\b[^>]*\bduration="([^"]+)"/);
+  let sequenceDurationRational = null;
+  try {
+    sequenceDurationRational = sequenceDurationMatch
+      ? parseFcpTimeRational(sequenceDurationMatch[1])
+      : null;
+  } catch {
+    sequenceDurationRational = null;
+  }
+  let sequenceFrameRational = null;
+  try {
+    sequenceFrameRational = sequenceFormat?.frameDuration
+      ? parseFcpTimeRational(sequenceFormat.frameDuration)
+      : (Number.isFinite(expected.fps) ? frameDurationRational(expected.fps) : null);
+  } catch {
+    sequenceFrameRational = null;
+  }
+
+  // Parent clip bounds for managed-title containment checks.
+  const clipBlocks = [...xml.matchAll(
+    /<(asset-clip|video)\s+([^>]+)>([\s\S]*?)<\/\1>/g,
+  )].map((match) => {
+    const attrs = match[2];
+    return {
+      offset: attrs.match(/\boffset="([^"]+)"/)?.[1] || null,
+      start: attrs.match(/\bstart="([^"]+)"/)?.[1] || null,
+      duration: attrs.match(/\bduration="([^"]+)"/)?.[1] || null,
+      body: match[3],
+    };
+  });
+
   for (const title of titles) {
     if (!effectIds.has(title.ref)) errors.push(`标题引用了不存在的 effect ${title.ref}。`);
     if (!(title.lane > 0)) errors.push('标题必须位于主时间线上方的正 lane。');
@@ -479,12 +722,102 @@ function validateFcpxmlStructure(xml, expected = {}) {
     if (title.noteChild != null && !title.noteOrderOk) {
       errors.push('title 的 <note> 子元素顺序不合法（应位于 text / text-style-def 之后）。');
     }
-    if (title.noteChild && title.noteChild.startsWith(MANAGED_CAPTION_NOTE_PREFIX)) {
+    const isManaged = Boolean(
+      title.noteChild && title.noteChild.startsWith(MANAGED_CAPTION_NOTE_PREFIX),
+    );
+    if (isManaged) {
       const titleKey = title.noteChild.slice(MANAGED_CAPTION_NOTE_PREFIX.length);
       if (!titleKey) {
         errors.push('受管 title 的 titleKey 为空。');
       } else {
         managedTitleKeys.push(titleKey);
+      }
+
+      let offsetRational = null;
+      let durationRational = null;
+      try {
+        offsetRational = parseFcpTimeRational(title.offset);
+        durationRational = parseFcpTimeRational(title.duration);
+      } catch (error) {
+        errors.push(`受管 title 时间无法解析（${titleKey || 'unknown'}）：${error.message}`);
+      }
+
+      if (offsetRational && durationRational) {
+        const durationSeconds = rationalToSeconds(durationRational);
+        if (!(durationSeconds > 0)) {
+          errors.push(`受管 title 时长必须大于 0：${titleKey || title.offset}`);
+        }
+        if (sequenceFrameRational) {
+          if (!isRationalMultiple(offsetRational, sequenceFrameRational)) {
+            errors.push(
+              `受管 title offset 未对齐帧边界：${title.offset}（frameDuration=${sequenceFormat?.frameDuration || formatFcpRational(sequenceFrameRational.numerator, sequenceFrameRational.denominator)}）`,
+            );
+          }
+          if (!isRationalMultiple(durationRational, sequenceFrameRational)) {
+            errors.push(
+              `受管 title duration 未对齐帧边界：${title.duration}（frameDuration=${sequenceFormat?.frameDuration || formatFcpRational(sequenceFrameRational.numerator, sequenceFrameRational.denominator)}）`,
+            );
+          }
+          const endRational = reduceRational(
+            offsetRational.numerator * durationRational.denominator
+              + durationRational.numerator * offsetRational.denominator,
+            offsetRational.denominator * durationRational.denominator,
+          );
+          if (!isRationalMultiple(endRational, sequenceFrameRational)) {
+            errors.push(
+              `受管 title 结束时间未对齐帧边界：${formatFcpRational(endRational.numerator, endRational.denominator)}`,
+            );
+          }
+        }
+
+        const parent = clipBlocks.find((clip) => title.xml && clip.body.includes(title.xml));
+        if (parent?.start && parent?.duration && parent?.offset) {
+          try {
+            const clipStart = parseFcpTimeRational(parent.start);
+            const clipDuration = parseFcpTimeRational(parent.duration);
+            const clipOffset = parseFcpTimeRational(parent.offset);
+            const clipEnd = reduceRational(
+              clipStart.numerator * clipDuration.denominator
+                + clipDuration.numerator * clipStart.denominator,
+              clipStart.denominator * clipDuration.denominator,
+            );
+            const titleEnd = reduceRational(
+              offsetRational.numerator * durationRational.denominator
+                + durationRational.numerator * offsetRational.denominator,
+              offsetRational.denominator * durationRational.denominator,
+            );
+            const startSec = rationalToSeconds(offsetRational);
+            const endSec = rationalToSeconds(titleEnd);
+            const clipStartSec = rationalToSeconds(clipStart);
+            const clipEndSec = rationalToSeconds(clipEnd);
+            if (startSec < clipStartSec - 1e-9 || endSec > clipEndSec + 1e-9) {
+              errors.push(`受管 title 越过所属镜头范围：${titleKey || title.offset}`);
+            }
+
+            // Absolute timeline position = clip.offset + (title.offset - clip.start)
+            const relativeStart = reduceRational(
+              offsetRational.numerator * clipStart.denominator
+                - clipStart.numerator * offsetRational.denominator,
+              offsetRational.denominator * clipStart.denominator,
+            );
+            const absoluteStart = reduceRational(
+              clipOffset.numerator * relativeStart.denominator
+                + relativeStart.numerator * clipOffset.denominator,
+              clipOffset.denominator * relativeStart.denominator,
+            );
+            const absoluteEnd = reduceRational(
+              absoluteStart.numerator * durationRational.denominator
+                + durationRational.numerator * absoluteStart.denominator,
+              absoluteStart.denominator * durationRational.denominator,
+            );
+            if (sequenceDurationRational
+              && rationalToSeconds(absoluteEnd) > rationalToSeconds(sequenceDurationRational) + 1e-9) {
+              errors.push(`受管 title 越过项目总时长：${titleKey || title.offset}`);
+            }
+          } catch (error) {
+            errors.push(`受管 title 镜头边界校验失败：${error.message}`);
+          }
+        }
       }
     }
   }
@@ -530,11 +863,13 @@ function validateFcpxmlStructure(xml, expected = {}) {
     clipCount: clips.length,
     markerCount: markers.length,
     titleCount: titles.length,
+    managedTitleCount: managedTitleKeys.length,
     effectCount: effects.length,
     version,
     mediaUrls: mediaRepresentations.map((match) => match[1]),
     clipMediaUrls,
     sequenceFormat,
+    sequenceFrameDuration: sequenceFormat?.frameDuration || null,
   };
 }
 
@@ -612,8 +947,16 @@ module.exports = {
   escapeXml,
   extractManagedCaptionTitles,
   fcpTime,
+  fcpTimeAligned,
+  fcpTimeFromFrameIndex,
   frameDuration,
+  frameDurationRational,
+  formatFcpRational,
+  isRationalMultiple,
   normalizeManagedCaptionTitles,
+  parseFcpTimeRational,
+  quantizeCaptionTiming,
+  secondsToFrameIndex,
   validateFcpxmlStructure,
   writeFcpxml,
 };

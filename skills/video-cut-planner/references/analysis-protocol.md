@@ -94,8 +94,12 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   marked with a stable `<note>vcp-managed-caption:titleKey</note>` child inside
   each managed `title` (never a `note` attribute) and can be added, updated, or
   removed idempotently without changing markers, unmanaged titles, shot bounds, or
-  original audio. Video caption times map through shot source-in/out to timeline
+  original audio.   Video caption times map through shot source-in/out to timeline
   time; image captions map inside the image shot with no forged source times.
+  Before FCPXML time strings are written, managed Title offset/duration are
+  quantized onto the sequence `frameDuration` grid (nearest frame, clamped to
+  the host shot / timeline, minimum one frame; insufficient room blocks export).
+  Confirmed source times in editorial-review.json are not rewritten.
 - `assets[].status`: `adopt`, `candidate`, or `reject`.
 - `assets[].reason`: why it is adopted/candidate/rejected.
 - `assets[].ranges`: useful video intervals; use an empty list for still images or no reliable interval.

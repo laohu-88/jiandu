@@ -12,6 +12,7 @@ const {
   exportConfirmedCaptionsToFcpxml,
   previewConfirmedCaptionFcpxmlExport,
   reconcileManagedTitles,
+  toManagedCaptionTitles,
 } = require('../src/services/caption-fcpxml-export-service');
 const {
   BASIC_TITLE_EFFECT,
@@ -934,4 +935,436 @@ test('Stage 5E-Fix: 连续导出幂等；更新文字时间；移除 rejected；
     extractManagedCaptionTitles(await fs.readFile(project.fcpxmlPath, 'utf8')).length,
     2,
   );
+});
+
+function assertManagedTitlesOnFrameGrid(xml, fps = 30) {
+  const {
+    parseFcpTimeRational,
+    frameDuration,
+    isRationalMultiple,
+    formatFcpRational,
+  } = require('../src/services/fcpxml-service');
+  const frameDur = parseFcpTimeRational(frameDuration(fps));
+  const managed = extractManagedCaptionTitles(xml);
+  assert.ok(managed.length > 0, 'expected managed titles');
+  for (const title of managed) {
+    const offset = parseFcpTimeRational(title.offset);
+    const duration = parseFcpTimeRational(title.duration);
+    assert.equal(
+      isRationalMultiple(offset, frameDur),
+      true,
+      `offset not on grid: ${title.offset}`,
+    );
+    assert.equal(
+      isRationalMultiple(duration, frameDur),
+      true,
+      `duration not on grid: ${title.duration}`,
+    );
+    assert.ok(duration.numerator / duration.denominator > 0, 'duration must be > 0');
+    const endNum = offset.numerator * duration.denominator + duration.numerator * offset.denominator;
+    const endDen = offset.denominator * duration.denominator;
+    const end = parseFcpTimeRational(formatFcpRational(endNum, endDen));
+    assert.equal(
+      isRationalMultiple(end, frameDur),
+      true,
+      `end not on grid for ${title.titleKey}`,
+    );
+  }
+  assert.doesNotMatch(xml, /<title\b[^>]*\bnote="/);
+  return managed;
+}
+
+test('Stage 5E-Fix2: 30fps 非整帧 offset/duration 吸附到帧边界（含 48/25s）', () => {
+  const {
+    quantizeCaptionTiming,
+    fcpTime,
+    fcpTimeAligned,
+    frameDuration,
+    parseFcpTimeRational,
+    isRationalMultiple,
+  } = require('../src/services/fcpxml-service');
+
+  // Legacy fcpTime produces 48/25s for 1.92s — not on 30fps grid.
+  assert.equal(fcpTime(1.92), '48/25s');
+  const legacy = parseFcpTimeRational('48/25s');
+  const fd = parseFcpTimeRational(frameDuration(30));
+  assert.equal(isRationalMultiple(legacy, fd), false);
+
+  const quantized = quantizeCaptionTiming({
+    startSec: 1.01,
+    endSec: 1.01 + 1.92,
+    minSec: 0,
+    maxSec: 10,
+    fps: 30,
+  });
+  assert.equal(quantized.ok, true);
+  assert.equal(quantized.adjusted, true);
+  assert.equal(isRationalMultiple(parseFcpTimeRational(quantized.startTime), fd), true);
+  assert.equal(isRationalMultiple(parseFcpTimeRational(quantized.durationTime), fd), true);
+  assert.equal(isRationalMultiple(parseFcpTimeRational(quantized.endTime), fd), true);
+  assert.ok(quantized.durationFrames >= 1);
+
+  // Aligned formatter must not emit 48/25s.
+  assert.notEqual(fcpTimeAligned(1.92, 30), '48/25s');
+  assert.equal(isRationalMultiple(parseFcpTimeRational(fcpTimeAligned(1.92, 30)), fd), true);
+
+  const assets = [videoAsset('vid-1')];
+  const shots = [{
+    id: 'shot-1', assetId: 'vid-1', inSec: 0, outSec: 10, durationSec: 10,
+    fitMode: 'contain', audioMode: 'keep',
+  }];
+  const analysis = baseAnalysis(assets, shots, { markers: [] });
+  const plan = buildCaptionExportPlan({
+    confirmedCaptions: [
+      confirmed('c-off', 'vid-1', { startTime: 1.01, endTime: 1.01 + 1.92, text: '非整帧' }),
+    ],
+    analysis,
+    assetMappings: mappingsFor(assets),
+  });
+  assert.equal(plan.exportableEntries.length, 1);
+  assert.ok(plan.exportableEntries[0].frameAlignment);
+  assert.match(
+    plan.exportableEntries[0].warnings.join('\n'),
+    /frameAlignmentAdjusted/,
+  );
+  const xml = buildFcpxml({
+    projectName: 'frame-align',
+    analysis,
+    assetMappings: mappingsFor(assets),
+    managedCaptionTitles: toManagedCaptionTitles(plan.exportableEntries),
+  });
+  assert.doesNotMatch(xml, /duration="48\/25s"/);
+  const managed = assertManagedTitlesOnFrameGrid(xml, 30);
+  assert.equal(managed[0].text, '非整帧');
+  const report = validateFcpxmlStructure(xml, {
+    shotCount: 1, assetCount: 1, markerCount: 0, titleCount: 1, fps: 30,
+  });
+  assert.equal(report.ok, true, report.errors.join('；'));
+});
+
+test('Stage 5E-Fix2: 吸附后仍在镜头内；近镜头结尾不越界；不足一帧保底；无法容纳则阻止', () => {
+  const { quantizeCaptionTiming } = require('../src/services/fcpxml-service');
+
+  const nearEnd = quantizeCaptionTiming({
+    startSec: 9.98,
+    endSec: 10.02,
+    minSec: 0,
+    maxSec: 10,
+    fps: 30,
+  });
+  assert.equal(nearEnd.ok, true);
+  assert.ok(nearEnd.endSec <= 10 + 1e-9);
+  assert.ok(nearEnd.startSec >= 0 - 1e-9);
+  assert.ok(nearEnd.durationFrames >= 1);
+
+  const sameFrame = quantizeCaptionTiming({
+    startSec: 2.01,
+    endSec: 2.02,
+    minSec: 0,
+    maxSec: 10,
+    fps: 30,
+  });
+  assert.equal(sameFrame.ok, true);
+  assert.equal(sameFrame.durationFrames, 1);
+
+  const tooSmall = quantizeCaptionTiming({
+    startSec: 0,
+    endSec: 0.01,
+    minSec: 0,
+    maxSec: 1 / 60,
+    fps: 30,
+  });
+  assert.equal(tooSmall.ok, false);
+  assert.equal(tooSmall.reason, 'insufficient_frame_room');
+
+  const assets = [videoAsset('vid-1')];
+  const shots = [{
+    id: 'shot-1', assetId: 'vid-1', inSec: 0, outSec: 2, durationSec: 2,
+    fitMode: 'contain', audioMode: 'keep',
+  }];
+  const analysis = baseAnalysis(assets, shots, { markers: [] });
+  const plan = buildCaptionExportPlan({
+    confirmedCaptions: [
+      confirmed('c-edge', 'vid-1', { startTime: 1.98, endTime: 2.05, text: '贴边' }),
+    ],
+    analysis,
+    assetMappings: mappingsFor(assets),
+  });
+  assert.equal(plan.exportableEntries.length, 1);
+  const entry = plan.exportableEntries[0];
+  assert.ok(entry.timelineEndTime <= 2 + 1e-6);
+  assert.ok(entry.timelineStartTime >= 0 - 1e-6);
+  assert.ok(entry.timelineDuration > 0);
+
+  // Shot shorter than one frame after inward clamp → blocked by frame alignment.
+  const tinyShots = [{
+    id: 'shot-tiny', assetId: 'vid-1', inSec: 0, outSec: 0.025, durationSec: 0.025,
+    fitMode: 'contain', audioMode: 'keep',
+  }];
+  const tinyAnalysis = baseAnalysis(assets, tinyShots, { markers: [] });
+  const tinyPlan = buildCaptionExportPlan({
+    confirmedCaptions: [
+      confirmed('c-tiny', 'vid-1', { startTime: 0, endTime: 0.025, text: '太短' }),
+    ],
+    analysis: tinyAnalysis,
+    assetMappings: mappingsFor(assets),
+  });
+  assert.equal(tinyPlan.exportableEntries.length, 0);
+  assert.ok(
+    tinyPlan.entries.some((entry) => entry.mappingReason === 'frame_alignment_insufficient')
+      || tinyPlan.conflicts.some((item) => item.type === 'frame_alignment_insufficient'),
+    JSON.stringify({
+      conflicts: tinyPlan.conflicts,
+      reasons: tinyPlan.entries.map((entry) => entry.mappingReason),
+      warnings: tinyPlan.entries.map((entry) => entry.warnings),
+    }),
+  );
+});
+
+test('Stage 5E-Fix2: 图片字幕同样对齐帧边界；分数帧率使用实际 frameDuration', () => {
+  const {
+    frameDuration,
+    parseFcpTimeRational,
+    isRationalMultiple,
+    quantizeCaptionTiming,
+  } = require('../src/services/fcpxml-service');
+
+  assert.equal(frameDuration(29.97), '1001/30000s');
+  const fd2997 = parseFcpTimeRational(frameDuration(29.97));
+  const q2997 = quantizeCaptionTiming({
+    startSec: 1.0,
+    endSec: 2.5,
+    minSec: 0,
+    maxSec: 10,
+    frameDuration: frameDuration(29.97),
+  });
+  assert.equal(q2997.ok, true);
+  assert.equal(q2997.frameDuration, '1001/30000s');
+  assert.equal(isRationalMultiple(parseFcpTimeRational(q2997.startTime), fd2997), true);
+  assert.equal(isRationalMultiple(parseFcpTimeRational(q2997.durationTime), fd2997), true);
+  // Must not silently fall back to 1/30s.
+  assert.doesNotMatch(q2997.durationTime, /\/30s$/);
+
+  const assets = [imageAsset('img-1')];
+  const shots = [{
+    id: 'shot-img', assetId: 'img-1', inSec: 0, outSec: 4, durationSec: 4,
+    fitMode: 'contain', audioMode: 'mute',
+  }];
+  const analysis = baseAnalysis(assets, shots, {
+    markers: [],
+    lightCaptionPlan: [
+      {
+        captionId: 'c-img',
+        assetId: 'img-1',
+        text: '图片字幕',
+        purpose: 'translate',
+        basedOn: 'Panel A',
+        confidence: 0.9,
+        reviewRequired: true,
+      },
+    ],
+  });
+  analysis.timeline.fps = 30;
+  const plan = buildCaptionExportPlan({
+    confirmedCaptions: [
+      confirmed('c-img', 'img-1', {
+        text: '图片字幕',
+        startTime: null,
+        endTime: null,
+        basedOn: 'Panel A',
+      }),
+    ],
+    analysis,
+    assetMappings: mappingsFor(assets),
+  });
+  assert.equal(plan.exportableEntries.length, 1);
+  const xml = buildFcpxml({
+    projectName: 'image-frame',
+    analysis,
+    assetMappings: mappingsFor(assets),
+    managedCaptionTitles: toManagedCaptionTitles(plan.exportableEntries),
+  });
+  const managed = assertManagedTitlesOnFrameGrid(xml, 30);
+  assert.equal(managed[0].text, '图片字幕');
+  // Image titles live on the 3600s still timeline and must stay on-grid there.
+  const offset = parseFcpTimeRational(managed[0].offset);
+  assert.ok(offset.numerator / offset.denominator >= 3600 - 1e-9);
+});
+
+test('Stage 5E-Fix2: 连续导出幂等；文字/审核/titleKey 不变；镜头 Marker 章节非受管总时长原声不变', async () => {
+  const assets = [videoAsset('vid-1'), imageAsset('img-1')];
+  const shots = [
+    {
+      id: 'shot-1', assetId: 'vid-1', inSec: 0, outSec: 8, durationSec: 8,
+      fitMode: 'contain', audioMode: 'keep', chapterId: 'ch-1',
+    },
+    {
+      id: 'shot-2', assetId: 'img-1', inSec: 0, outSec: 3, durationSec: 3,
+      fitMode: 'contain', audioMode: 'mute', chapterId: 'ch-1',
+    },
+  ];
+  const analysis = baseAnalysis(assets, shots, {
+    markers: [
+      {
+        timeSec: 0.5,
+        text: '章节标记',
+        id: 'marker-chapter',
+        subtitle: {
+          enabled: true,
+          text: '非受管章节 Title',
+          durationSec: 1,
+          position: 'bottom-safe',
+          purpose: 'chapter',
+          renderAsFcpTitle: true,
+        },
+      },
+    ],
+    lightCaptionPlan: [
+      {
+        captionId: 'c1',
+        assetId: 'vid-1',
+        text: '确认文案',
+        startTime: 1.01,
+        endTime: 2.93,
+        purpose: 'translate',
+        basedOn: 'visual',
+        confidence: 0.9,
+        reviewRequired: true,
+      },
+      {
+        captionId: 'c2',
+        assetId: 'img-1',
+        text: '图片确认',
+        purpose: 'translate',
+        basedOn: 'Panel A',
+        confidence: 0.9,
+        reviewRequired: true,
+      },
+    ],
+  });
+  const project = await makeTempProject({
+    analysis,
+    assetMappings: mappingsFor(assets),
+    editorialReviews: {
+      'vid-1': {
+        reviewStatus: 'approved',
+        preserveFullClipLocked: true,
+        preserveOriginalAudioLocked: true,
+        captions: {
+          'c1': {
+            reviewStatus: 'edited_approved',
+            approvedText: '确认文案',
+            approvedStartTime: 1.01,
+            approvedEndTime: 2.93,
+          },
+        },
+      },
+      'img-1': {
+        reviewStatus: 'approved',
+        captions: {
+          'c2': {
+            reviewStatus: 'approved',
+            approvedText: '图片确认',
+          },
+        },
+      },
+    },
+  });
+
+  const first = await exportConfirmedCaptionsToFcpxml(project.root);
+  assert.equal(first.ok, true, first.message);
+  const xml1 = await fs.readFile(project.fcpxmlPath, 'utf8');
+  const managed1 = assertManagedTitlesOnFrameGrid(xml1, 30);
+  assert.equal(managed1.length, 2);
+  assert.deepEqual(managed1.map((item) => item.text).sort(), ['图片确认', '确认文案']);
+  const keys1 = managed1.map((item) => item.titleKey).sort();
+  const markers1 = [...xml1.matchAll(/<marker\s+/g)].length;
+  const clips1 = [...xml1.matchAll(/<(?:asset-clip|video)\s+/g)].length;
+  const unmanaged1 = [...xml1.matchAll(/<title\s+/g)].length - managed1.length;
+  const duration1 = xml1.match(/<sequence\b[^>]*\bduration="([^"]+)"/)?.[1];
+  const mute1 = [...xml1.matchAll(/adjust-volume amount="-96dB"/g)].length;
+  assert.match(xml1, /非受管章节 Title/);
+  assert.match(xml1, /audioRole="dialogue"/);
+
+  const editorialBefore = await fs.readFile(
+    path.join(project.root, EDITORIAL_REVIEW_FILE),
+    'utf8',
+  );
+
+  const second = await exportConfirmedCaptionsToFcpxml(project.root);
+  assert.equal(second.ok, true, second.message);
+  const xml2 = await fs.readFile(project.fcpxmlPath, 'utf8');
+  assert.equal(xml2, xml1);
+  const managed2 = extractManagedCaptionTitles(xml2);
+  assert.deepEqual(managed2.map((item) => item.titleKey).sort(), keys1);
+  assert.deepEqual(managed2.map((item) => item.text).sort(), ['图片确认', '确认文案']);
+  assert.equal([...xml2.matchAll(/<marker\s+/g)].length, markers1);
+  assert.equal([...xml2.matchAll(/<(?:asset-clip|video)\s+/g)].length, clips1);
+  assert.equal([...xml2.matchAll(/<title\s+/g)].length - managed2.length, unmanaged1);
+  assert.equal(xml2.match(/<sequence\b[^>]*\bduration="([^"]+)"/)?.[1], duration1);
+  assert.equal([...xml2.matchAll(/adjust-volume amount="-96dB"/g)].length, mute1);
+
+  const editorialAfter = await fs.readFile(
+    path.join(project.root, EDITORIAL_REVIEW_FILE),
+    'utf8',
+  );
+  assert.equal(editorialAfter, editorialBefore);
+
+  const confirmed = getConfirmedCaptions(
+    await require('../src/services/editorial-review-service')
+      .buildEditorialReviewModel(project.root),
+  );
+  assert.equal(confirmed.length, 2);
+  assert.ok(confirmed.every((item) => ['approved', 'edited_approved'].includes(item.reviewStatus)));
+  assert.equal(confirmed.find((item) => item.captionId === 'c1').text, '确认文案');
+  assert.equal(confirmed.find((item) => item.captionId === 'c1').startTime, 1.01);
+  assert.equal(confirmed.find((item) => item.captionId === 'c1').endTime, 2.93);
+});
+
+test('Stage 5E-Fix2: 校验器拒绝未对齐帧边界的受管 Title；旧非法 note 属性仍拒绝', () => {
+  const assets = [videoAsset('vid-1')];
+  const shots = [{
+    id: 'shot-1', assetId: 'vid-1', inSec: 0, outSec: 8, durationSec: 8,
+    fitMode: 'contain', audioMode: 'keep',
+  }];
+  const analysis = baseAnalysis(assets, shots, { markers: [] });
+  const assetMappings = mappingsFor(assets);
+  const legal = buildFcpxml({
+    projectName: 'grid',
+    analysis,
+    assetMappings,
+    managedCaptionTitles: [{
+      titleKey: 'vcp-lc:c1:vid-1:shot-1',
+      text: '对齐',
+      startSec: 1,
+      durationSec: 2,
+      note: `${MANAGED_CAPTION_NOTE_PREFIX}vcp-lc:c1:vid-1:shot-1`,
+      offsetFcpTime: '1/1s',
+      durationFcpTime: '2/1s',
+    }],
+  });
+  const okReport = validateFcpxmlStructure(legal, {
+    shotCount: 1, assetCount: 1, markerCount: 0, titleCount: 1, fps: 30,
+  });
+  assert.equal(okReport.ok, true, okReport.errors.join('；'));
+
+  const misaligned = legal.replace(/duration="2\/1s"/, 'duration="48/25s"');
+  const badReport = validateFcpxmlStructure(misaligned, {
+    shotCount: 1, assetCount: 1, markerCount: 0, titleCount: 1, fps: 30,
+  });
+  assert.equal(badReport.ok, false);
+  assert.ok(
+    badReport.errors.some((error) => /duration 未对齐帧边界/.test(error)),
+    badReport.errors.join('；'),
+  );
+
+  const illegalNote = legal.replace(
+    /(<title\b[^>]*name="[^"]*")(\s+start=)/,
+    `$1 note="${MANAGED_CAPTION_NOTE_PREFIX}vcp-lc:c1:vid-1:shot-1"$2`,
+  ).replace(/\s*<note>vcp-managed-caption:vcp-lc:c1:vid-1:shot-1<\/note>\n?/, '\n');
+  const noteReport = validateFcpxmlStructure(illegalNote, {
+    shotCount: 1, assetCount: 1, markerCount: 0, titleCount: 1, fps: 30,
+  });
+  assert.equal(noteReport.ok, false);
+  assert.ok(noteReport.errors.some((error) => /非法 note 属性/.test(error)));
 });
