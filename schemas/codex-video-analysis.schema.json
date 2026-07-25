@@ -21,6 +21,12 @@
       "type": "array",
       "items": { "$ref": "#/$defs/storyUnit" }
     },
+    "lightCaptionPlan": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/lightCaption" }
+    },
+    "visualExplanationSummary": { "$ref": "#/$defs/visualExplanationSummary" },
     "theme": {
       "type": "object",
       "additionalProperties": false,
@@ -205,6 +211,16 @@
           "maxItems": 12,
           "items": { "type": "string", "minLength": 1, "maxLength": 500 }
         },
+        "visualTextEvidenceUsed": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "audioEvidenceUsed": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
         "contextEvidenceUsed": {
           "type": "array",
           "maxItems": 12,
@@ -215,6 +231,243 @@
           "maxItems": 12,
           "items": { "type": "string", "minLength": 1, "maxLength": 500 }
         }
+      }
+    },
+    "visualTextItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sourceText", "language", "translatedText", "meaning", "textType",
+        "confidence", "warnings"
+      ],
+      "properties": {
+        "sourceText": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "language": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "translatedText": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "meaning": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "textType": {
+          "enum": [
+            "subtitle", "speech_bubble", "narration", "title", "label", "sign",
+            "chat", "ui", "sound_effect", "caption", "other", "uncertain"
+          ]
+        },
+        "readingOrder": { "type": "integer", "minimum": 1 },
+        "speakerOrRegion": { "type": ["string", "null"], "maxLength": 200 },
+        "startTime": { "type": "number", "minimum": 0 },
+        "endTime": { "type": "number", "exclusiveMinimum": 0 },
+        "frameEvidence": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "warnings": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "visualTextAnalysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "warnings"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 40,
+          "items": { "$ref": "#/$defs/visualTextItem" }
+        },
+        "panelCount": { "type": "integer", "minimum": 0 },
+        "readingDirection": { "enum": ["ltr", "rtl", "ttb", "btt", "unknown"] },
+        "readingOrderUncertain": { "type": "boolean" },
+        "warnings": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "explanationPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assetId", "visualSummary", "audienceNeedsExplanation",
+        "explanationReason", "keyPoint", "confidence",
+        "visualEvidenceUsed", "contextEvidenceUsed", "inference", "warnings"
+      ],
+      "properties": {
+        "assetId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "storyUnitId": { "type": ["string", "null"], "maxLength": 100 },
+        "visualSummary": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "visualTextSummary": { "type": "string", "maxLength": 1000 },
+        "audioSummary": { "type": "string", "maxLength": 1000 },
+        "contextSummary": { "type": "string", "maxLength": 1000 },
+        "translatedMeaning": { "type": "string", "maxLength": 1000 },
+        "audienceNeedsExplanation": {
+          "enum": [
+            "none", "background", "translate_on_screen_text", "humor_or_twist",
+            "multi_panel_dialogue", "insufficient_evidence"
+          ]
+        },
+        "explanationReason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "keyPoint": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "setup": { "type": "string", "maxLength": 1000 },
+        "payoffOrResult": { "type": "string", "maxLength": 1000 },
+        "humorOrConflict": { "type": "string", "maxLength": 1000 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "visualEvidenceUsed": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "visualTextEvidenceUsed": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "audioEvidenceUsed": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "contextEvidenceUsed": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "inference": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "audioAnalysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audioAvailable", "audioEnabled", "audioRole", "preserveOriginalAudio", "warnings"
+      ],
+      "properties": {
+        "audioAvailable": { "type": "boolean" },
+        "audioEnabled": { "type": "boolean" },
+        "audioRole": {
+          "enum": ["dialogue", "ambient", "music", "reaction", "mixed", "none", "unknown"]
+        },
+        "speechPresent": { "type": "boolean" },
+        "musicPresent": { "type": "boolean" },
+        "soundEffectPresent": { "type": "boolean" },
+        "audioSummary": { "type": "string", "maxLength": 1000 },
+        "audioNeededForUnderstanding": { "type": "boolean" },
+        "preserveOriginalAudio": { "type": "boolean" },
+        "muteReason": { "type": ["string", "null"], "maxLength": 500 },
+        "warnings": {
+          "type": "array",
+          "maxItems": 12,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "timeRangeSec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startSec", "endSec"],
+      "properties": {
+        "startSec": { "type": "number", "minimum": 0 },
+        "endSec": { "type": "number", "exclusiveMinimum": 0 },
+        "label": { "type": "string", "maxLength": 200 }
+      }
+    },
+    "videoPreservationPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assetId", "sourceDuration", "proposedIn", "proposedOut", "selectedDuration",
+        "keepRatio", "preserveFullClip", "criticalMoments", "protectedTimeRanges",
+        "subtitleTimeRanges", "audioCriticalTimeRanges", "warnings"
+      ],
+      "properties": {
+        "assetId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "sourceDuration": { "type": "number", "exclusiveMinimum": 0 },
+        "proposedIn": { "type": "number", "minimum": 0 },
+        "proposedOut": { "type": "number", "exclusiveMinimum": 0 },
+        "selectedDuration": { "type": "number", "exclusiveMinimum": 0 },
+        "keepRatio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "preserveFullClip": { "type": "boolean" },
+        "trimReason": { "type": ["string", "null"], "maxLength": 500 },
+        "criticalMoments": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "protectedTimeRanges": {
+          "type": "array",
+          "maxItems": 24,
+          "items": { "$ref": "#/$defs/timeRangeSec" }
+        },
+        "subtitleTimeRanges": {
+          "type": "array",
+          "maxItems": 24,
+          "items": { "$ref": "#/$defs/timeRangeSec" }
+        },
+        "audioCriticalTimeRanges": {
+          "type": "array",
+          "maxItems": 24,
+          "items": { "$ref": "#/$defs/timeRangeSec" }
+        },
+        "warnings": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "lightCaption": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "captionId", "assetId", "startTime", "endTime", "text", "purpose",
+        "basedOn", "confidence", "reviewRequired", "warnings"
+      ],
+      "properties": {
+        "captionId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "assetId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "storyUnitId": { "type": ["string", "null"], "maxLength": 100 },
+        "startTime": { "type": "number", "minimum": 0 },
+        "endTime": { "type": "number", "exclusiveMinimum": 0 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "purpose": {
+          "enum": ["translate", "background", "humor", "twist", "dialogue", "clarify", "none"]
+        },
+        "basedOn": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "reviewRequired": { "type": "boolean" },
+        "warnings": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "visualExplanationSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "assetsWithVisualText": { "type": "integer", "minimum": 0 },
+        "assetsWithLightCaptions": { "type": "integer", "minimum": 0 },
+        "assetsWithoutCaptions": { "type": "integer", "minimum": 0 },
+        "assetsNeedingReview": { "type": "integer", "minimum": 0 },
+        "videosPreservedFull": { "type": "integer", "minimum": 0 },
+        "videosSuggestedTrim": { "type": "integer", "minimum": 0 },
+        "videosPreserveOriginalAudio": { "type": "integer", "minimum": 0 },
+        "videosSuggestedMute": { "type": "integer", "minimum": 0 },
+        "lightCaptionCount": { "type": "integer", "minimum": 0 }
       }
     },
     "storyUnit": {
@@ -379,7 +632,11 @@
           "type": "array",
           "maxItems": 20,
           "items": { "type": "string", "minLength": 1, "maxLength": 500 }
-        }
+        },
+        "visualTextAnalysis": { "$ref": "#/$defs/visualTextAnalysis" },
+        "explanationPlan": { "$ref": "#/$defs/explanationPlan" },
+        "audioAnalysis": { "$ref": "#/$defs/audioAnalysis" },
+        "videoPreservationPlan": { "$ref": "#/$defs/videoPreservationPlan" }
       }
     },
     "shot": {

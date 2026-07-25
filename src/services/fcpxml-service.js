@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { resolveTimelineFormat } = require('./video-format-service');
+const { fcpxmlShouldMuteShot } = require('./visual-explanation-service');
 
 const FCPXML_TIMESCALE = 60000;
 const FCPXML_DEFAULT_VERSION = '1.10';
@@ -121,6 +122,9 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
     timeline: { ...analysis.timeline, ...timelineFormat },
   };
   const mappingById = new Map(assetMappings.map((mapping) => [mapping.assetId, mapping]));
+  const analysisById = new Map(
+    (Array.isArray(analysis.assets) ? analysis.assets : []).map((asset) => [asset.assetId, asset]),
+  );
   const fcpTitles = collectFcpTitles(analysis);
   const formatResources = [];
   const formatByKey = new Map();
@@ -232,7 +236,7 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
     if (!mapping || !resourceId) throw new Error(`FCPXML 缺少镜头素材映射：${shot.assetId}`);
     const nested = [];
     nested.push(`          <adjust-conform type="${shot.fitMode === 'cover' ? 'fill' : 'fit'}"/>`);
-    if (shot.audioMode === 'mute' && mapping.metadata?.hasAudio) {
+    if (fcpxmlShouldMuteShot(shot, analysisById.get(shot.assetId), mapping)) {
       nested.push('          <adjust-volume amount="-96dB"/>');
     }
     const stillTimeOffset = mapping.type === 'image' ? 3600 : 0;

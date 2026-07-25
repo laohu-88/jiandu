@@ -1,3 +1,5 @@
+const { validateStage5CAnalysis } = require('./visual-explanation-service');
+
 const ASSET_STATUSES = new Set(['adopt', 'candidate', 'reject']);
 const FIT_MODES = new Set(['contain', 'cover']);
 const AUDIO_MODES = new Set(['keep', 'mute']);
@@ -690,6 +692,7 @@ function validateVideoAnalysis(analysis, manifest) {
     });
   }
   validateNarrativeAnalysis(analysis, manifest, errors);
+  validateStage5CAnalysis(analysis, manifest, errors, analysisById);
 
   if (errors.length > 0) {
     throw Object.assign(new Error(`Codex 视频分析协议校验失败：${errors[0]}`), {

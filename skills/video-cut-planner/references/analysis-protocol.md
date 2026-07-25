@@ -10,6 +10,8 @@
 
 Write UTF-8 JSON matching `schemas/codex-video-analysis.schema.json`. The runtime validator also checks cross-file facts: every manifest asset needs one analysis record, asset IDs and types must match the manifest, Story Unit IDs and members must match the manifest, representative/supporting assets must belong to their Story Unit, every context-aware shot must trace to a real visual asset and Story Unit, video ranges/shots cannot exceed probed duration, rejected assets cannot appear in shots, recommended title must be a candidate, shot duration must equal `outSec - inSec`, markers must sit inside the final timeline, and chapter/subchapter order, duration policy, project brief constraints, chapter segments, and FCPXML clip order must remain consistent.
 
+Stage 5C optional fields (`visualTextAnalysis`, `explanationPlan`, `audioAnalysis`, `videoPreservationPlan`, top-level `lightCaptionPlan`, and `visualExplanationSummary`) are validated when present. Old analyses without them remain valid. When present, they must keep visual / visual-text / audio / context / inference evidence separated, preserve full video clips and original audio by default, and never turn light-caption suggestions into automatic FCP Titles, Markers, or subtitle tracks.
+
 The JSON is Codex's semantic decision record. Do not add source paths: identify source media only by stable `assetId` from the manifest.
 
 For a visible v3 handoff, keep operational state and HyperFrames decision/quality records in the authorized handoff task file through `handoff-update`; do not add ad-hoc handoff fields to this analysis JSON. Form the real-media-only timeline first. Record whether ordinary editing, a single light subtitle, or a normal transition can close the expression gap before enabling HyperFrames. An enabled render is not accepted until Codex views the independent MP4 and records a quality review; a failed quality gate must result in revision or rejection.
@@ -41,10 +43,41 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   and `evidence`.
 - `evidence.visualEvidenceUsed`: only facts actually visible in inspected images or
   frames.
+- `evidence.visualTextEvidenceUsed`: only text read from the image/video frames
+  themselves. Never copy HotIngest titles, bodies, translations, comments, tags, or
+  filenames into this list.
+- `evidence.audioEvidenceUsed`: only reliable facts from the video's audio stream
+  presence or clearly heard content. Do not invent transcripts.
 - `evidence.contextEvidenceUsed`: only facts supplied by bound sidecars or metadata,
   naming the contextual fact without presenting it as visible.
-- `evidence.inference`: the editorial conclusion made from those two evidence
-  classes. Never present this as raw evidence.
+- `evidence.inference`: the editorial conclusion made from those evidence classes.
+  Never present this as raw evidence.
+- `assets[].visualTextAnalysis`: optional Stage 5C structure. Each item keeps
+  `sourceText`, `language`, `translatedText`, and `meaning` separate, with
+  `textType`, optional `readingOrder` / `speakerOrRegion`, confidence, warnings,
+  and frame evidence. Video on-screen text should include approximate
+  `startTime`/`endTime`; merge adjacent near-duplicate subtitle frames; do not
+  emit one record per near-identical frame. Images must not return video time
+  ranges. Comics/memes may set `panelCount`, `readingDirection`, and
+  `readingOrderUncertain` with a warning when order is unclear.
+- `assets[].explanationPlan`: optional Stage 5C structure describing whether the
+  audience needs explanation (`none`, `background`,
+  `translate_on_screen_text`, `humor_or_twist`, `multi_panel_dialogue`, or
+  `insufficient_evidence`) and the separated evidence used.
+- `assets[].audioAnalysis`: optional Stage 5C structure. Videos default to
+  `preserveOriginalAudio: true` when an audio stream exists. Mute only with an
+  explicit `muteReason` (`no_audio_stream`, damage/undecodable, user/project
+  brief, or another tracked business rule). Images must not claim
+  `audioAvailable: true`.
+- `assets[].videoPreservationPlan`: optional Stage 5C structure. Videos default to
+  `preserveFullClip: true` using the full valid source range. Do not invent a
+  uniform short-shot cap or silently truncate to fit the target duration. Allowed
+  trims need an explicit `trimReason` and must keep protected subtitle/action/audio
+  ranges. If completeness conflicts with `durationPolicy`, prefer
+  `timeline.durationException`.
+- `lightCaptionPlan`: optional top-level Stage 5C suggestions only. Natural concise
+  Chinese, timed to the relevant moment, never automatic FCP Titles/Markers/tracks.
+  Self-explanatory assets may omit captions entirely.
 - `assets[].status`: `adopt`, `candidate`, or `reject`.
 - `assets[].reason`: why it is adopted/candidate/rejected.
 - `assets[].ranges`: useful video intervals; use an empty list for still images or no reliable interval.
@@ -56,11 +89,14 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   `warnings`. An adopted conflicting shot requires `reviewRequired: true` and
   confidence no higher than `0.6`; otherwise reject or keep it as a candidate.
 - HotIngest titles, bodies, translations, comments, and media descriptions never
-  create markers, subtitles, or FCP Titles by themselves.
+  create markers, subtitles, or FCP Titles by themselves. Stage 5C
+  `lightCaptionPlan` likewise does not auto-write FCP Titles.
 - `timeline.chapterSegments`: record each contiguous chapter's first/last shot, timeline start/end, and shot count.
-- `timeline.durationPolicy`: copy the manifest policy. A timeline outside that range requires a concrete `durationException`; never apply the short single-demonstration target to a multi-chapter process-plus-results story.
+- `timeline.durationPolicy`: copy the manifest policy. A timeline outside that range requires a concrete `durationException`; never apply the short single-demonstration target to a multi-chapter process-plus-results story, and never silently cut protected video content just to fit.
 - `fitMode`: `contain` or `cover`.
-- `audioMode`: `keep` or `mute`; keep useful original audio when appropriate.
+- `audioMode`: `keep` or `mute`. For videos with an audio stream, default to
+  `keep`. FCPXML must not mute a clip whose `audioAnalysis.preserveOriginalAudio`
+  is `true`.
 - `markers`: zero or a few brief explanatory suggestions, not full subtitles. Existing
   `{timeSec, text}` markers remain valid. When the user explicitly requests editable
   light subtitles for a release project, a marker may additionally provide `id`, `type`,
@@ -95,7 +131,35 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
       "ranges": [
         { "startSec": 1.2, "endSec": 8.4, "confidence": 0.82, "reviewRequired": false }
       ],
-      "confidence": 0.86
+      "confidence": 0.86,
+      "audioAnalysis": {
+        "audioAvailable": true,
+        "audioEnabled": true,
+        "audioRole": "ambient",
+        "speechPresent": false,
+        "musicPresent": false,
+        "soundEffectPresent": false,
+        "audioSummary": "保留操作环境声。",
+        "audioNeededForUnderstanding": false,
+        "preserveOriginalAudio": true,
+        "muteReason": null,
+        "warnings": []
+      },
+      "videoPreservationPlan": {
+        "assetId": "media_example_video",
+        "sourceDuration": 12,
+        "proposedIn": 0,
+        "proposedOut": 12,
+        "selectedDuration": 12,
+        "keepRatio": 1,
+        "preserveFullClip": true,
+        "trimReason": null,
+        "criticalMoments": ["测试通过反馈"],
+        "protectedTimeRanges": [],
+        "subtitleTimeRanges": [],
+        "audioCriticalTimeRanges": [],
+        "warnings": []
+      }
     },
     {
       "assetId": "media_example_image",
@@ -106,9 +170,32 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
       "status": "adopt",
       "reason": "适合收尾确认最终状态。",
       "ranges": [],
-      "confidence": 0.95
+      "confidence": 0.95,
+      "explanationPlan": {
+        "assetId": "media_example_image",
+        "storyUnitId": null,
+        "visualSummary": "最终页面截图。",
+        "visualTextSummary": "界面标题清晰可读。",
+        "audioSummary": "无音频。",
+        "contextSummary": "",
+        "translatedMeaning": "页面已调整完成。",
+        "audienceNeedsExplanation": "none",
+        "explanationReason": "画面本身足以理解。",
+        "keyPoint": "最终状态确认",
+        "setup": "",
+        "payoffOrResult": "调整完成",
+        "humorOrConflict": "",
+        "confidence": 0.95,
+        "visualEvidenceUsed": ["完整页面截图"],
+        "visualTextEvidenceUsed": ["Settings"],
+        "audioEvidenceUsed": [],
+        "contextEvidenceUsed": [],
+        "inference": ["无需额外轻字幕"],
+        "warnings": []
+      }
     }
   ],
+  "lightCaptionPlan": [],
   "timeline": {
     "orientation": "horizontal",
     "width": 1920,
@@ -118,12 +205,12 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
       {
         "id": "shot-001",
         "assetId": "media_example_video",
-        "inSec": 1.2,
-        "outSec": 6.2,
-        "durationSec": 5,
+        "inSec": 0,
+        "outSec": 12,
+        "durationSec": 12,
         "fitMode": "contain",
         "audioMode": "keep",
-        "purpose": "展示关键设置修改",
+        "purpose": "展示关键设置修改与测试",
         "confidence": 0.82,
         "reviewRequired": false
       },
