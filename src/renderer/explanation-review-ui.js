@@ -233,10 +233,119 @@
       host.appendChild(previewBox);
     }
 
+    function captureReviewUiPosition() {
+      const list = document.querySelector('.explanation-list');
+      const detail = document.querySelector('.explanation-detail');
+      const catalog = document.querySelector('.catalog-panel');
+      const video = state.explanationAssetPlayback?.video || null;
+      const active = document.activeElement;
+      return {
+        projectId: state.selectedCatalogProjectPath || null,
+        assetId: state.explanationReviewSelectedAssetId || null,
+        captionId: state.explanationReviewSelectedCaptionId || null,
+        listScrollTop: list ? list.scrollTop : null,
+        detailScrollTop: detail ? detail.scrollTop : null,
+        catalogScrollTop: catalog ? catalog.scrollTop : null,
+        videoCurrentTime: video && Number.isFinite(video.currentTime) ? video.currentTime : null,
+        focus: active ? {
+          tag: active.tagName,
+          name: active.getAttribute?.('name') || null,
+          label: active.closest?.('label')?.textContent?.slice(0, 40) || null,
+          value: typeof active.value === 'string' ? active.value.slice(0, 80) : null,
+        } : null,
+      };
+    }
+
+    function restoreReviewUiPosition(snapshot) {
+      if (!snapshot) return;
+      requestAnimationFrame(() => {
+        const list = document.querySelector('.explanation-list');
+        const detail = document.querySelector('.explanation-detail');
+        const catalog = document.querySelector('.catalog-panel');
+        if (list && snapshot.listScrollTop != null) list.scrollTop = snapshot.listScrollTop;
+        if (detail && snapshot.detailScrollTop != null) detail.scrollTop = snapshot.detailScrollTop;
+        if (catalog && snapshot.catalogScrollTop != null) catalog.scrollTop = snapshot.catalogScrollTop;
+        const video = state.explanationAssetPlayback?.video || null;
+        if (video && snapshot.videoCurrentTime != null && Number.isFinite(snapshot.videoCurrentTime)) {
+          try {
+            video.currentTime = snapshot.videoCurrentTime;
+          } catch {
+            // ignore seek failures while metadata loads
+          }
+        }
+        if (snapshot.assetId) {
+          const selectedRow = list?.querySelector('.explanation-list-item.selected');
+          if (selectedRow) selectedRow.classList.add('selected');
+        }
+      });
+    }
+
+    function renderReviewPreservingPosition(nextResult) {
+      const snapshot = captureReviewUiPosition();
+      renderCodexProjectResult(nextResult);
+      restoreReviewUiPosition(snapshot);
+    }
+
+    function updateSummaryGrid(summary) {
+      const grid = section.querySelector('.explanation-summary-grid');
+      if (!grid || !summary) return;
+      const values = {
+        待审阅: String(summary.pending ?? 0),
+        已采用: String(summary.approved ?? 0),
+        修改后采用: String(summary.editedApproved ?? 0),
+        不需要字幕: String(summary.notNeeded ?? 0),
+        已拒绝: String(summary.rejected ?? 0),
+        需要进一步确认: String(summary.needsReview ?? 0),
+        有画面文字: String(summary.withVisualText ?? 0),
+        有警告或冲突: String(summary.withWarnings ?? 0),
+        已锁定完整保留: String(summary.fullClipLocked ?? 0),
+        已锁定保留原声: String(summary.originalAudioLocked ?? 0),
+        人工决定已过期: String(summary.stale ?? 0),
+      };
+      grid.querySelectorAll('div').forEach((cell) => {
+        const dt = cell.querySelector('dt');
+        const dd = cell.querySelector('dd');
+        if (!dt || !dd) return;
+        if (Object.hasOwn(values, dt.textContent)) dd.textContent = values[dt.textContent];
+      });
+    }
+
+    function updateListItemStatuses(items) {
+      const list = section.querySelector('.explanation-list');
+      if (!list) return;
+      const byId = new Map(asArray(items).map((item) => [item.assetId, item]));
+      list.querySelectorAll('.explanation-list-item').forEach((row) => {
+        const assetId = row.dataset.assetId;
+        const item = byId.get(assetId);
+        if (!item) return;
+        row.classList.toggle('selected', assetId === state.explanationReviewSelectedAssetId);
+        const small = row.querySelector('small');
+        if (!small) return;
+        small.textContent = [
+          item.mediaType,
+          item.chapterId || '无章节',
+          item.narrativeRole || '无角色',
+          item.hasVisualText ? '有画面文字' : '无画面文字',
+          item.suggestsLightCaption ? '建议轻字幕' : '无轻字幕',
+          `置信度 ${item.confidence ?? '—'}`,
+          item.reviewRequired ? '需审阅' : '可确认',
+          STATUS_LABELS[item.reviewStatus] || item.reviewStatus,
+          `警告 ${item.warningCount}`,
+          item.preserveFullClipLocked ? '完整保留已锁' : '完整保留未锁',
+          item.preserveOriginalAudioLocked ? '原声已锁' : '原声未锁',
+        ].join(' · ');
+      });
+    }
+
     async function saveDraft(assetId, draft, saveStatus) {
       const projectPath = state.selectedCatalogProjectPath;
       if (!projectPath) throw new Error('未选择项目。');
       if (saveStatus) saveStatus.textContent = '保存中…';
+      const videoTime = state.explanationAssetPlayback?.video?.currentTime;
+      const listEl = section.querySelector('.explanation-list');
+      const detailEl = section.querySelector('.explanation-detail');
+      const listScrollTop = listEl ? listEl.scrollTop : null;
+      const detailScrollTop = detailEl ? detailEl.scrollTop : null;
       const saved = await window.plannerApi.saveEditorialReview({
         projectPath,
         reviews: {
@@ -268,8 +377,42 @@
       state.explanationReviewDirty = false;
       state.explanationReviewSelectedAssetId = assetId;
       if (state.selectedProjectResult) state.selectedProjectResult.explanationReview = saved;
+      // Keep the closed-over review model in sync without rebuilding the whole center.
+      review.summary = saved.summary;
+      review.updatedAt = saved.updatedAt;
+      review.warnings = saved.warnings;
+      review.available = saved.available;
+      const savedById = new Map(asArray(saved.items).map((item) => [item.assetId, item]));
+      asArray(review.items).forEach((item) => {
+        const fresh = savedById.get(item.assetId);
+        if (fresh) Object.assign(item, fresh);
+      });
+      updateSummaryGrid(saved.summary);
+      updateListItemStatuses(review.items);
+      if (saveStatus) {
+        saveStatus.textContent = saved.updatedAt
+          ? `已保存 · ${formatDateTime(saved.updatedAt)}`
+          : '已保存';
+      }
+      const headingStatus = section.querySelector('.explanation-detail-heading p');
+      const selected = asArray(review.items).find((item) => item.assetId === assetId);
+      if (headingStatus && selected) {
+        headingStatus.textContent = `${STATUS_LABELS[selected.reviewStatus] || selected.reviewStatus} · ${selected.mediaType} · ${selected.storyUnitTheme || '无 Story Unit'}`;
+      }
+      if (listEl && listScrollTop != null) listEl.scrollTop = listScrollTop;
+      if (detailEl && detailScrollTop != null) detailEl.scrollTop = detailScrollTop;
+      if (
+        state.explanationAssetPlayback?.video
+        && videoTime != null
+        && Number.isFinite(videoTime)
+      ) {
+        try {
+          state.explanationAssetPlayback.video.currentTime = videoTime;
+        } catch {
+          // keep whatever the player currently has
+        }
+      }
       showToast('人工决定已保存。');
-      renderCodexProjectResult(state.selectedProjectResult);
     }
 
     function renderDetail(item, host) {
@@ -586,7 +729,7 @@
     });
     filter.addEventListener('change', () => {
       state.explanationReviewFilter = filter.value;
-      renderCodexProjectResult(result);
+      renderReviewPreservingPosition(result);
     });
     const search = document.createElement('input');
     search.type = 'search';
@@ -594,7 +737,7 @@
     search.value = state.explanationReviewQuery || '';
     search.addEventListener('change', () => {
       state.explanationReviewQuery = search.value;
-      renderCodexProjectResult(result);
+      renderReviewPreservingPosition(result);
     });
     toolbar.append(filter, search);
     section.appendChild(toolbar);
@@ -616,6 +759,7 @@
         const row = document.createElement('button');
         row.type = 'button';
         row.className = 'explanation-list-item';
+        row.dataset.assetId = item.assetId;
         if (item.assetId === state.explanationReviewSelectedAssetId) row.classList.add('selected');
         const thumb = document.createElement('div');
         thumb.className = 'explanation-thumb';
@@ -789,7 +933,7 @@
         if (state.selectedProjectResult?.project?.path === result.project.path) {
           state.selectedProjectResult = refreshed;
         }
-        renderCodexProjectResult(refreshed);
+        renderReviewPreservingPosition(refreshed);
       }, '生成中…'));
 
     exportActions.append(previewButton, exportButton);

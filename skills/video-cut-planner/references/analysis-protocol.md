@@ -91,8 +91,9 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   preview and write managed FCP native Titles (`基本字幕`) into the existing
   project FCPXML. Only approved/edited text is exported; pending/rejected/
   not_needed/needs_review/stale never enter the timeline. Managed Titles are
-  marked with a stable `note`/`titleKey` and can be added, updated, or removed
-  idempotently without changing markers, unmanaged titles, shot bounds, or
+  marked with a stable `<note>vcp-managed-caption:titleKey</note>` child inside
+  each managed `title` (never a `note` attribute) and can be added, updated, or
+  removed idempotently without changing markers, unmanaged titles, shot bounds, or
   original audio. Video caption times map through shot source-in/out to timeline
   time; image captions map inside the image shot with no forged source times.
 - `assets[].status`: `adopt`, `candidate`, or `reject`.

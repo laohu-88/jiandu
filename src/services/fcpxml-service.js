@@ -138,6 +138,30 @@ function normalizeManagedCaptionTitles(managedCaptionTitles = []) {
     .filter(Boolean);
 }
 
+function unescapeXmlText(value) {
+  return String(value ?? '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function extractTitleManagedNote(titleXml, attrs) {
+  const body = String(titleXml || '');
+  // Prefer the legal <note> child. Legacy illegal note="..." is only read so
+  // re-export can upgrade existing managed titles without losing identity.
+  const childMatch = body.match(/<note>([\s\S]*?)<\/note>/);
+  if (childMatch) {
+    const note = unescapeXmlText(childMatch[1]).trim();
+    if (note.startsWith(MANAGED_CAPTION_NOTE_PREFIX)) return note;
+  }
+  const attrNote = String(attrs || '').match(/\bnote="([^"]*)"/)?.[1] || '';
+  const legacy = unescapeXmlText(attrNote).trim();
+  if (legacy.startsWith(MANAGED_CAPTION_NOTE_PREFIX)) return legacy;
+  return '';
+}
+
 function extractManagedCaptionTitles(xml) {
   const source = String(xml || '');
   const titles = [];
@@ -145,7 +169,7 @@ function extractManagedCaptionTitles(xml) {
   let match = pattern.exec(source);
   while (match) {
     const attrs = match[1];
-    const note = attrs.match(/\bnote="([^"]*)"/)?.[1] || '';
+    const note = extractTitleManagedNote(match[0], attrs);
     if (!note.startsWith(MANAGED_CAPTION_NOTE_PREFIX)) {
       match = pattern.exec(source);
       continue;
@@ -153,12 +177,7 @@ function extractManagedCaptionTitles(xml) {
     const titleKey = note.slice(MANAGED_CAPTION_NOTE_PREFIX.length);
     const textMatch = match[0].match(/<text-style[^>]*>([\s\S]*?)<\/text-style>/);
     const rawText = textMatch ? textMatch[1] : '';
-    const text = rawText
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'")
-      .replace(/&amp;/g, '&');
+    const text = unescapeXmlText(rawText);
     titles.push({
       titleKey,
       note,
@@ -314,13 +333,14 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     const stillTimeOffset = mapping.type === 'image' ? 3600 : 0;
     for (const title of titleByShotId.get(shot.id) || []) {
       const titleOffset = stillTimeOffset + title.sourceTimeSec;
-      const noteAttr = title.note
-        ? ` note="${escapeXml(title.note)}"`
+      // FCPXML DTD: title children are param*, text*, text-style-def*, note?, ...
+      // note is a child element — never a title attribute.
+      const noteChild = title.note
+        ? `            <note>${escapeXml(title.note)}</note>\n`
         : '';
       nested.push(
         `          <title ref="${titleEffectId}" lane="1" offset="${fcpTime(titleOffset)}"`
         + ` name="${escapeXml(`${title.text} - ${BASIC_TITLE_EFFECT.name}`)}"`
-        + `${noteAttr}`
         + ` start="3600s" duration="${fcpTime(title.durationSec)}">\n`
         + '            <param name="展平" key="9999/999166631/999166633/2/351" value="1"/>\n'
         + '            <param name="对齐" key="9999/999166631/999166633/2/354/999169573/401" value="1 (居中)"/>\n'
@@ -330,6 +350,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
         + `            <text-style-def id="ts-title-${title.index + 1}">\n`
         + '              <text-style font="Helvetica" fontSize="63" fontFace="Regular" fontColor="1 1 1 1" alignment="center"/>\n'
         + '            </text-style-def>\n'
+        + noteChild
         + '          </title>',
       );
     }
@@ -388,11 +409,39 @@ function validateFcpxmlStructure(xml, expected = {}) {
     id: match[1].match(/\bid="([^"]+)"/)?.[1] || null,
     uid: match[1].match(/\buid="([^"]+)"/)?.[1] || null,
   }));
-  const titles = [...xml.matchAll(/<title\s+([^>]+)>[\s\S]*?<\/title>/g)].map((match) => ({
+  const titleBlocks = [...xml.matchAll(/<title\s+([^>]+)>[\s\S]*?<\/title>/g)];
+  const titles = titleBlocks.map((match) => ({
+    attrs: match[1],
+    xml: match[0],
     ref: match[1].match(/\bref="([^"]+)"/)?.[1] || null,
     lane: Number(match[1].match(/\blane="([^"]+)"/)?.[1]),
     offset: match[1].match(/\boffset="([^"]+)"/)?.[1] || null,
     duration: match[1].match(/\bduration="([^"]+)"/)?.[1] || null,
+    hasIllegalNoteAttribute: /\bnote\s*=/.test(match[1]),
+    noteChild: (() => {
+      const noteMatch = match[0].match(/<note>([\s\S]*?)<\/note>/);
+      return noteMatch ? unescapeXmlText(noteMatch[1]).trim() : null;
+    })(),
+    noteOrderOk: (() => {
+      const body = match[0];
+      if (!/<note>/.test(body)) return true;
+      // DTD order: param*, text*, text-style-def*, note?
+      const noteIndex = body.search(/<note>/);
+      const afterStyleDefs = body.search(/<\/text-style-def>/);
+      const lastTextClose = (() => {
+        let index = -1;
+        const re = /<\/text>/g;
+        let found = re.exec(body);
+        while (found) {
+          index = found.index + found[0].length;
+          found = re.exec(body);
+        }
+        return index;
+      })();
+      const minIndex = Math.max(afterStyleDefs >= 0 ? afterStyleDefs : -1, lastTextClose);
+      if (minIndex < 0) return noteIndex > body.indexOf('>');
+      return noteIndex > minIndex;
+    })(),
   }));
   const mediaRepresentations = [...xml.matchAll(/<media-rep\s+[^>]*src="([^"]+)"/g)];
   const resourceMediaById = new Map(
@@ -419,10 +468,29 @@ function validateFcpxmlStructure(xml, expected = {}) {
   for (const media of mediaRepresentations) {
     if (!media[1].startsWith('file://')) errors.push('素材资源不是 file URL。');
   }
+  const managedTitleKeys = [];
   for (const title of titles) {
     if (!effectIds.has(title.ref)) errors.push(`标题引用了不存在的 effect ${title.ref}。`);
     if (!(title.lane > 0)) errors.push('标题必须位于主时间线上方的正 lane。');
     if (!title.offset || !title.duration) errors.push('标题缺少 offset 或 duration。');
+    if (title.hasIllegalNoteAttribute) {
+      errors.push('title 元素含有非法 note 属性（FCPXML DTD 仅允许 <note> 子元素）。');
+    }
+    if (title.noteChild != null && !title.noteOrderOk) {
+      errors.push('title 的 <note> 子元素顺序不合法（应位于 text / text-style-def 之后）。');
+    }
+    if (title.noteChild && title.noteChild.startsWith(MANAGED_CAPTION_NOTE_PREFIX)) {
+      const titleKey = title.noteChild.slice(MANAGED_CAPTION_NOTE_PREFIX.length);
+      if (!titleKey) {
+        errors.push('受管 title 的 titleKey 为空。');
+      } else {
+        managedTitleKeys.push(titleKey);
+      }
+    }
+  }
+  const duplicateTitleKeys = managedTitleKeys.filter((key, index) => managedTitleKeys.indexOf(key) !== index);
+  if (duplicateTitleKeys.length > 0) {
+    errors.push(`受管 titleKey 不唯一：${[...new Set(duplicateTitleKeys)].join('、')}`);
   }
   if (Number.isInteger(expected.shotCount) && clips.length !== expected.shotCount) {
     errors.push(`时间线镜头数量 ${clips.length} 与镜头数 ${expected.shotCount} 不一致。`);

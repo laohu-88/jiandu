@@ -518,7 +518,8 @@ test('Stage 5E: 生成原生 Title、XML 转义、幂等、更新与移除，并
   const xml1 = await fs.readFile(project.fcpxmlPath, 'utf8');
   assert.match(xml1, new RegExp(BASIC_TITLE_EFFECT.uid.replaceAll('.', '\\.')));
   assert.match(xml1, /人工 &amp; &lt;改写&gt;/);
-  assert.match(xml1, new RegExp(`${MANAGED_CAPTION_NOTE_PREFIX}vcp-lc:`));
+  assert.match(xml1, new RegExp(`<note>${MANAGED_CAPTION_NOTE_PREFIX}vcp-lc:`));
+  assert.doesNotMatch(xml1, /<title\b[^>]*\bnote="/);
   assert.doesNotMatch(xml1, /拒绝句/);
   assert.equal([...xml1.matchAll(/<marker\s+/g)].length, beforeMarkers);
   assert.equal(
@@ -637,7 +638,8 @@ test('Stage 5E: 写入失败保留旧 FCPXML；受管 Title 可解析；reconcil
     assetMappings,
     managedCaptionTitles: managed,
   });
-  assert.match(xml, /note="vcp-managed-caption:vcp-lc:c1:vid-1:shot-1"/);
+  assert.match(xml, /<note>vcp-managed-caption:vcp-lc:c1:vid-1:shot-1<\/note>/);
+  assert.doesNotMatch(xml, /<title\b[^>]*\bnote="/);
   const extracted = extractManagedCaptionTitles(xml);
   assert.equal(extracted.length, 1);
   assert.equal(extracted[0].text, '旧字幕');
@@ -703,4 +705,233 @@ test('Stage 5E: preserveFullClipLocked / preserveOriginalAudio 不被字幕导�
     titleCount: 2,
   });
   assert.equal(report.ok, true, report.errors.join('；'));
+});
+
+test('Stage 5E-Fix: 拒绝 title 非法 note 属性；合法 <note> 子元素可通过', () => {
+  const assets = [videoAsset('vid-1')];
+  const shots = [{
+    id: 'shot-1', assetId: 'vid-1', inSec: 0, outSec: 8, durationSec: 8,
+    fitMode: 'contain', audioMode: 'keep',
+  }];
+  const analysis = baseAnalysis(assets, shots);
+  const assetMappings = mappingsFor(assets);
+  const legal = buildFcpxml({
+    projectName: 'legal-note',
+    analysis,
+    assetMappings,
+    managedCaptionTitles: [{
+      titleKey: 'vcp-lc:c1:vid-1:shot-1',
+      text: '合法字幕 & 特殊<字符>',
+      startSec: 1,
+      durationSec: 2,
+      note: `${MANAGED_CAPTION_NOTE_PREFIX}vcp-lc:c1:vid-1:shot-1`,
+    }],
+  });
+  assert.match(legal, /<text-style-def[\s\S]*?<\/text-style-def>\s*<note>vcp-managed-caption:vcp-lc:c1:vid-1:shot-1<\/note>/);
+  assert.match(legal, /合法字幕 &amp; 特殊&lt;字符&gt;/);
+  assert.doesNotMatch(legal, /<title\b[^>]*\bnote="/);
+  const legalReport = validateFcpxmlStructure(legal, {
+    shotCount: 1,
+    assetCount: 1,
+    markerCount: 1,
+    titleCount: 2,
+  });
+  assert.equal(legalReport.ok, true, legalReport.errors.join('；'));
+  assert.equal(extractManagedCaptionTitles(legal)[0].titleKey, 'vcp-lc:c1:vid-1:shot-1');
+
+  // Construct legacy illegal attribute form and ensure the validator rejects it.
+  const illegal = legal.replace(
+    /(<title\b[^>]*name="[^"]*")(\s+start=)/,
+    `$1 note="${MANAGED_CAPTION_NOTE_PREFIX}vcp-lc:c1:vid-1:shot-1"$2`,
+  ).replace(/\s*<note>vcp-managed-caption:vcp-lc:c1:vid-1:shot-1<\/note>\n?/, '\n');
+  assert.match(illegal, /<title\b[^>]*\bnote="/);
+  assert.doesNotMatch(illegal, /<note>vcp-managed-caption/);
+  const illegalReport = validateFcpxmlStructure(illegal, {
+    shotCount: 1,
+    assetCount: 1,
+    markerCount: 1,
+    titleCount: 2,
+  });
+  assert.equal(illegalReport.ok, false);
+  assert.ok(
+    illegalReport.errors.some((error) => /非法 note 属性/.test(error)),
+    illegalReport.errors.join('；'),
+  );
+
+  // Reader still recognizes legacy attribute so re-export can upgrade it.
+  const legacyExtracted = extractManagedCaptionTitles(illegal);
+  assert.equal(legacyExtracted.length, 1);
+  assert.equal(legacyExtracted[0].titleKey, 'vcp-lc:c1:vid-1:shot-1');
+});
+
+test('Stage 5E-Fix: 连续导出幂等；更新文字时间；移除 rejected；非受管 Title 与 Marker 不变', async () => {
+  const assets = [videoAsset('vid-1'), imageAsset('img-1')];
+  const shots = [
+    {
+      id: 'shot-1', assetId: 'vid-1', inSec: 0, outSec: 10, durationSec: 10,
+      fitMode: 'contain', audioMode: 'keep',
+    },
+    {
+      id: 'shot-2', assetId: 'img-1', inSec: 0, outSec: 3, durationSec: 3,
+      fitMode: 'contain', audioMode: 'mute',
+    },
+  ];
+  const analysis = baseAnalysis(assets, shots, {
+    lightCaptionPlan: [
+      {
+        captionId: 'c-keep',
+        assetId: 'vid-1',
+        text: '保留',
+        startTime: 1,
+        endTime: 3,
+        purpose: 'hook',
+        basedOn: 'visual',
+        confidence: 0.9,
+        reviewRequired: true,
+      },
+      {
+        captionId: 'c-update',
+        assetId: 'vid-1',
+        text: '旧文',
+        startTime: 4,
+        endTime: 6,
+        purpose: 'result',
+        basedOn: 'visual',
+        confidence: 0.9,
+        reviewRequired: true,
+      },
+      {
+        captionId: 'c-drop',
+        assetId: 'img-1',
+        text: '将拒绝',
+        purpose: 'note',
+        basedOn: 'visual',
+        confidence: 0.8,
+        reviewRequired: true,
+      },
+    ],
+  });
+  // Seed an unmanaged marker subtitle title.
+  analysis.timeline.markers = [
+    {
+      timeSec: 0.5,
+      text: '章节提示',
+      subtitle: {
+        enabled: true,
+        renderAsFcpTitle: true,
+        text: '非受管章节 Title',
+        durationSec: 1.5,
+      },
+    },
+  ];
+  const assetMappings = mappingsFor(assets);
+  const project = await makeTempProject({ analysis, assetMappings });
+  await saveEditorialReview(project.root, {
+    reviews: {
+      'vid-1': {
+        reviewStatus: 'approved',
+        preserveFullClipLocked: true,
+        preserveOriginalAudioLocked: true,
+        captions: {
+          'c-keep': {
+            reviewStatus: 'approved',
+            approvedText: '保留',
+            approvedStartTime: 1,
+            approvedEndTime: 3,
+          },
+          'c-update': {
+            reviewStatus: 'edited_approved',
+            approvedText: '新文 & <ok>',
+            approvedStartTime: 4.5,
+            approvedEndTime: 6.5,
+          },
+        },
+      },
+      'img-1': {
+        reviewStatus: 'approved',
+        captions: {
+          'c-drop': {
+            reviewStatus: 'approved',
+            approvedText: '将拒绝',
+          },
+        },
+      },
+    },
+  });
+
+  const first = await exportConfirmedCaptionsToFcpxml(project.root);
+  assert.equal(first.ok, true, first.message);
+  const xml1 = await fs.readFile(project.fcpxmlPath, 'utf8');
+  assert.doesNotMatch(xml1, /<title\b[^>]*\bnote="/);
+  assert.match(xml1, /<note>vcp-managed-caption:/);
+  assert.match(xml1, /非受管章节 Title/);
+  const managed1 = extractManagedCaptionTitles(xml1);
+  assert.equal(managed1.length, 3);
+  assert.equal(new Set(managed1.map((item) => item.titleKey)).size, 3);
+  const beforeMarkers = [...xml1.matchAll(/<marker\s+/g)].length;
+  const beforeUnmanaged = [...xml1.matchAll(/<title\s+/g)].length - managed1.length;
+  const beforeClips = [...xml1.matchAll(/<(?:asset-clip|video)\s+/g)].length;
+  const beforeDuration = xml1.match(/<sequence\b[^>]*\bduration="([^"]+)"/)?.[1];
+  assert.doesNotMatch(xml1, /adjust-volume amount="-96dB"/);
+
+  // Update text/time and reject one caption.
+  await saveEditorialReview(project.root, {
+    reviews: {
+      'vid-1': {
+        reviewStatus: 'edited_approved',
+        preserveFullClipLocked: true,
+        preserveOriginalAudioLocked: true,
+        captions: {
+          'c-keep': {
+            reviewStatus: 'approved',
+            approvedText: '保留',
+            approvedStartTime: 1,
+            approvedEndTime: 3,
+          },
+          'c-update': {
+            reviewStatus: 'edited_approved',
+            approvedText: '更新后的字幕',
+            approvedStartTime: 5,
+            approvedEndTime: 7,
+          },
+        },
+      },
+      'img-1': {
+        reviewStatus: 'rejected',
+        captions: {
+          'c-drop': {
+            reviewStatus: 'rejected',
+            approvedText: '将拒绝',
+          },
+        },
+      },
+    },
+  });
+
+  const second = await exportConfirmedCaptionsToFcpxml(project.root);
+  assert.equal(second.ok, true, second.message);
+  const xml2 = await fs.readFile(project.fcpxmlPath, 'utf8');
+  const managed2 = extractManagedCaptionTitles(xml2);
+  assert.equal(managed2.length, 2);
+  assert.ok(managed2.some((item) => item.text === '更新后的字幕'));
+  assert.ok(!managed2.some((item) => /将拒绝/.test(item.text)));
+  assert.match(xml2, /非受管章节 Title/);
+  assert.doesNotMatch(xml2, /<title\b[^>]*\bnote="/);
+  assert.equal([...xml2.matchAll(/<marker\s+/g)].length, beforeMarkers);
+  assert.equal(
+    [...xml2.matchAll(/<title\s+/g)].length - managed2.length,
+    beforeUnmanaged,
+  );
+  assert.equal([...xml2.matchAll(/<(?:asset-clip|video)\s+/g)].length, beforeClips);
+  assert.equal(xml2.match(/<sequence\b[^>]*\bduration="([^"]+)"/)?.[1], beforeDuration);
+  assert.match(xml2, /audioRole="dialogue"/);
+  assert.doesNotMatch(xml2, /adjust-volume amount="-96dB"/);
+
+  const third = await exportConfirmedCaptionsToFcpxml(project.root);
+  assert.equal(third.ok, true);
+  assert.equal(third.summary.added, 0);
+  assert.equal(
+    extractManagedCaptionTitles(await fs.readFile(project.fcpxmlPath, 'utf8')).length,
+    2,
+  );
 });
