@@ -96,6 +96,17 @@ async function probeMedia(filePath) {
     rotation: normalizedRotation,
     frameRate: parseFrameRate(videoStream?.avg_frame_rate)
       || parseFrameRate(videoStream?.r_frame_rate),
+    avgFrameRate: videoStream?.avg_frame_rate || null,
+    rFrameRate: videoStream?.r_frame_rate || null,
+    frameCount: (() => {
+      const counted = Number(videoStream?.nb_frames);
+      if (Number.isFinite(counted) && counted > 0) return Math.round(counted);
+      return null;
+    })(),
+    durationTs: Number.isFinite(Number(videoStream?.duration_ts))
+      ? Number(videoStream.duration_ts)
+      : null,
+    timeBase: videoStream?.time_base || null,
     videoCodec: videoStream?.codec_name || null,
     audioCodec: audioStream?.codec_name || null,
     pixelFormat: videoStream?.pix_fmt || null,

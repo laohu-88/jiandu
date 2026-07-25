@@ -100,15 +100,48 @@ function frameDurationRational(fpsOrDuration) {
   return parseFcpTimeRational(frameDuration(fpsOrDuration));
 }
 
+function divideRationalToInt(numerator, denominator, mode = 'nearest') {
+  let num = BigInt(numerator);
+  let den = BigInt(denominator);
+  if (den === 0n) throw new Error('除零');
+  if (den < 0n) {
+    num = -num;
+    den = -den;
+  }
+  if (mode === 'floor') {
+    if (num >= 0n) return Number(num / den);
+    return Number(-(((-num) + den - 1n) / den));
+  }
+  if (mode === 'ceil') {
+    if (num >= 0n) return Number((num + den - 1n) / den);
+    return Number(-((-num) / den));
+  }
+  // nearest, ties away from zero via +den/2 for positive
+  if (num >= 0n) return Number((num + den / 2n) / den);
+  return Number(-(((-num) + den / 2n) / den));
+}
+
 function secondsToFrameIndex(seconds, frameDur, mode = 'nearest') {
   const value = Number(seconds);
   if (!Number.isFinite(value)) throw new Error(`无效秒数：${seconds}`);
   const fd = frameDurationRational(frameDur);
   // frames = seconds / (num/den) = seconds * den / num
+  // Keep a tiny epsilon so exact frameDuration multiples (e.g. 1/30) survive float noise.
   const scaled = (value * fd.denominator) / fd.numerator;
   if (mode === 'floor') return Math.floor(scaled + 1e-9);
   if (mode === 'ceil') return Math.ceil(scaled - 1e-9);
   return Math.round(scaled);
+}
+
+function rationalToFrameIndex(rational, frameDur, mode = 'nearest') {
+  const value = reduceRational(rational.numerator, rational.denominator);
+  const fd = frameDurationRational(frameDur);
+  // frames = (value.num/value.den) / (fd.num/fd.den) = value.num * fd.den / (value.den * fd.num)
+  return divideRationalToInt(
+    BigInt(value.numerator) * BigInt(fd.denominator),
+    BigInt(value.denominator) * BigInt(fd.numerator),
+    mode,
+  );
 }
 
 function frameIndexToRational(frameIndex, frameDur) {
@@ -131,12 +164,268 @@ function fcpTime(seconds) {
   return `${numerator / divisor}/${FCPXML_TIMESCALE / divisor}s`;
 }
 
-function fcpTimeAligned(seconds, fpsOrFrameDuration) {
+function fcpTimeAligned(seconds, fpsOrFrameDuration, mode = 'nearest') {
   const value = Number(seconds);
   if (!Number.isFinite(value) || value < 0) throw new Error(`无效 FCP 时间：${seconds}`);
   if (value === 0) return '0s';
-  const frames = secondsToFrameIndex(value, fpsOrFrameDuration, 'nearest');
+  const frames = secondsToFrameIndex(value, fpsOrFrameDuration, mode);
   return fcpTimeFromFrameIndex(Math.max(0, frames), fpsOrFrameDuration);
+}
+
+function parseFrameRateRational(value, fallbackFps = 30) {
+  if (value && typeof value === 'object'
+    && Number.isFinite(value.numerator)
+    && Number.isFinite(value.denominator)
+    && value.denominator !== 0) {
+    return reduceRational(value.numerator, value.denominator);
+  }
+  if (typeof value === 'string' && value.includes('/')) {
+    const [num, den] = value.split('/').map(Number);
+    if (Number.isFinite(num) && Number.isFinite(den) && den !== 0 && num > 0) {
+      return reduceRational(num, den);
+    }
+  }
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    if (Math.abs(numeric - 29.97) < 0.01 || Math.abs(numeric - 29.97003) < 0.01) {
+      return reduceRational(30000, 1001);
+    }
+    if (Math.abs(numeric - 59.94) < 0.01) {
+      return reduceRational(60000, 1001);
+    }
+    if (Math.abs(numeric - Math.round(numeric)) < 1e-6) {
+      return reduceRational(Math.round(numeric), 1);
+    }
+    // Fall back to millisecond approximation of the float fps.
+    const millis = Math.round(numeric * 1000);
+    return reduceRational(millis, 1000);
+  }
+  return parseFrameRateRational(fallbackFps, 30);
+}
+
+function resolveMediaFrameCount(metadata = {}) {
+  const candidates = [
+    metadata.frameCount,
+    metadata.nbFrames,
+    metadata.nb_frames,
+    metadata.nbReadFrames,
+    metadata.nb_read_frames,
+  ];
+  for (const value of candidates) {
+    const frames = Number(value);
+    if (Number.isFinite(frames) && frames > 0) return Math.round(frames);
+  }
+  const durationTs = Number(metadata.durationTs ?? metadata.duration_ts);
+  const timeBase = metadata.timeBase || metadata.time_base;
+  if (Number.isFinite(durationTs) && durationTs > 0 && typeof timeBase === 'string' && timeBase.includes('/')) {
+    const [tbNum, tbDen] = timeBase.split('/').map(Number);
+    const fps = parseFrameRateRational(
+      metadata.avgFrameRate || metadata.avg_frame_rate || metadata.frameRate || metadata.r_frame_rate,
+    );
+    if (Number.isFinite(tbNum) && Number.isFinite(tbDen) && tbDen !== 0 && fps) {
+      // frames ≈ duration_ts * time_base * fps = duration_ts * (tbNum/tbDen) * (fpsNum/fpsDen)
+      return Math.max(1, divideRationalToInt(
+        BigInt(Math.round(durationTs)) * BigInt(tbNum) * BigInt(fps.numerator),
+        BigInt(tbDen) * BigInt(fps.denominator),
+        'nearest',
+      ));
+    }
+  }
+  return null;
+}
+
+function resolveMediaContentDurationSec(metadata = {}, fallbackSec = null) {
+  const frameCount = resolveMediaFrameCount(metadata);
+  const sourceFps = parseFrameRateRational(
+    metadata.avgFrameRate || metadata.avg_frame_rate || metadata.frameRate || metadata.r_frame_rate,
+  );
+  const durations = [];
+  if (frameCount && sourceFps) {
+    durations.push(rationalToSeconds(reduceRational(
+      frameCount * sourceFps.denominator,
+      sourceFps.numerator,
+    )));
+  }
+  const durationTs = Number(metadata.durationTs ?? metadata.duration_ts);
+  const timeBase = metadata.timeBase || metadata.time_base;
+  if (Number.isFinite(durationTs) && durationTs > 0 && typeof timeBase === 'string' && timeBase.includes('/')) {
+    const [tbNum, tbDen] = timeBase.split('/').map(Number);
+    if (Number.isFinite(tbNum) && Number.isFinite(tbDen) && tbDen !== 0) {
+      durations.push(rationalToSeconds(reduceRational(durationTs * tbNum, tbDen)));
+    }
+  }
+  if (Number.isFinite(metadata.durationSec) && metadata.durationSec > 0) {
+    durations.push(Number(metadata.durationSec));
+  }
+  if (Number.isFinite(fallbackSec) && fallbackSec > 0) {
+    durations.push(Number(fallbackSec));
+  }
+  if (!durations.length) return null;
+  return Math.max(...durations);
+}
+
+function shotPreservesFullClip(shot, analysisAsset, mapping) {
+  if ((mapping?.type || analysisAsset?.type) === 'image') return false;
+  if (shot?.preserveFullClip === true || shot?.preserveFullClipLocked === true) return true;
+  if (shot?.preserveFullClip === false) return false;
+  const plan = analysisAsset?.videoPreservationPlan;
+  if (plan?.preserveFullClip === false) return false;
+  if (plan?.preserveFullClip === true) return true;
+  return false;
+}
+
+/**
+ * Quantize one timeline shot onto the sequence frame grid.
+ * Videos that preserve full content ceil outward so tail frames/audio are kept.
+ * Images snap to the nearest legal frame count (minimum one frame).
+ */
+function quantizeShotToFrameGrid({
+  shot,
+  mapping = null,
+  analysisAsset = null,
+  timelineFrameDur,
+}) {
+  const fd = frameDurationRational(timelineFrameDur);
+  const sourceInSec = Number(shot.inSec);
+  const declaredDuration = Number(shot.durationSec);
+  const declaredOut = Number(shot.outSec);
+  const imageLike = mapping?.type === 'image'
+    || analysisAsset?.type === 'image'
+    || analysisAsset?.type === 'comic'
+    || analysisAsset?.type === 'meme';
+  const preserveFull = shotPreservesFullClip(shot, analysisAsset, mapping);
+  const metadata = mapping?.metadata || {};
+
+  let contentDurationSec = declaredDuration;
+  let usedRealFrameCount = false;
+  const frameCount = resolveMediaFrameCount(metadata);
+  const mediaEnd = resolveMediaContentDurationSec(
+    metadata,
+    Number.isFinite(declaredOut) ? declaredOut : declaredDuration,
+  );
+  const planOut = Number(
+    analysisAsset?.videoPreservationPlan?.proposedOut
+      ?? analysisAsset?.videoPreservationPlan?.sourceDuration
+      ?? mediaEnd,
+  );
+  const start = Number.isFinite(sourceInSec) ? sourceInSec : 0;
+  const looksLikeFullSpan = Number.isFinite(declaredOut)
+    && Number.isFinite(planOut)
+    && start <= 0.02
+    && declaredOut >= planOut - 0.05;
+
+  if (preserveFull && !imageLike && looksLikeFullSpan && Number.isFinite(mediaEnd)) {
+    contentDurationSec = Math.max(
+      Number.isFinite(declaredDuration) ? declaredDuration : 0,
+      Math.max(0, mediaEnd - start),
+    );
+    if (frameCount) usedRealFrameCount = true;
+  } else if (Number.isFinite(declaredDuration) && declaredDuration > 0) {
+    contentDurationSec = declaredDuration;
+  } else if (Number.isFinite(declaredOut) && Number.isFinite(sourceInSec)) {
+    contentDurationSec = Math.max(0, declaredOut - sourceInSec);
+  }
+
+  if (!(contentDurationSec > 0)) {
+    contentDurationSec = rationalToSeconds(fd);
+  }
+
+  const mode = imageLike ? 'nearest' : 'ceil';
+  let durationFrames = secondsToFrameIndex(contentDurationSec, fd, mode);
+  if (durationFrames < 1) durationFrames = 1;
+
+  const durationRational = frameIndexToRational(durationFrames, fd);
+  const durationSec = rationalToSeconds(durationRational);
+  const sourceOutSec = start + durationSec;
+  const adjusted = !Number.isFinite(declaredDuration)
+    || Math.abs(durationSec - declaredDuration) > 1e-9;
+
+  return {
+    sourceInSec: start,
+    sourceOutSec,
+    durationFrames,
+    durationSec,
+    durationRational,
+    durationTime: formatFcpRational(durationRational.numerator, durationRational.denominator),
+    preserveFullClip: preserveFull,
+    usedRealFrameCount,
+    frameAlignmentAdjusted: adjusted,
+    imageLike: Boolean(imageLike),
+  };
+}
+
+function quantizeAssetResourceDuration(mapping, timelineFrameDur) {
+  const metadata = mapping?.metadata || {};
+  if (mapping?.type !== 'video') {
+    return { durationSec: 0, durationTime: '0s', durationFrames: 0 };
+  }
+  const contentSec = resolveMediaContentDurationSec(metadata, metadata.durationSec) || 0;
+  const assetFps = parseFrameRateRational(metadata.frameRate || metadata.avg_frame_rate, 30);
+  const assetFrameDur = reduceRational(assetFps.denominator, assetFps.numerator);
+  // Prefer asset-native frames so the resource covers real media; also cover
+  // any timeline-ceil expansion via wall-clock content seconds.
+  let assetFrames = secondsToFrameIndex(contentSec, assetFrameDur, 'ceil');
+  if (assetFrames < 1) assetFrames = 1;
+  const frameCount = resolveMediaFrameCount(metadata);
+  if (frameCount) assetFrames = Math.max(assetFrames, frameCount);
+  const durationRational = frameIndexToRational(assetFrames, assetFrameDur);
+  return {
+    durationSec: rationalToSeconds(durationRational),
+    durationTime: formatFcpRational(durationRational.numerator, durationRational.denominator),
+    durationFrames: assetFrames,
+    frameDuration: formatFcpRational(assetFrameDur.numerator, assetFrameDur.denominator),
+  };
+}
+
+/**
+ * Rebuild the spine in integer sequence frames. Offsets are the running sum of
+ * quantized durations — never a float-second accumulation.
+ */
+function planFrameAlignedTimeline({ analysis, assetMappings = [] }) {
+  const fps = analysis?.timeline?.fps;
+  const sequenceFrameDuration = frameDuration(fps);
+  const fd = frameDurationRational(sequenceFrameDuration);
+  const mappingById = new Map(assetMappings.map((mapping) => [mapping.assetId, mapping]));
+  const analysisById = new Map(
+    (Array.isArray(analysis?.assets) ? analysis.assets : []).map((asset) => [asset.assetId, asset]),
+  );
+
+  let timelineFrame = 0;
+  const shots = [];
+  for (const shot of analysis.timeline.shots) {
+    const mapping = mappingById.get(shot.assetId) || null;
+    const analysisAsset = analysisById.get(shot.assetId) || null;
+    const quantized = quantizeShotToFrameGrid({
+      shot,
+      mapping,
+      analysisAsset,
+      timelineFrameDur: fd,
+    });
+    const offsetFrames = timelineFrame;
+    const endFrames = offsetFrames + quantized.durationFrames;
+    shots.push({
+      shot,
+      mapping,
+      analysisAsset,
+      ...quantized,
+      offsetFrames,
+      endFrames,
+      offsetTime: fcpTimeFromFrameIndex(offsetFrames, fd),
+      timelineStartSec: rationalToSeconds(frameIndexToRational(offsetFrames, fd)),
+      timelineEndSec: rationalToSeconds(frameIndexToRational(endFrames, fd)),
+    });
+    timelineFrame = endFrames;
+  }
+
+  return {
+    fps,
+    sequenceFrameDuration,
+    sequenceFrameRational: fd,
+    totalFrames: timelineFrame,
+    totalDurationSec: rationalToSeconds(frameIndexToRational(timelineFrame, fd)),
+    totalDurationTime: fcpTimeFromFrameIndex(timelineFrame, fd),
+    shots,
+  };
 }
 
 /**
@@ -265,10 +554,30 @@ function getShotAtTime(shots, timeSec) {
   let cursor = 0;
   for (const shot of shots) {
     const end = cursor + shot.durationSec;
-    if (timeSec >= cursor && timeSec < end) return { shot, timelineStart: cursor };
+    if (timeSec >= cursor && timeSec < end) return { shot, timelineStart: cursor, timelineEnd: end };
     cursor = end;
   }
   return null;
+}
+
+function getPlannedShotAtOriginalTime(originalShots, plannedShots, timeSec) {
+  const located = getShotAtTime(originalShots, timeSec);
+  if (!located) return null;
+  const planned = plannedShots.find((entry) => entry.shot.id === located.shot.id);
+  if (!planned) return null;
+  const localSec = Math.max(0, timeSec - located.timelineStart);
+  const sourceTimeSec = located.shot.inSec + localSec;
+  const relativeSec = Math.min(
+    Math.max(0, sourceTimeSec - planned.sourceInSec),
+    planned.durationSec,
+  );
+  return {
+    planned,
+    located,
+    sourceTimeSec: planned.sourceInSec + relativeSec,
+    relativeSec,
+    timelineSec: planned.timelineStartSec + relativeSec,
+  };
 }
 
 function collectFcpTitles(analysis) {
@@ -462,30 +771,66 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
   }
   const titleEffectId = fcpTitles.length > 0 ? `r${nextResourceId++}` : null;
 
+  const timelinePlan = planFrameAlignedTimeline({ analysis, assetMappings });
+  const sequenceFrameDuration = timelinePlan.sequenceFrameDuration;
+
   const markerByShotId = new Map();
   for (const marker of analysis.timeline.markers) {
-    const located = getShotAtTime(analysis.timeline.shots, marker.timeSec);
-    if (!located) continue;
-    const markers = markerByShotId.get(located.shot.id) || [];
+    const mapped = getPlannedShotAtOriginalTime(
+      analysis.timeline.shots,
+      timelinePlan.shots,
+      marker.timeSec,
+    );
+    if (!mapped) continue;
+    const markers = markerByShotId.get(mapped.planned.shot.id) || [];
     markers.push({
       ...marker,
-      sourceTimeSec: located.shot.inSec + marker.timeSec - located.timelineStart,
+      sourceTimeSec: mapped.sourceTimeSec,
+      relativeSec: mapped.relativeSec,
     });
-    markerByShotId.set(located.shot.id, markers);
+    markerByShotId.set(mapped.planned.shot.id, markers);
   }
   const titleByShotId = new Map();
   for (const title of fcpTitles) {
-    const located = getShotAtTime(analysis.timeline.shots, title.startSec);
-    if (!located) continue;
-    const titles = titleByShotId.get(located.shot.id) || [];
+    let planned = null;
+    let sourceTimeSec = null;
+    let relativeSec = null;
+    if (title.matchedShotId) {
+      planned = timelinePlan.shots.find((entry) => entry.shot.id === title.matchedShotId) || null;
+      if (planned && Number.isFinite(title.startSec)) {
+        relativeSec = Math.min(
+          Math.max(0, title.startSec - planned.timelineStartSec),
+          planned.durationSec,
+        );
+        sourceTimeSec = planned.sourceInSec + relativeSec;
+      }
+    }
+    if (!planned) {
+      const mapped = getPlannedShotAtOriginalTime(
+        analysis.timeline.shots,
+        timelinePlan.shots,
+        title.startSec,
+      );
+      if (!mapped) continue;
+      planned = mapped.planned;
+      sourceTimeSec = mapped.sourceTimeSec;
+      relativeSec = mapped.relativeSec;
+    }
+    const titles = titleByShotId.get(planned.shot.id) || [];
+    const maxDurationSec = Math.max(
+      rationalToSeconds(timelinePlan.sequenceFrameRational),
+      planned.durationSec - relativeSec,
+    );
+    const durationSec = Math.min(title.durationSec, maxDurationSec);
     titles.push({
       ...title,
-      sourceTimeSec: located.shot.inSec + title.startSec - located.timelineStart,
+      sourceTimeSec,
+      relativeSec,
+      durationSec,
     });
-    titleByShotId.set(located.shot.id, titles);
+    titleByShotId.set(planned.shot.id, titles);
   }
 
-  const totalDuration = analysis.timeline.shots.reduce((sum, shot) => sum + shot.durationSec, 0);
   const resourcesXml = [
     ...formatResources.map((format) => (
       `    <format id="${format.id}"${format.isStill ? '' : ` frameDuration="${frameDuration(format.fps)}"`}`
@@ -493,9 +838,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     )),
     ...assets.map((asset) => {
       const metadata = asset.metadata || {};
-      const duration = asset.type === 'video' && Number.isFinite(metadata.durationSec)
-        ? metadata.durationSec
-        : 0;
+      const assetDuration = quantizeAssetResourceDuration(asset, sequenceFrameDuration);
       const audioChannels = Number.isInteger(metadata.audioChannels) && metadata.audioChannels > 0
         ? metadata.audioChannels
         : 1;
@@ -507,7 +850,8 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
         : '';
       return `    <asset id="${asset.resourceId}" name="${escapeXml(asset.projectFilename)}"`
         + ` uid="${assetUid(asset)}"`
-        + ` start="0s" duration="${fcpTime(duration)}" hasVideo="1" videoSources="1"${audioAttributes}`
+        + ` start="0s" duration="${asset.type === 'video' ? assetDuration.durationTime : '0s'}"`
+        + ` hasVideo="1" videoSources="1"${audioAttributes}`
         + ` format="${asset.formatId}">\n`
         + `      <media-rep kind="original-media" src="${escapeXml(pathToFileURL(asset.projectAbsolutePath).href)}"/>\n`
         + '    </asset>';
@@ -518,10 +862,9 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     ] : []),
   ].join('\n');
 
-  const sequenceFrameDuration = frameDuration(analysis.timeline.fps);
-  let timelineOffset = 0;
-  const clipsXml = analysis.timeline.shots.map((shot) => {
-    const mapping = mappingById.get(shot.assetId);
+  const clipsXml = timelinePlan.shots.map((planned) => {
+    const shot = planned.shot;
+    const mapping = planned.mapping || mappingById.get(shot.assetId);
     const resourceId = assetResourceById.get(shot.assetId);
     if (!mapping || !resourceId) throw new Error(`FCPXML 缺少镜头素材映射：${shot.assetId}`);
     const nested = [];
@@ -530,23 +873,57 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
       nested.push('          <adjust-volume amount="-96dB"/>');
     }
     const stillTimeOffset = mapping.type === 'image' ? 3600 : 0;
+    const clipStartSec = stillTimeOffset + planned.sourceInSec;
+    const clipEndSec = clipStartSec + planned.durationSec;
+
     for (const title of titleByShotId.get(shot.id) || []) {
-      const titleOffset = stillTimeOffset + title.sourceTimeSec;
-      // Managed light captions must land on the sequence frame grid. Marker
-      // subtitle titles keep legacy fcpTime() formatting.
-      const useFrameGrid = title.kind === 'managed_light_caption';
-      const offsetTime = (useFrameGrid && title.offsetFcpTime)
-        ? title.offsetFcpTime
-        : (useFrameGrid
-          ? fcpTimeAligned(titleOffset, sequenceFrameDuration)
-          : fcpTime(titleOffset));
-      const durationTime = (useFrameGrid && title.durationFcpTime)
-        ? title.durationFcpTime
-        : (useFrameGrid
-          ? fcpTimeAligned(title.durationSec, sequenceFrameDuration)
-          : fcpTime(title.durationSec));
-      // FCPXML DTD: title children are param*, text*, text-style-def*, note?, ...
-      // note is a child element — never a title attribute.
+      const titleOffsetSec = stillTimeOffset + title.sourceTimeSec;
+      const useExactManagedTimes = title.kind === 'managed_light_caption'
+        && title.offsetFcpTime
+        && title.durationFcpTime;
+      let offsetTime;
+      let durationTime;
+      if (useExactManagedTimes) {
+        // Re-clamp pre-aligned managed captions into the quantized parent clip.
+        const offsetRational = parseFcpTimeRational(title.offsetFcpTime);
+        const durationRational = parseFcpTimeRational(title.durationFcpTime);
+        let startFrame = rationalToFrameIndex(offsetRational, sequenceFrameDuration, 'nearest');
+        let endFrame = startFrame + Math.max(
+          1,
+          rationalToFrameIndex(durationRational, sequenceFrameDuration, 'nearest'),
+        );
+        const minFrame = secondsToFrameIndex(clipStartSec, sequenceFrameDuration, 'ceil');
+        const maxFrame = secondsToFrameIndex(clipEndSec, sequenceFrameDuration, 'floor');
+        if (maxFrame - minFrame >= 1) {
+          startFrame = Math.min(Math.max(startFrame, minFrame), maxFrame - 1);
+          endFrame = Math.min(Math.max(endFrame, startFrame + 1), maxFrame);
+        }
+        offsetTime = fcpTimeFromFrameIndex(startFrame, sequenceFrameDuration);
+        durationTime = fcpTimeFromFrameIndex(endFrame - startFrame, sequenceFrameDuration);
+      } else {
+        const quantizedTitle = quantizeCaptionTiming({
+          startSec: titleOffsetSec,
+          endSec: titleOffsetSec + title.durationSec,
+          minSec: clipStartSec,
+          maxSec: clipEndSec,
+          frameDuration: sequenceFrameDuration,
+        });
+        if (quantizedTitle.ok) {
+          offsetTime = quantizedTitle.startTime;
+          durationTime = quantizedTitle.durationTime;
+        } else {
+          // Fallback: one frame at the clamped start.
+          const startFrame = Math.min(
+            secondsToFrameIndex(clipEndSec, sequenceFrameDuration, 'floor') - 1,
+            Math.max(
+              secondsToFrameIndex(clipStartSec, sequenceFrameDuration, 'ceil'),
+              secondsToFrameIndex(titleOffsetSec, sequenceFrameDuration, 'nearest'),
+            ),
+          );
+          offsetTime = fcpTimeFromFrameIndex(Math.max(0, startFrame), sequenceFrameDuration);
+          durationTime = fcpTimeFromFrameIndex(1, sequenceFrameDuration);
+        }
+      }
       const noteChild = title.note
         ? `            <note>${escapeXml(title.note)}</note>\n`
         : '';
@@ -568,19 +945,31 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     }
     // FCPXML 1.14 的 DTD 要求锚定项（Title 等）位于 Marker 之前。
     for (const marker of markerByShotId.get(shot.id) || []) {
+      const rawMarkerSec = stillTimeOffset + marker.sourceTimeSec;
+      let markerFrame = secondsToFrameIndex(rawMarkerSec, sequenceFrameDuration, 'nearest');
+      const minMarkerFrame = secondsToFrameIndex(clipStartSec, sequenceFrameDuration, 'nearest');
+      const maxMarkerFrame = Math.max(
+        minMarkerFrame,
+        secondsToFrameIndex(clipEndSec, sequenceFrameDuration, 'floor') - 1,
+      );
+      markerFrame = Math.min(Math.max(markerFrame, minMarkerFrame), maxMarkerFrame);
+      const markerStart = fcpTimeFromFrameIndex(markerFrame, sequenceFrameDuration);
       nested.push(
-        `          <marker start="${fcpTime(stillTimeOffset + marker.sourceTimeSec)}"`
-        + ` duration="${frameDuration(analysis.timeline.fps)}" value="${escapeXml(marker.text)}"/>`,
+        `          <marker start="${markerStart}"`
+        + ` duration="${sequenceFrameDuration}" value="${escapeXml(marker.text)}"/>`,
       );
     }
     const audioRole = mapping.metadata?.hasAudio ? ' audioRole="dialogue"' : '';
     const clipElement = mapping.type === 'image' ? 'video' : 'asset-clip';
+    // Keep the historical 3600/1s still origin so existing FCP projects stay stable.
+    const startTime = mapping.type === 'image' && planned.sourceInSec === 0
+      ? '3600/1s'
+      : fcpTimeAligned(clipStartSec, sequenceFrameDuration, 'nearest');
     const clip = `        <${clipElement} name="${escapeXml(mapping.projectFilename)}" ref="${resourceId}"`
-      + ` offset="${fcpTime(timelineOffset)}" start="${fcpTime(stillTimeOffset + shot.inSec)}"`
-      + ` duration="${fcpTime(shot.durationSec)}"${audioRole}>\n`
+      + ` offset="${planned.offsetTime}" start="${startTime}"`
+      + ` duration="${planned.durationTime}"${audioRole}>\n`
       + `${nested.join('\n')}\n`
       + `        </${clipElement}>`;
-    timelineOffset += shot.durationSec;
     return clip;
   }).join('\n');
 
@@ -594,7 +983,7 @@ ${resourcesXml}
   <library>
     <event name="${escapeXml(projectName)}">
       <project name="${escapeXml(analysis.titles.recommended)}">
-        <sequence duration="${fcpTime(totalDuration)}" format="${sequenceFormatId}" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+        <sequence duration="${timelinePlan.totalDurationTime}" format="${sequenceFormatId}" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
           <spine>
 ${clipsXml}
           </spine>
@@ -856,6 +1245,135 @@ function validateFcpxmlStructure(xml, expected = {}) {
   if (Number.isFinite(expected.fps) && sequenceFormat?.frameDuration !== frameDuration(expected.fps)) {
     errors.push(`正式时间线帧率与预期 ${expected.fps} fps 不一致。`);
   }
+
+  // Full timeline edit-boundary validation against sequence frameDuration.
+  if (sequenceFrameRational) {
+    const frameDurLabel = sequenceFormat?.frameDuration
+      || formatFcpRational(sequenceFrameRational.numerator, sequenceFrameRational.denominator);
+
+    if (sequenceDurationRational
+      && !isRationalMultiple(sequenceDurationRational, sequenceFrameRational)) {
+      errors.push(`sequence duration 未对齐帧边界：${sequenceDurationMatch?.[1]}（frameDuration=${frameDurLabel}）`);
+    }
+    if (sequenceDurationRational && rationalToSeconds(sequenceDurationRational) <= 0) {
+      errors.push('sequence duration 必须大于 0。');
+    }
+
+    const spineMatch = xml.match(/<spine>([\s\S]*?)<\/spine>/);
+    const spineBody = spineMatch ? spineMatch[1] : '';
+    const spineChildren = [...spineBody.matchAll(
+      /<(asset-clip|video|gap|clip)\s+([^>]+)(?:\/>|>([\s\S]*?)<\/\1>)/g,
+    )].map((match) => {
+      const attrs = match[2];
+      return {
+        tag: match[1],
+        offset: attrs.match(/\boffset="([^"]+)"/)?.[1] || null,
+        start: attrs.match(/\bstart="([^"]+)"/)?.[1] || null,
+        duration: attrs.match(/\bduration="([^"]+)"/)?.[1] || null,
+        name: attrs.match(/\bname="([^"]*)"/)?.[1] || null,
+        body: match[3] || '',
+        mute: /adjust-volume[^>]*amount="-96dB"/.test(match[3] || ''),
+      };
+    });
+
+    let previousEnd = reduceRational(0, 1);
+    for (const clip of spineChildren) {
+      let offsetRational = null;
+      let durationRational = null;
+      let startRational = null;
+      try {
+        offsetRational = clip.offset ? parseFcpTimeRational(clip.offset) : null;
+        durationRational = clip.duration ? parseFcpTimeRational(clip.duration) : null;
+        startRational = clip.start ? parseFcpTimeRational(clip.start) : null;
+      } catch (error) {
+        errors.push(`时间线 ${clip.tag} 时间无法解析（${clip.name || clip.offset}）：${error.message}`);
+        continue;
+      }
+      if (!offsetRational || !durationRational) {
+        errors.push(`时间线 ${clip.tag} 缺少 offset 或 duration。`);
+        continue;
+      }
+      if (!isRationalMultiple(offsetRational, sequenceFrameRational)) {
+        errors.push(
+          `时间线 ${clip.tag} offset 未对齐帧边界：${clip.offset}（frameDuration=${frameDurLabel}）`,
+        );
+      }
+      if (!isRationalMultiple(durationRational, sequenceFrameRational)) {
+        errors.push(
+          `时间线 ${clip.tag} duration 未对齐帧边界：${clip.duration}（frameDuration=${frameDurLabel}）`,
+        );
+      }
+      if (!(rationalToSeconds(durationRational) > 0)) {
+        errors.push(`时间线 ${clip.tag} 时长必须大于 0：${clip.name || clip.duration}`);
+      }
+      const endRational = reduceRational(
+        offsetRational.numerator * durationRational.denominator
+          + durationRational.numerator * offsetRational.denominator,
+        offsetRational.denominator * durationRational.denominator,
+      );
+      if (!isRationalMultiple(endRational, sequenceFrameRational)) {
+        errors.push(
+          `时间线 ${clip.tag} 结束时间未对齐帧边界：${formatFcpRational(endRational.numerator, endRational.denominator)}`,
+        );
+      }
+      if (startRational && !isRationalMultiple(startRational, sequenceFrameRational)) {
+        // Image still origin 3600/1s and video 0s are sequence-grid legal at common fps.
+        errors.push(
+          `时间线 ${clip.tag} start 未对齐帧边界：${clip.start}（frameDuration=${frameDurLabel}）`,
+        );
+      }
+      if (Math.abs(rationalToSeconds(offsetRational) - rationalToSeconds(previousEnd)) > 1e-9) {
+        errors.push(
+          `时间线镜头不连续：${clip.name || clip.tag} offset=${clip.offset} 前序结束=${formatFcpRational(previousEnd.numerator, previousEnd.denominator)}`,
+        );
+      }
+      previousEnd = endRational;
+
+      // Nested markers must sit on the frame grid and inside the host clip.
+      for (const markerMatch of clip.body.matchAll(/<marker\s+([^>]+)\/>/g)) {
+        const markerAttrs = markerMatch[1];
+        const markerStart = markerAttrs.match(/\bstart="([^"]+)"/)?.[1];
+        const markerDuration = markerAttrs.match(/\bduration="([^"]+)"/)?.[1];
+        try {
+          const markerStartRational = parseFcpTimeRational(markerStart);
+          const markerDurationRational = parseFcpTimeRational(markerDuration);
+          if (!isRationalMultiple(markerStartRational, sequenceFrameRational)) {
+            errors.push(`marker start 未对齐帧边界：${markerStart}`);
+          }
+          if (!isRationalMultiple(markerDurationRational, sequenceFrameRational)) {
+            errors.push(`marker duration 未对齐帧边界：${markerDuration}`);
+          }
+          if (startRational) {
+            const markerEnd = reduceRational(
+              markerStartRational.numerator * markerDurationRational.denominator
+                + markerDurationRational.numerator * markerStartRational.denominator,
+              markerStartRational.denominator * markerDurationRational.denominator,
+            );
+            const clipEnd = reduceRational(
+              startRational.numerator * durationRational.denominator
+                + durationRational.numerator * startRational.denominator,
+              startRational.denominator * durationRational.denominator,
+            );
+            if (rationalToSeconds(markerStartRational) < rationalToSeconds(startRational) - 1e-9
+              || rationalToSeconds(markerEnd) > rationalToSeconds(clipEnd) + 1e-9) {
+              errors.push(`marker 越过所属镜头范围：${markerStart}`);
+            }
+          }
+        } catch (error) {
+          errors.push(`marker 时间无法解析：${error.message}`);
+        }
+      }
+    }
+
+    if (sequenceDurationRational
+      && Math.abs(rationalToSeconds(previousEnd) - rationalToSeconds(sequenceDurationRational)) > 1e-9
+      && spineChildren.length > 0) {
+      errors.push(
+        `sequence duration 与镜头总和不一致：sequence=${sequenceDurationMatch?.[1]} spineEnd=${formatFcpRational(previousEnd.numerator, previousEnd.denominator)}`,
+      );
+    }
+  }
+
   return {
     ok: errors.length === 0,
     errors,
@@ -873,22 +1391,63 @@ function validateFcpxmlStructure(xml, expected = {}) {
   };
 }
 
+async function enrichAssetMappingsFrameMetadata(assetMappings = []) {
+  const { probeMediaSafe } = require('./media-tool-service');
+  const enriched = [];
+  for (const mapping of assetMappings) {
+    if (!mapping || mapping.type !== 'video') {
+      enriched.push(mapping);
+      continue;
+    }
+    const metadata = { ...(mapping.metadata || {}) };
+    const hasFrameSignal = resolveMediaFrameCount(metadata) != null
+      || metadata.durationTs != null
+      || metadata.timeBase != null;
+    if (hasFrameSignal || !mapping.projectAbsolutePath) {
+      enriched.push(mapping);
+      continue;
+    }
+    const probed = await probeMediaSafe(mapping.projectAbsolutePath);
+    if (!probed.ok || !probed.metadata) {
+      enriched.push(mapping);
+      continue;
+    }
+    enriched.push({
+      ...mapping,
+      metadata: {
+        ...metadata,
+        durationSec: metadata.durationSec ?? probed.metadata.durationSec,
+        frameRate: metadata.frameRate ?? probed.metadata.frameRate,
+        avgFrameRate: probed.metadata.avgFrameRate || metadata.avgFrameRate || null,
+        rFrameRate: probed.metadata.rFrameRate || metadata.rFrameRate || null,
+        frameCount: probed.metadata.frameCount ?? metadata.frameCount ?? null,
+        durationTs: probed.metadata.durationTs ?? metadata.durationTs ?? null,
+        timeBase: probed.metadata.timeBase || metadata.timeBase || null,
+        hasAudio: metadata.hasAudio ?? probed.metadata.hasAudio,
+      },
+    });
+  }
+  return enriched;
+}
+
 async function writeFcpxml(outputPath, payload, options = {}) {
   const managedCaptionTitles = normalizeManagedCaptionTitles(payload.managedCaptionTitles);
-  const xml = buildFcpxml(payload);
+  const assetMappings = await enrichAssetMappingsFrameMetadata(payload.assetMappings || []);
+  const writePayload = { ...payload, assetMappings };
+  const xml = buildFcpxml(writePayload);
   const expectedTitleCount = Number.isInteger(options.expectedTitleCount)
     ? options.expectedTitleCount
-    : collectFcpTitles(payload.analysis).length + managedCaptionTitles.length;
+    : collectFcpTitles(writePayload.analysis).length + managedCaptionTitles.length;
   const report = validateFcpxmlStructure(xml, {
-    shotCount: payload.analysis.timeline.shots.length,
-    assetCount: payload.assetMappings.length,
-    markerCount: payload.analysis.timeline.markers.length,
+    shotCount: writePayload.analysis.timeline.shots.length,
+    assetCount: assetMappings.length,
+    markerCount: writePayload.analysis.timeline.markers.length,
     titleCount: expectedTitleCount,
-    width: payload.analysis.timeline.width,
-    height: payload.analysis.timeline.height,
-    fps: payload.analysis.timeline.fps,
-    clipMediaUrls: payload.analysis.timeline.shots.map((shot) => {
-      const mapping = payload.assetMappings.find((item) => item.assetId === shot.assetId);
+    width: writePayload.analysis.timeline.width,
+    height: writePayload.analysis.timeline.height,
+    fps: writePayload.analysis.timeline.fps,
+    clipMediaUrls: writePayload.analysis.timeline.shots.map((shot) => {
+      const mapping = assetMappings.find((item) => item.assetId === shot.assetId);
       return mapping ? pathToFileURL(mapping.projectAbsolutePath).href.replace(/&/g, '&amp;') : null;
     }),
   });
@@ -902,7 +1461,15 @@ async function writeFcpxml(outputPath, payload, options = {}) {
   const useAtomic = options.atomic === true;
   if (!useAtomic) {
     await fs.writeFile(outputPath, xml, 'utf8');
-    return { outputPath, report, managedTitleCount: managedCaptionTitles.length };
+    return {
+      outputPath,
+      report,
+      managedTitleCount: managedCaptionTitles.length,
+      timelinePlan: planFrameAlignedTimeline({
+        analysis: writePayload.analysis,
+        assetMappings,
+      }),
+    };
   }
 
   const directory = path.dirname(outputPath);
@@ -932,6 +1499,10 @@ async function writeFcpxml(outputPath, payload, options = {}) {
     report,
     managedTitleCount: managedCaptionTitles.length,
     restoredOnFailure: false,
+    timelinePlan: planFrameAlignedTimeline({
+      analysis: writePayload.analysis,
+      assetMappings,
+    }),
   };
 }
 
@@ -955,8 +1526,17 @@ module.exports = {
   isRationalMultiple,
   normalizeManagedCaptionTitles,
   parseFcpTimeRational,
+  parseFrameRateRational,
+  planFrameAlignedTimeline,
+  quantizeAssetResourceDuration,
   quantizeCaptionTiming,
+  quantizeShotToFrameGrid,
+  rationalToSeconds,
+  resolveMediaContentDurationSec,
+  resolveMediaFrameCount,
+  enrichAssetMappingsFrameMetadata,
   secondsToFrameIndex,
+  frameIndexToRational,
   validateFcpxmlStructure,
   writeFcpxml,
 };

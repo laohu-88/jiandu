@@ -696,7 +696,7 @@ test('Stage 5E: preserveFullClipLocked / preserveOriginalAudio 不被字幕导�
       note: `${MANAGED_CAPTION_NOTE_PREFIX}vcp-lc:c:vid-1:shot-1`,
     }],
   });
-  assert.match(xml, /asset-clip[^>]*duration="12\/1s"/);
+  assert.match(xml, /asset-clip[^>]*duration="12(?:\/1)?s"/);
   assert.match(xml, /audioRole="dialogue"/);
   assert.doesNotMatch(xml, /adjust-volume amount="-96dB"/);
   const report = validateFcpxmlStructure(xml, {
@@ -1096,7 +1096,8 @@ test('Stage 5E-Fix2: 吸附后仍在镜头内；近镜头结尾不越界；不�
   assert.ok(entry.timelineStartTime >= 0 - 1e-6);
   assert.ok(entry.timelineDuration > 0);
 
-  // Shot shorter than one frame after inward clamp → blocked by frame alignment.
+  // After Fix3, sub-frame shots quantize to one timeline frame and can host a
+  // one-frame caption. A host that still cannot fit one frame remains blocked.
   const tinyShots = [{
     id: 'shot-tiny', assetId: 'vid-1', inSec: 0, outSec: 0.025, durationSec: 0.025,
     fitMode: 'contain', audioMode: 'keep',
@@ -1109,16 +1110,18 @@ test('Stage 5E-Fix2: 吸附后仍在镜头内；近镜头结尾不越界；不�
     analysis: tinyAnalysis,
     assetMappings: mappingsFor(assets),
   });
-  assert.equal(tinyPlan.exportableEntries.length, 0);
-  assert.ok(
-    tinyPlan.entries.some((entry) => entry.mappingReason === 'frame_alignment_insufficient')
-      || tinyPlan.conflicts.some((item) => item.type === 'frame_alignment_insufficient'),
-    JSON.stringify({
-      conflicts: tinyPlan.conflicts,
-      reasons: tinyPlan.entries.map((entry) => entry.mappingReason),
-      warnings: tinyPlan.entries.map((entry) => entry.warnings),
-    }),
-  );
+  assert.equal(tinyPlan.exportableEntries.length, 1);
+  assert.equal(tinyPlan.exportableEntries[0].frameAlignment.durationFrames, 1);
+
+  const zeroHost = quantizeCaptionTiming({
+    startSec: 0,
+    endSec: 0.02,
+    minSec: 0,
+    maxSec: 1 / 60,
+    fps: 30,
+  });
+  assert.equal(zeroHost.ok, false);
+  assert.equal(zeroHost.reason, 'insufficient_frame_room');
 });
 
 test('Stage 5E-Fix2: 图片字幕同样对齐帧边界；分数帧率使用实际 frameDuration', () => {
@@ -1348,7 +1351,10 @@ test('Stage 5E-Fix2: 校验器拒绝未对齐帧边界的受管 Title；旧非�
   });
   assert.equal(okReport.ok, true, okReport.errors.join('；'));
 
-  const misaligned = legal.replace(/duration="2\/1s"/, 'duration="48/25s"');
+  const misaligned = legal.replace(
+    /(<title\b[^>]*\bduration=")[^"]+(")/,
+    '$148/25s$2',
+  );
   const badReport = validateFcpxmlStructure(misaligned, {
     shotCount: 1, assetCount: 1, markerCount: 0, titleCount: 1, fps: 30,
   });

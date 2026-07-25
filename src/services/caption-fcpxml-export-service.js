@@ -18,10 +18,15 @@ const {
   MANAGED_CAPTION_NOTE_PREFIX,
   buildFcpxml,
   collectFcpTitles,
+  enrichAssetMappingsFrameMetadata,
   extractManagedCaptionTitles,
   fcpTime,
   frameDuration,
+  frameIndexToRational,
+  planFrameAlignedTimeline,
   quantizeCaptionTiming,
+  rationalToSeconds,
+  secondsToFrameIndex,
   writeFcpxml,
 } = require('./fcpxml-service');
 
@@ -250,14 +255,25 @@ function mapVideoCaptionToShots(caption, shotEntries, mediaType) {
   };
 }
 
-function allocateImageCaptionWindows(captions, shotEntry) {
+function allocateImageCaptionWindows(captions, shotEntry, fps = 30) {
   const duration = shotEntry.durationSec;
   const count = captions.length;
   if (count === 0) return [];
+  const sequenceFrameDuration = frameDuration(fps);
+  const totalFrames = Math.max(
+    1,
+    Number.isInteger(shotEntry.durationFrames)
+      ? shotEntry.durationFrames
+      : secondsToFrameIndex(duration, sequenceFrameDuration, 'nearest'),
+  );
+  // Use whole-frame margins instead of 0.15s float insets.
+  const marginFrames = Math.min(
+    Math.max(1, secondsToFrameIndex(Math.min(0.15, duration * 0.05), sequenceFrameDuration, 'nearest')),
+    Math.max(0, Math.floor((totalFrames - 1) / 2)),
+  );
+
   if (count === 1) {
-    const start = roundTime(shotEntry.timelineStart + Math.min(0.15, duration * 0.05));
-    const end = roundTime(shotEntry.timelineEnd - Math.min(0.15, duration * 0.05));
-    if (end - start <= TIME_EPSILON) {
+    if (totalFrames <= marginFrames * 2) {
       return [{
         caption: captions[0],
         timelineStartTime: shotEntry.timelineStart,
@@ -267,21 +283,25 @@ function allocateImageCaptionWindows(captions, shotEntry) {
         warnings: [],
       }];
     }
+    const start = shotEntry.timelineStart
+      + rationalSecondsFromFrames(marginFrames, sequenceFrameDuration);
+    const end = shotEntry.timelineEnd
+      - rationalSecondsFromFrames(marginFrames, sequenceFrameDuration);
     return [{
       caption: captions[0],
       timelineStartTime: start,
       timelineEndTime: end,
-      timelineDuration: roundTime(end - start),
+      timelineDuration: end - start,
       conflict: false,
       warnings: [],
     }];
   }
 
-  const gap = 0.12;
-  const totalGap = gap * (count - 1);
-  const available = duration - totalGap;
-  const each = available / count;
-  if (each < MIN_READABLE_CAPTION_SEC) {
+  const gapFrames = Math.max(1, secondsToFrameIndex(0.12, sequenceFrameDuration, 'nearest'));
+  const totalGapFrames = gapFrames * (count - 1);
+  const availableFrames = totalFrames - totalGapFrames;
+  const eachFrames = Math.floor(availableFrames / count);
+  if (eachFrames < secondsToFrameIndex(MIN_READABLE_CAPTION_SEC, sequenceFrameDuration, 'ceil')) {
     return captions.map((caption) => ({
       caption,
       timelineStartTime: null,
@@ -292,22 +312,30 @@ function allocateImageCaptionWindows(captions, shotEntry) {
     }));
   }
 
-  let cursor = shotEntry.timelineStart;
+  let cursorFrame = 0;
   return captions.map((caption, index) => {
-    const start = roundTime(cursor);
-    const end = roundTime(index === count - 1
-      ? shotEntry.timelineEnd
-      : cursor + each);
-    cursor = end + gap;
+    const startFrame = cursorFrame;
+    const endFrame = index === count - 1
+      ? totalFrames
+      : startFrame + eachFrames;
+    cursorFrame = endFrame + gapFrames;
+    const start = shotEntry.timelineStart
+      + rationalSecondsFromFrames(startFrame, sequenceFrameDuration);
+    const end = shotEntry.timelineStart
+      + rationalSecondsFromFrames(endFrame, sequenceFrameDuration);
     return {
       caption,
       timelineStartTime: start,
       timelineEndTime: end,
-      timelineDuration: roundTime(end - start),
+      timelineDuration: end - start,
       conflict: false,
       warnings: [],
     };
   });
+}
+
+function rationalSecondsFromFrames(frames, frameDur) {
+  return rationalToSeconds(frameIndexToRational(frames, frameDur));
 }
 
 function mapImageCaptionsForAsset(captions, shotEntries, analysis) {
@@ -349,7 +377,11 @@ function mapImageCaptionsForAsset(captions, shotEntries, analysis) {
     return String(leftCaption.captionId).localeCompare(String(rightCaption.captionId));
   });
 
-  const windows = allocateImageCaptionWindows(ordered.map((item) => item.caption || item), shotEntry);
+  const windows = allocateImageCaptionWindows(
+    ordered.map((item) => item.caption || item),
+    shotEntry,
+    analysis?.timeline?.fps || 30,
+  );
   return windows.map((window, index) => {
     const source = ordered[index];
     const caption = source.caption || source;
@@ -481,13 +513,28 @@ function detectPlanConflicts(entries) {
  * frame grid (actual frameDuration). Does not mutate confirmed source times in
  * editorial-review.json — only export timeline times used for FCPXML.
  */
-function alignExportPlanToFrameBoundaries(entries, shotEntries, fps) {
+function alignExportPlanToFrameBoundaries(entries, shotEntries, fps, assetMappings = []) {
   const conflicts = [];
   const sequenceFrameDuration = frameDuration(fps);
   const timelineEnd = shotEntries.length
     ? shotEntries[shotEntries.length - 1].timelineEnd
     : 0;
   const shotsById = new Map(shotEntries.map((entry) => [entry.shot.id, entry]));
+  const plannedById = new Map();
+  if (shotEntries.length && fps) {
+    const plan = planFrameAlignedTimeline({
+      analysis: {
+        timeline: {
+          fps,
+          shots: shotEntries.map((entry) => entry.shot),
+        },
+      },
+      assetMappings,
+    });
+    for (const planned of plan.shots) {
+      plannedById.set(planned.shot.id, planned);
+    }
+  }
 
   for (const entry of entries) {
     if (!entry.exportable) continue;
@@ -505,15 +552,22 @@ function alignExportPlanToFrameBoundaries(entries, shotEntries, fps) {
       continue;
     }
 
+    const planned = plannedById.get(entry.matchedShotId);
+    const hostSourceIn = planned ? planned.sourceInSec : shotEntry.sourceIn;
+    const hostDurationSec = planned ? planned.durationSec : shotEntry.durationSec;
+    const hostTimelineStart = planned ? planned.timelineStartSec : shotEntry.timelineStart;
+    const hostTimelineEnd = planned
+      ? planned.timelineEndSec
+      : shotEntry.timelineEnd;
     const stillOffset = isImageLikeType(entry.mediaType) ? 3600 : 0;
     const sourceStart = shotEntry.sourceIn
       + (entry.timelineStartTime - shotEntry.timelineStart);
     const sourceEnd = shotEntry.sourceIn
       + (entry.timelineEndTime - shotEntry.timelineStart);
-    const minOffset = stillOffset + shotEntry.sourceIn;
-    const maxByShot = stillOffset + shotEntry.sourceIn + shotEntry.durationSec;
-    const maxByTimeline = stillOffset + shotEntry.sourceIn
-      + Math.max(0, timelineEnd - shotEntry.timelineStart);
+    const minOffset = stillOffset + hostSourceIn;
+    const maxByShot = stillOffset + hostSourceIn + hostDurationSec;
+    const maxByTimeline = stillOffset + hostSourceIn
+      + Math.max(0, (planned ? planned.timelineEndSec : Math.max(timelineEnd, hostTimelineEnd)) - hostTimelineStart);
     const maxOffset = Math.min(maxByShot, maxByTimeline);
 
     const quantized = quantizeCaptionTiming({
@@ -542,8 +596,8 @@ function alignExportPlanToFrameBoundaries(entries, shotEntries, fps) {
 
     const alignedSourceStart = quantized.startSec - stillOffset;
     const alignedSourceEnd = quantized.endSec - stillOffset;
-    entry.timelineStartTime = shotEntry.timelineStart + (alignedSourceStart - shotEntry.sourceIn);
-    entry.timelineEndTime = shotEntry.timelineStart + (alignedSourceEnd - shotEntry.sourceIn);
+    entry.timelineStartTime = hostTimelineStart + (alignedSourceStart - hostSourceIn);
+    entry.timelineEndTime = hostTimelineStart + (alignedSourceEnd - hostSourceIn);
     entry.timelineDuration = entry.timelineEndTime - entry.timelineStartTime;
     entry.frameAlignment = {
       adjusted: quantized.adjusted === true,
@@ -754,6 +808,7 @@ function buildCaptionExportPlan({
     entries,
     shotEntries,
     analysis?.timeline?.fps,
+    assetMappings,
   );
   const conflicts = [...frameConflicts, ...detectPlanConflicts(entries)];
   const exportableEntries = entries.filter((entry) => entry.exportable);
@@ -989,30 +1044,37 @@ function buildPreviewResult(context, plan, reconciliation, protectionPreview = n
 
 async function previewConfirmedCaptionFcpxmlExport(projectPath) {
   const context = await loadProjectExportContext(projectPath);
+  const assetMappings = await enrichAssetMappingsFrameMetadata(context.assetMappings || []);
   const plan = buildCaptionExportPlan({
     confirmedCaptions: context.confirmedCaptions,
     analysis: context.analysis,
     manifest: context.manifest,
-    assetMappings: context.assetMappings,
+    assetMappings,
   });
   const nextManaged = toManagedCaptionTitles(plan.exportableEntries);
   const previousManaged = extractManagedCaptionTitles(context.existingXml || '');
   const reconciliation = reconcileManagedTitles(previousManaged, nextManaged);
 
   let protectionPreview = null;
-  if (context.analysis && context.assetMappings.length && context.existingXml) {
+  if (context.analysis && assetMappings.length && context.existingXml) {
     const draftXml = buildFcpxml({
       projectName: context.status?.projectName
         || context.manifest?.projectName
         || path.basename(context.projectPath),
       analysis: context.analysis,
-      assetMappings: context.assetMappings,
+      assetMappings,
       managedCaptionTitles: nextManaged,
     });
     protectionPreview = summarizeXmlProtection(context.existingXml, draftXml);
   }
 
-  return buildPreviewResult(context, plan, reconciliation, protectionPreview, nextManaged);
+  return buildPreviewResult(
+    { ...context, assetMappings },
+    plan,
+    reconciliation,
+    protectionPreview,
+    nextManaged,
+  );
 }
 
 async function exportConfirmedCaptionsToFcpxml(projectPath, options = {}) {
@@ -1037,11 +1099,12 @@ async function exportConfirmedCaptionsToFcpxml(projectPath, options = {}) {
   }
 
   const context = await loadProjectExportContext(projectPath);
+  const assetMappings = await enrichAssetMappingsFrameMetadata(context.assetMappings || []);
   const plan = buildCaptionExportPlan({
     confirmedCaptions: context.confirmedCaptions,
     analysis: context.analysis,
     manifest: context.manifest,
-    assetMappings: context.assetMappings,
+    assetMappings,
   });
   const managedCaptionTitles = toManagedCaptionTitles(plan.exportableEntries);
   const previousManaged = extractManagedCaptionTitles(context.existingXml || '');
@@ -1055,7 +1118,7 @@ async function exportConfirmedCaptionsToFcpxml(projectPath, options = {}) {
   const writeResult = await writeFcpxml(context.fcpxmlPath, {
     projectName,
     analysis: context.analysis,
-    assetMappings: context.assetMappings,
+    assetMappings,
     managedCaptionTitles,
   }, {
     expectedTitleCount,

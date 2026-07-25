@@ -1,4 +1,4 @@
-const { fcpTime } = require('./fcpxml-service');
+const { fcpTimeAligned } = require('./fcpxml-service');
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -119,7 +119,9 @@ function createMarkerViewModel({
     const sourceTimeSec = located
       ? stillOffset + (Number(shot.inSec) || 0) + timeSec - located.timelineStartSec
       : null;
-    const expectedStart = Number.isFinite(sourceTimeSec) ? fcpTime(sourceTimeSec) : null;
+    const expectedStart = Number.isFinite(sourceTimeSec)
+      ? fcpTimeAligned(sourceTimeSec, fps)
+      : null;
     const baseMarker = marker.id
       ? baseMarkers.find((item) => item.id === marker.id)
       : baseMarkers[index];

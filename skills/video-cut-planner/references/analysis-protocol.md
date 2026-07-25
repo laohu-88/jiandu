@@ -93,13 +93,22 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   not_needed/needs_review/stale never enter the timeline. Managed Titles are
   marked with a stable `<note>vcp-managed-caption:titleKey</note>` child inside
   each managed `title` (never a `note` attribute) and can be added, updated, or
-  removed idempotently without changing markers, unmanaged titles, shot bounds, or
-  original audio.   Video caption times map through shot source-in/out to timeline
-  time; image captions map inside the image shot with no forged source times.
-  Before FCPXML time strings are written, managed Title offset/duration are
-  quantized onto the sequence `frameDuration` grid (nearest frame, clamped to
-  the host shot / timeline, minimum one frame; insufficient room blocks export).
-  Confirmed source times in editorial-review.json are not rewritten.
+  removed idempotently without changing markers, unmanaged title text, shot order, or
+  original audio mute state. Video caption times map through shot source-in/out to
+  timeline time; image captions map inside the image shot with no forged source times.
+  Before FCPXML time strings are written, the entire editable timeline — sequence
+  duration, spine clip offset/duration/start, markers, unmanaged titles, and managed
+  light-caption Titles — is quantized onto the sequence `frameDuration` grid using
+  integer frame accumulation (not float-second + fixed 60000 timebase). Video shots
+  with `preserveFullClip` ceil outward so tail frames/audio are kept; when reliable
+  media frame counts (`frameCount` / `duration_ts` + `time_base` / `avg_frame_rate`)
+  are available they are preferred over millisecond duration strings. Image shot
+  durations snap to the nearest legal frame count (minimum one frame) without 0.15s
+  float margins. Managed Title offset/duration remain nearest-frame clamped to the
+  quantized host shot (minimum one frame; insufficient room blocks export).
+  Confirmed source times in editorial-review.json are not rewritten. Sub-frame
+  timeline length changes from frame alignment are recorded as
+  `frameAlignmentAdjusted`, not as content trims.
 - `assets[].status`: `adopt`, `candidate`, or `reject`.
 - `assets[].reason`: why it is adopted/candidate/rejected.
 - `assets[].ranges`: useful video intervals; use an empty list for still images or no reliable interval.

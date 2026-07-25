@@ -161,7 +161,7 @@ test('FCPXML 1.14 使用 FCP 12.3 基础标题生成独立可编辑 Title 且不
   assert.equal(report.titleCount, 2);
   assert.equal(report.effectCount, 1);
   assert.match(xml, new RegExp(`uid="${BASIC_TITLE_EFFECT.uid.replaceAll('.', '\\.')}"`));
-  assert.match(xml, /<title ref="r\d+" lane="1" offset="3\/4s"[^>]*duration="6\/5s">/);
+  assert.match(xml, /<title ref="r\d+" lane="1" offset="23\/30s"[^>]*duration="6\/5s">/);
   assert.match(xml, /<text-style[^>]*>开始 &amp; 调整 &lt;结果&gt;<\/text-style>/);
   assert.match(xml, /<text-style-def id="ts-title-1">/);
   assert.match(xml, /<marker [^>]*value="开始调整"\/>/);
