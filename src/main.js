@@ -31,6 +31,11 @@ const {
   verifyCodexProjectReadOnly,
 } = require('./services/codex-project-result-service');
 const {
+  buildEditorialReviewModel,
+  getConfirmedCaptions,
+  saveEditorialReview,
+} = require('./services/editorial-review-service');
+const {
   assertCatalogProject,
   scanProjectCatalog,
 } = require('./services/project-catalog-service');
@@ -798,6 +803,27 @@ function registerIpc() {
     const result = await readCodexProjectResult(validated);
     if (!result.artifacts.fcpxml?.exists) throw new Error('FCPXML 不存在。');
     return openInFinalCut(result.artifacts.fcpxml.path);
+  });
+
+  ipcMain.handle('catalog:load-editorial-review', async (_event, projectPath) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    authorizeProject(validated);
+    return buildEditorialReviewModel(validated);
+  });
+
+  ipcMain.handle('catalog:save-editorial-review', async (_event, args) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, args?.projectPath);
+    authorizeProject(validated);
+    return saveEditorialReview(validated, {
+      reviews: args?.reviews || {},
+    });
+  });
+
+  ipcMain.handle('catalog:get-confirmed-captions', async (_event, projectPath) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    authorizeProject(validated);
+    const model = await buildEditorialReviewModel(validated);
+    return getConfirmedCaptions(model);
   });
 
   ipcMain.handle('shell:show-item', async (_event, args) => {

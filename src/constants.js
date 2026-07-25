@@ -49,6 +49,7 @@ const CODEX_VIDEO_ANALYSIS_FILE = path.join(CONTROL_DIR, 'Codex视频分析.json
 const CODEX_VIDEO_STATUS_FILE = path.join(CONTROL_DIR, 'Codex视频状态.json');
 const CODEX_VIDEO_SUMMARY_FILE = path.join(CONTROL_DIR, 'Codex视频项目摘要.md');
 const CODEX_VIDEO_HYPERFRAMES_DIR = path.join(CONTROL_DIR, 'HyperFrames');
+const EDITORIAL_REVIEW_FILE = path.join(CONTROL_DIR, 'editorial-review.json');
 const CODEX_VIDEO_FCPXML_DIR = path.join(EXPORT_DIR, 'FCPXML');
 const CODEX_VIDEO_PREVIEW_DIR = path.join(EXPORT_DIR, '粗剪预览');
 const BRIEF_FILE = path.join(CONTROL_DIR, '素材简报.md');
@@ -104,6 +105,7 @@ module.exports = {
   CODEX_VIDEO_STATUS_FILE,
   CODEX_VIDEO_SUMMARY_FILE,
   CODEX_VIDEO_HYPERFRAMES_DIR,
+  EDITORIAL_REVIEW_FILE,
   CODEX_VIDEO_FCPXML_DIR,
   CODEX_VIDEO_PREVIEW_DIR,
   BRIEF_FILE,

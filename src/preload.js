@@ -86,6 +86,12 @@ contextBridge.exposeInMainWorld('plannerApi', {
   runProjectArtifactAction: (args) => ipcRenderer.invoke('catalog:artifact-action', args),
   openProjectFcpxmlInFinalCut: (projectPath) =>
     ipcRenderer.invoke('catalog:open-final-cut', projectPath),
+  loadEditorialReview: (projectPath) =>
+    ipcRenderer.invoke('catalog:load-editorial-review', projectPath),
+  saveEditorialReview: (args) =>
+    ipcRenderer.invoke('catalog:save-editorial-review', args),
+  getConfirmedCaptions: (projectPath) =>
+    ipcRenderer.invoke('catalog:get-confirmed-captions', projectPath),
   showItemInFolder: (args) => ipcRenderer.invoke('shell:show-item', args),
   openFolder: (args) => ipcRenderer.invoke('shell:open-folder', args),
 });

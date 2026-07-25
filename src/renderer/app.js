@@ -30,6 +30,13 @@ const state = {
   selectedCatalogProjectPath: null,
   selectedProjectResult: null,
   resultPlayback: null,
+  explanationReview: null,
+  explanationReviewFilter: 'all',
+  explanationReviewQuery: '',
+  explanationReviewSelectedAssetId: null,
+  explanationReviewDrafts: {},
+  explanationReviewDirty: false,
+  explanationAssetPlayback: null,
   pendingCatalog: null,
   selectedPendingEpisode: null,
   activeHandoffTask: null,
@@ -973,6 +980,20 @@ function renderCodexProjectResult(result) {
   renderDecisionGroup(decisions, '淘汰', result.decisions.reject);
   elements.resultDetail.appendChild(decisions);
 
+  if (window.ExplanationReviewUi?.createExplanationReviewSection) {
+    elements.resultDetail.appendChild(window.ExplanationReviewUi.createExplanationReviewSection({
+      result,
+      state,
+      createResultSection,
+      createDefinitionGrid,
+      createTextElement,
+      formatDateTime,
+      showToast,
+      withBusy,
+      renderCodexProjectResult,
+    }));
+  }
+
   const timeline = createResultSection(
     '时间线',
     `${result.timeline.shotCount} 个镜头 · ${formatResultDuration(result.timeline.totalDurationSec)} · ${result.timeline.markers.length} 个 marker`,
@@ -1144,6 +1165,13 @@ function renderCodexProjectResult(result) {
 }
 
 async function loadCatalogProject(projectPath) {
+  if (state.explanationReviewDirty) {
+    const proceed = window.confirm('解释与轻字幕仍有未保存修改，切换项目将丢失这些修改。继续？');
+    if (!proceed) return;
+  }
+  state.explanationReviewDirty = false;
+  state.explanationReviewDrafts = {};
+  state.explanationReviewSelectedAssetId = null;
   state.selectedCatalogProjectPath = projectPath;
   renderProjectCatalog();
   elements.resultDetailEmpty.classList.add('hidden');
@@ -2909,3 +2937,9 @@ elements.saveMlxPythonPathButton.addEventListener('click', () =>
   }));
 
 init().catch((error) => showToast(getUserErrorMessage(error), true));
+
+window.addEventListener('beforeunload', (event) => {
+  if (!state.explanationReviewDirty) return;
+  event.preventDefault();
+  event.returnValue = '';
+});

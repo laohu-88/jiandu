@@ -78,6 +78,15 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
 - `lightCaptionPlan`: optional top-level Stage 5C suggestions only. Natural concise
   Chinese, timed to the relevant moment, never automatic FCP Titles/Markers/tracks.
   Self-explanatory assets may omit captions entirely.
+- Stage 5D human review: the App Results Center section “解释与轻字幕” loads Stage
+  5C fields for review. Human decisions persist in
+  `00-项目总控/editorial-review.json` with statuses `pending`, `approved`,
+  `edited_approved`, `not_needed`, `rejected`, `needs_review`, and `stale`.
+  Locked `preserveFullClip` / `preserveOriginalAudio` and approved/edited caption
+  text-time decisions outrank later automatic analysis. Re-analysis may show new
+  suggestions but must not silently overwrite locked decisions. Only
+  `approved` and `edited_approved` enter the Stage 5E confirmed-caption set.
+  Directory rename or `.DS_Store` changes alone must not mark decisions stale.
 - `assets[].status`: `adopt`, `candidate`, or `reject`.
 - `assets[].reason`: why it is adopted/candidate/rejected.
 - `assets[].ranges`: useful video intervals; use an empty list for still images or no reliable interval.

@@ -78,7 +78,11 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
    `lightCaptionPlan`. Keep `sourceText` / `translatedText` / `meaning` separate.
    Merge adjacent duplicate subtitle frames into time ranges. Default videos to
    `preserveFullClip: true` and `preserveOriginalAudio: true`. Do not auto-write
-   light-caption suggestions into Markers or FCP Titles.
+   light-caption suggestions into Markers or FCP Titles. After build, human
+   review of explanations and light captions happens in the App Results Center
+   (“解释与轻字幕”); Stage 5D stores decisions in
+   `00-项目总控/editorial-review.json` and must not silently overwrite locked
+   human approvals on re-analysis.
 
 6. If the folder name clearly conflicts with the media, set `folderNameConflict` to `true` and include this exact sentence in the user-facing reasoning: `文件夹名称与素材实际内容存在差异，本次主题以素材内容为准。`
 7. Design a visual story from the material itself. Treat detected first-level directories as ordered chapters and detected second-level directories as ordered subchapters. Root-brief order is a hard constraint; otherwise use numeric prefixes, natural directory order, and only then Codex inference. Do not interleave chapters unless the brief explicitly requests a non-linear structure. Context may improve relevance, chapter ownership, narrative role, and within-chapter order, but may not reorder top-level chapters. Favor meaningful result/change, necessary context, key operations, comparison, success evidence, final result, and a brief ending only when supported by the material. Do not force a fixed section count or put every media variant from one Story Unit on the timeline.

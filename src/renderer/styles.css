@@ -2032,6 +2032,187 @@ tbody tr:last-child td {
   font-size: 15px;
 }
 
+.explanation-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.explanation-toolbar {
+  display: flex;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.explanation-toolbar select,
+.explanation-toolbar input[type='search'] {
+  min-height: 34px;
+  border: 1px solid #d7dde7;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: #fff;
+}
+
+.explanation-toolbar input[type='search'] {
+  flex: 1;
+}
+
+.explanation-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.4fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.explanation-list,
+.explanation-detail {
+  border: 1px solid #e7eaf0;
+  border-radius: 12px;
+  background: #fbfcfe;
+  padding: 10px;
+}
+
+.explanation-list {
+  display: grid;
+  gap: 8px;
+  max-height: 720px;
+  overflow: auto;
+}
+
+.explanation-list-item {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e7eaf0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.explanation-list-item.selected {
+  border-color: #7b8cff;
+  box-shadow: inset 0 0 0 1px #7b8cff;
+}
+
+.explanation-list-item strong,
+.explanation-list-item p,
+.explanation-list-item small {
+  display: block;
+  margin: 0;
+}
+
+.explanation-list-item p,
+.explanation-list-item small {
+  color: #6b7380;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.explanation-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #eef1f6;
+  color: #667085;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+}
+
+.explanation-thumb img,
+.explanation-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #111;
+}
+
+.explanation-image {
+  max-height: 360px;
+  border-radius: 10px;
+}
+
+.explanation-detail {
+  max-height: 900px;
+  overflow: auto;
+}
+
+.explanation-detail-heading h4 {
+  margin: 0 0 4px;
+}
+
+.explanation-detail-heading p {
+  margin: 0 0 12px;
+  color: #6b7380;
+  font-size: 12px;
+}
+
+.explanation-preview,
+.explanation-text-card,
+.explanation-caption-card {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid #e7eaf0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.explanation-video-shell {
+  position: relative;
+}
+
+.explanation-caption-card label,
+.explanation-lock {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #505868;
+}
+
+.explanation-caption-card input,
+.explanation-caption-card select,
+.explanation-caption-card textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid #d7dde7;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.explanation-evidence {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #f4f6fa;
+}
+
+.explanation-evidence.evidence-context {
+  background: #f7f3ea;
+}
+
+.explanation-evidence.evidence-inference {
+  background: #f3eefc;
+}
+
+.explanation-evidence h5 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.explanation-evidence ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.explanation-save-row {
+  margin-top: 12px;
+  align-items: center;
+}
+
 @media (max-width: 980px) {
   .pending-media-grid,
   .handoff-columns {
@@ -2041,5 +2222,10 @@ tbody tr:last-child td {
   .results-toolbar {
     align-items: flex-start;
     gap: 16px;
+  }
+
+  .explanation-layout,
+  .explanation-summary-grid {
+    grid-template-columns: 1fr;
   }
 }

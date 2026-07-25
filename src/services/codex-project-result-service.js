@@ -15,6 +15,7 @@ const {
 const { readJsonFile } = require('./project-json-service');
 const { verifyCodexVideoProject } = require('./codex-video-service');
 const { createMarkerViewModel } = require('./marker-view-model');
+const { buildEditorialReviewModel } = require('./editorial-review-service');
 
 const PROJECT_RESULT_STATUS = Object.freeze({
   VERIFIED: 'verified',
@@ -317,6 +318,31 @@ async function readCodexProjectResult(projectPath) {
       insertAfterShotId: status.hyperframes.flow?.insertAfterShotId || null,
       checkOk: status.hyperframes.check?.ok ?? null,
     } : { enabled: false },
+    explanationReview: await buildEditorialReviewModel(resolved, {
+      analysis: baseAnalysis,
+      manifest,
+      status,
+    }).catch((error) => ({
+      available: false,
+      message: '解释与轻字幕审阅数据加载失败',
+      summary: {
+        pending: 0,
+        approved: 0,
+        editedApproved: 0,
+        notNeeded: 0,
+        rejected: 0,
+        needsReview: 0,
+        stale: 0,
+        withVisualText: 0,
+        withWarnings: 0,
+        fullClipLocked: 0,
+        originalAudioLocked: 0,
+        total: 0,
+      },
+      items: [],
+      warnings: [error.message || '未知错误'],
+      reviews: {},
+    })),
     raw: {
       assetsCount: asArray(assetsIndex?.assets).length,
       manifestCount: asArray(manifest?.items).length,
