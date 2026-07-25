@@ -38,7 +38,7 @@
     state.explanationReview = review;
     const section = createResultSection(
       '解释与轻字幕',
-      '进入 Final Cut Pro 前确认素材解释、画面文字、轻字幕建议与视频保留锁定。本阶段不写入 FCPXML。',
+      '进入 Final Cut Pro 前确认素材解释、画面文字、轻字幕建议与视频保留锁定。已确认字幕可显式导出为 FCP 原生 Title。',
     );
 
     if (!review.available) {
@@ -367,7 +367,7 @@
       explanationSection.appendChild(evidenceList('inference（程序推断）', evidence.explanation?.inference, 'evidence-inference'));
       host.appendChild(explanationSection);
 
-      const captionsSection = createResultSection('轻字幕编辑和审核', '本阶段只保存人工决定，不写入 FCPXML。');
+      const captionsSection = createResultSection('轻字幕编辑和审核', '先保存人工决定；导出到 FCPXML 需点击下方“生成或更新 FCP 轻字幕”。');
       if (!item.captions.length) {
         captionsSection.appendChild(createTextElement('p', '本素材暂无轻字幕建议。', 'empty-inline'));
       } else {
@@ -663,6 +663,140 @@
     renderDetail(selected, detail);
     layout.append(list, detail);
     section.appendChild(layout);
+
+    const exportPanel = document.createElement('div');
+    exportPanel.className = 'explanation-export-panel';
+    exportPanel.appendChild(createTextElement(
+      'h4',
+      '生成或更新 FCP 轻字幕',
+    ));
+    exportPanel.appendChild(createTextElement(
+      'p',
+      '仅导出 approved / edited_approved。不会自动写入；请先预览，确认无阻塞错误后再正式生成。',
+      'muted',
+    ));
+    const exportStats = document.createElement('div');
+    exportStats.className = 'explanation-export-stats';
+    exportStats.appendChild(createTextElement('p', '尚未预览。', 'empty-inline'));
+    const exportStatus = createTextElement('p', '', 'verify-run-status');
+    const exportActions = document.createElement('div');
+    exportActions.className = 'result-actions';
+    const previewButton = createTextElement('button', '预览导出', 'button');
+    previewButton.type = 'button';
+    const exportButton = createTextElement('button', '生成或更新 FCP 轻字幕', 'button primary');
+    exportButton.type = 'button';
+    exportButton.disabled = true;
+
+    function renderExportPreview(preview) {
+      exportStats.replaceChildren();
+      if (!preview) {
+        exportStats.appendChild(createTextElement('p', '尚未预览。', 'empty-inline'));
+        exportButton.disabled = true;
+        return;
+      }
+      exportStats.appendChild(createDefinitionGrid([
+        ['已确认字幕', String(preview.confirmedCount ?? 0)],
+        ['可导出', String(preview.exportableCount ?? 0)],
+        ['无匹配镜头', String(preview.unmatchedShotCount ?? 0)],
+        ['时间映射失败', String(preview.mappingFailureCount ?? 0)],
+        ['将新增 Title', String(preview.willAdd ?? 0)],
+        ['将更新 Title', String(preview.willUpdate ?? 0)],
+        ['将移除受管 Title', String(preview.willRemove ?? 0)],
+        ['保持不变', String(preview.willKeep ?? 0)],
+        ['冲突', String(preview.conflictCount ?? 0)],
+        ['改变 Marker', preview.changesMarkers ? '是' : '否'],
+        ['改变非字幕 Title', preview.changesUnmanagedTitles ? '是' : '否'],
+        ['改变视频或音频', preview.changesVideoOrAudio ? '是' : '否'],
+      ], 'explanation-summary-grid'));
+      if (preview.noOp) {
+        exportStats.appendChild(createTextElement('p', '无已确认字幕且无受管 Title，不会修改 FCPXML。', 'notice'));
+      }
+      if (preview.blockingErrors?.length) {
+        exportStats.appendChild(createTextElement(
+          'p',
+          `阻塞错误：${preview.blockingErrors.join('；')}`,
+          'notice warning',
+        ));
+      }
+      if (preview.conflicts?.length) {
+        exportStats.appendChild(createTextElement(
+          'p',
+          `冲突：${preview.conflicts.map((item) => item.message).join('；')}`,
+          'notice warning',
+        ));
+      }
+      if (preview.skipped?.length) {
+        exportStats.appendChild(createTextElement(
+          'p',
+          `跳过 ${preview.skipped.length} 条：${preview.skipped.slice(0, 5).map((item) => `${item.captionId}（${item.reason}）`).join('；')}${preview.skipped.length > 5 ? '…' : ''}`,
+          'notice',
+        ));
+      }
+      exportButton.disabled = !(preview.ok && preview.canWrite);
+      state.captionExportPreview = preview;
+    }
+
+    previewButton.addEventListener('click', () =>
+      withBusy(previewButton, async () => {
+        if (state.explanationReviewDirty) {
+          showToast('请先保存人工决定，再预览导出。', true);
+          return;
+        }
+        const preview = await window.plannerApi.previewCaptionFcpxmlExport(result.project.path);
+        renderExportPreview(preview);
+        exportStatus.textContent = preview.ok
+          ? (preview.canWrite ? '预览通过，可以正式生成。' : (preview.noOp ? '无需修改 FCPXML。' : '预览完成。'))
+          : `预览失败：${preview.blockingErrors?.[0] || '存在阻塞错误'}`;
+        showToast(exportStatus.textContent, !preview.ok);
+      }, '预览中…'));
+
+    exportButton.addEventListener('click', () =>
+      withBusy(exportButton, async () => {
+        if (state.explanationReviewDirty) {
+          showToast('请先保存人工决定，再导出字幕。', true);
+          return;
+        }
+        if (!state.captionExportPreview?.canWrite) {
+          showToast('请先完成无阻塞错误的预览。', true);
+          return;
+        }
+        const confirmed = window.confirm(
+          [
+            `将新增 ${state.captionExportPreview.willAdd}、更新 ${state.captionExportPreview.willUpdate}、移除 ${state.captionExportPreview.willRemove} 个受管轻字幕 Title。`,
+            '不会改变 Marker、非受管 Title、镜头和原声。继续？',
+          ].join('\n'),
+        );
+        if (!confirmed) return;
+        const exportResult = await window.plannerApi.exportCaptionFcpxml(result.project.path);
+        if (exportResult.preview) renderExportPreview(exportResult.preview);
+        if (!exportResult.ok || !exportResult.written) {
+          exportStatus.textContent = exportResult.message || '导出未写入。';
+          showToast(exportStatus.textContent, true);
+          return;
+        }
+        const summary = exportResult.summary || {};
+        exportStatus.textContent = [
+          `已写入 ${exportResult.fcpxmlRelative || exportResult.outputPath}`,
+          `新增 ${summary.added ?? 0}`,
+          `更新 ${summary.updated ?? 0}`,
+          `移除 ${summary.removed ?? 0}`,
+          `跳过 ${summary.skipped ?? 0}`,
+          exportResult.xmllint?.ok === false ? `xmllint 失败：${exportResult.xmllint.message}` : '校验通过',
+        ].join(' · ');
+        showToast('FCP 轻字幕已更新。');
+        state.captionExportPreview = null;
+        const refreshed = await window.plannerApi.getCodexProjectResult(result.project.path);
+        if (state.selectedProjectResult?.project?.path === result.project.path) {
+          state.selectedProjectResult = refreshed;
+        }
+        renderCodexProjectResult(refreshed);
+      }, '生成中…'));
+
+    exportActions.append(previewButton, exportButton);
+    exportPanel.append(exportStats, exportActions, exportStatus);
+    if (state.captionExportPreview) renderExportPreview(state.captionExportPreview);
+    section.appendChild(exportPanel);
+
     return section;
   }
 

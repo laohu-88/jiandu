@@ -92,6 +92,10 @@ contextBridge.exposeInMainWorld('plannerApi', {
     ipcRenderer.invoke('catalog:save-editorial-review', args),
   getConfirmedCaptions: (projectPath) =>
     ipcRenderer.invoke('catalog:get-confirmed-captions', projectPath),
+  previewCaptionFcpxmlExport: (projectPath) =>
+    ipcRenderer.invoke('catalog:preview-caption-fcpxml-export', projectPath),
+  exportCaptionFcpxml: (projectPath) =>
+    ipcRenderer.invoke('catalog:export-caption-fcpxml', projectPath),
   showItemInFolder: (args) => ipcRenderer.invoke('shell:show-item', args),
   openFolder: (args) => ipcRenderer.invoke('shell:open-folder', args),
 });

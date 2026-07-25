@@ -36,6 +36,7 @@ const state = {
   explanationReviewSelectedAssetId: null,
   explanationReviewDrafts: {},
   explanationReviewDirty: false,
+  captionExportPreview: null,
   explanationAssetPlayback: null,
   pendingCatalog: null,
   selectedPendingEpisode: null,
@@ -1172,6 +1173,7 @@ async function loadCatalogProject(projectPath) {
   state.explanationReviewDirty = false;
   state.explanationReviewDrafts = {};
   state.explanationReviewSelectedAssetId = null;
+  state.captionExportPreview = null;
   state.selectedCatalogProjectPath = projectPath;
   renderProjectCatalog();
   elements.resultDetailEmpty.classList.add('hidden');

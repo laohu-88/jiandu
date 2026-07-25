@@ -36,6 +36,10 @@ const {
   saveEditorialReview,
 } = require('./services/editorial-review-service');
 const {
+  exportConfirmedCaptionsToFcpxml,
+  previewConfirmedCaptionFcpxmlExport,
+} = require('./services/caption-fcpxml-export-service');
+const {
   assertCatalogProject,
   scanProjectCatalog,
 } = require('./services/project-catalog-service');
@@ -824,6 +828,29 @@ function registerIpc() {
     authorizeProject(validated);
     const model = await buildEditorialReviewModel(validated);
     return getConfirmedCaptions(model);
+  });
+
+  ipcMain.handle('catalog:preview-caption-fcpxml-export', async (_event, projectPath) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    authorizeProject(validated);
+    return previewConfirmedCaptionFcpxmlExport(validated);
+  });
+
+  ipcMain.handle('catalog:export-caption-fcpxml', async (_event, projectPath) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    authorizeProject(validated);
+    const preview = await previewConfirmedCaptionFcpxmlExport(validated);
+    if (!preview.ok || !preview.canWrite) {
+      return {
+        ok: false,
+        written: false,
+        noOp: preview.noOp === true,
+        message: preview.blockingErrors?.[0]
+          || (preview.noOp ? '无已确认字幕可导出，未修改 FCPXML。' : '预览存在阻塞错误，已拒绝写入。'),
+        preview,
+      };
+    }
+    return exportConfirmedCaptionsToFcpxml(validated, { preview });
   });
 
   ipcMain.handle('shell:show-item', async (_event, args) => {

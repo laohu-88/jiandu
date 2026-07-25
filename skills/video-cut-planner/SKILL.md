@@ -82,7 +82,9 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
    review of explanations and light captions happens in the App Results Center
    (“解释与轻字幕”); Stage 5D stores decisions in
    `00-项目总控/editorial-review.json` and must not silently overwrite locked
-   human approvals on re-analysis.
+   human approvals on re-analysis. Stage 5E exports only `approved` /
+   `edited_approved` captions into FCP native Titles via an explicit Result
+   Center action (“生成或更新 FCP 轻字幕”); never auto-write on save or open.
 
 6. If the folder name clearly conflicts with the media, set `folderNameConflict` to `true` and include this exact sentence in the user-facing reasoning: `文件夹名称与素材实际内容存在差异，本次主题以素材内容为准。`
 7. Design a visual story from the material itself. Treat detected first-level directories as ordered chapters and detected second-level directories as ordered subchapters. Root-brief order is a hard constraint; otherwise use numeric prefixes, natural directory order, and only then Codex inference. Do not interleave chapters unless the brief explicitly requests a non-linear structure. Context may improve relevance, chapter ownership, narrative role, and within-chapter order, but may not reorder top-level chapters. Favor meaningful result/change, necessary context, key operations, comparison, success evidence, final result, and a brief ending only when supported by the material. Do not force a fixed section count or put every media variant from one Story Unit on the timeline.

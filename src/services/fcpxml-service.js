@@ -12,6 +12,7 @@ const BASIC_TITLE_EFFECT = Object.freeze({
   name: '基本字幕',
   uid: '.../Titles.localized/Bumper:Opener.localized/Basic Title.localized/Basic Title.moti',
 });
+const MANAGED_CAPTION_NOTE_PREFIX = 'vcp-managed-caption:';
 
 function escapeXml(value) {
   return String(value ?? '')
@@ -101,6 +102,9 @@ function collectFcpTitles(analysis) {
     ));
     return {
       ...item,
+      kind: 'marker_subtitle',
+      titleKey: null,
+      note: null,
       startSec,
       durationSec,
       text: item.subtitle.text.trim(),
@@ -108,7 +112,67 @@ function collectFcpTitles(analysis) {
   }).filter((item) => item.durationSec > 0);
 }
 
-function buildFcpxml({ projectName, analysis, assetMappings }) {
+function normalizeManagedCaptionTitles(managedCaptionTitles = []) {
+  return (Array.isArray(managedCaptionTitles) ? managedCaptionTitles : [])
+    .map((item, index) => {
+      const text = typeof item?.text === 'string' ? item.text.trim() : '';
+      const startSec = Number(item?.startSec);
+      const durationSec = Number(item?.durationSec);
+      const titleKey = typeof item?.titleKey === 'string' ? item.titleKey.trim() : '';
+      if (!text || !titleKey || !Number.isFinite(startSec) || !Number.isFinite(durationSec) || durationSec <= 0) {
+        return null;
+      }
+      return {
+        kind: 'managed_light_caption',
+        index,
+        titleKey,
+        captionId: item.captionId || null,
+        assetId: item.assetId || null,
+        matchedShotId: item.matchedShotId || null,
+        startSec,
+        durationSec,
+        text,
+        note: item.note || `${MANAGED_CAPTION_NOTE_PREFIX}${titleKey}`,
+      };
+    })
+    .filter(Boolean);
+}
+
+function extractManagedCaptionTitles(xml) {
+  const source = String(xml || '');
+  const titles = [];
+  const pattern = /<title\s+([^>]+)>[\s\S]*?<\/title>/g;
+  let match = pattern.exec(source);
+  while (match) {
+    const attrs = match[1];
+    const note = attrs.match(/\bnote="([^"]*)"/)?.[1] || '';
+    if (!note.startsWith(MANAGED_CAPTION_NOTE_PREFIX)) {
+      match = pattern.exec(source);
+      continue;
+    }
+    const titleKey = note.slice(MANAGED_CAPTION_NOTE_PREFIX.length);
+    const textMatch = match[0].match(/<text-style[^>]*>([\s\S]*?)<\/text-style>/);
+    const rawText = textMatch ? textMatch[1] : '';
+    const text = rawText
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&amp;/g, '&');
+    titles.push({
+      titleKey,
+      note,
+      text,
+      offset: attrs.match(/\boffset="([^"]+)"/)?.[1] || null,
+      duration: attrs.match(/\bduration="([^"]+)"/)?.[1] || null,
+      name: attrs.match(/\bname="([^"]*)"/)?.[1] || null,
+    });
+    match = pattern.exec(source);
+  }
+  return titles;
+}
+
+function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitles = [] }) {
   const manifest = {
     items: assetMappings.map((mapping) => ({
       assetId: mapping.assetId,
@@ -125,7 +189,15 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
   const analysisById = new Map(
     (Array.isArray(analysis.assets) ? analysis.assets : []).map((asset) => [asset.assetId, asset]),
   );
-  const fcpTitles = collectFcpTitles(analysis);
+  const markerTitles = collectFcpTitles(analysis);
+  const managedTitles = normalizeManagedCaptionTitles(managedCaptionTitles);
+  const fcpTitles = [
+    ...markerTitles,
+    ...managedTitles.map((title, index) => ({
+      ...title,
+      index: markerTitles.length + index,
+    })),
+  ];
   const formatResources = [];
   const formatByKey = new Map();
   let nextResourceId = 1;
@@ -242,9 +314,13 @@ function buildFcpxml({ projectName, analysis, assetMappings }) {
     const stillTimeOffset = mapping.type === 'image' ? 3600 : 0;
     for (const title of titleByShotId.get(shot.id) || []) {
       const titleOffset = stillTimeOffset + title.sourceTimeSec;
+      const noteAttr = title.note
+        ? ` note="${escapeXml(title.note)}"`
+        : '';
       nested.push(
         `          <title ref="${titleEffectId}" lane="1" offset="${fcpTime(titleOffset)}"`
         + ` name="${escapeXml(`${title.text} - ${BASIC_TITLE_EFFECT.name}`)}"`
+        + `${noteAttr}`
         + ` start="3600s" duration="${fcpTime(title.durationSec)}">\n`
         + '            <param name="展平" key="9999/999166631/999166633/2/351" value="1"/>\n'
         + '            <param name="对齐" key="9999/999166631/999166633/2/354/999169573/401" value="1 (居中)"/>\n'
@@ -394,13 +470,17 @@ function validateFcpxmlStructure(xml, expected = {}) {
   };
 }
 
-async function writeFcpxml(outputPath, payload) {
+async function writeFcpxml(outputPath, payload, options = {}) {
+  const managedCaptionTitles = normalizeManagedCaptionTitles(payload.managedCaptionTitles);
   const xml = buildFcpxml(payload);
+  const expectedTitleCount = Number.isInteger(options.expectedTitleCount)
+    ? options.expectedTitleCount
+    : collectFcpTitles(payload.analysis).length + managedCaptionTitles.length;
   const report = validateFcpxmlStructure(xml, {
     shotCount: payload.analysis.timeline.shots.length,
     assetCount: payload.assetMappings.length,
     markerCount: payload.analysis.timeline.markers.length,
-    titleCount: collectFcpTitles(payload.analysis).length,
+    titleCount: expectedTitleCount,
     width: payload.analysis.timeline.width,
     height: payload.analysis.timeline.height,
     fps: payload.analysis.timeline.fps,
@@ -416,8 +496,40 @@ async function writeFcpxml(outputPath, payload) {
     });
   }
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await fs.writeFile(outputPath, xml, 'utf8');
-  return { outputPath, report };
+  const useAtomic = options.atomic === true;
+  if (!useAtomic) {
+    await fs.writeFile(outputPath, xml, 'utf8');
+    return { outputPath, report, managedTitleCount: managedCaptionTitles.length };
+  }
+
+  const directory = path.dirname(outputPath);
+  const tempPath = path.join(
+    directory,
+    `.${path.basename(outputPath)}.${process.pid}.${crypto.randomUUID()}.tmp`,
+  );
+  const existing = await fs.readFile(outputPath, 'utf8').catch(() => null);
+  try {
+    await fs.writeFile(tempPath, xml, { encoding: 'utf8', flag: 'wx' });
+    if (options.backupExisting === true && existing != null) {
+      const backupPath = path.join(directory, `.${path.basename(outputPath)}.prev`);
+      await fs.writeFile(backupPath, existing, 'utf8');
+    }
+    await fs.rename(tempPath, outputPath);
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+    if (existing != null) {
+      await fs.writeFile(outputPath, existing, 'utf8').catch(() => {});
+    }
+    throw error;
+  } finally {
+    await fs.rm(tempPath, { force: true }).catch(() => {});
+  }
+  return {
+    outputPath,
+    report,
+    managedTitleCount: managedCaptionTitles.length,
+    restoredOnFailure: false,
+  };
 }
 
 module.exports = {
@@ -425,12 +537,15 @@ module.exports = {
   FCPXML_DEFAULT_VERSION,
   FCPXML_TITLE_VERSION,
   FCPXML_TIMESCALE,
+  MANAGED_CAPTION_NOTE_PREFIX,
   assetUid,
   buildFcpxml,
   collectFcpTitles,
   escapeXml,
+  extractManagedCaptionTitles,
   fcpTime,
   frameDuration,
+  normalizeManagedCaptionTitles,
   validateFcpxmlStructure,
   writeFcpxml,
 };

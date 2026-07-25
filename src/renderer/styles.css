@@ -2213,6 +2213,27 @@ tbody tr:last-child td {
   align-items: center;
 }
 
+.explanation-export-panel {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #d7dde7;
+}
+
+.explanation-export-panel h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.explanation-export-panel > p.muted {
+  margin: 0 0 10px;
+  color: #5b6575;
+  font-size: 13px;
+}
+
+.explanation-export-stats {
+  margin-bottom: 10px;
+}
+
 @media (max-width: 980px) {
   .pending-media-grid,
   .handoff-columns {
