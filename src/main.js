@@ -8,6 +8,7 @@ const {
   APP_NAME,
   CODEX_WORKSPACE_ROOT,
   DEFAULT_PROJECT_ROOT,
+  EDITORIAL_REVIEW_FILE,
   FCP_EXPORT_DIR,
   RAW_SRT_FILE,
 } = require('./constants');
@@ -131,6 +132,16 @@ const {
   taskRoot,
   updateHandoffTask,
 } = require('./services/handoff-task-service');
+const {
+  assertUserDataEditJob,
+  buildEditPreflight,
+  createEditJob,
+  listEditJobs,
+  openEditJobInFinalCut,
+  recognizeMaterialProject,
+  runEditJob,
+  updateEditJob,
+} = require('./services/in-app-edit-workflow-service');
 
 let mainWindow;
 let aiAnalysisRunning = false;
@@ -492,6 +503,72 @@ function registerIpc() {
       properties: ['openDirectory', 'createDirectory'],
     });
     return result.canceled ? null : result.filePaths[0];
+  });
+
+  ipcMain.handle('dialog:select-material', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择素材项目目录',
+      defaultPath: DEFAULT_PENDING_ROOT,
+      properties: ['openDirectory'],
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
+
+  ipcMain.handle('edit:recognize', (_event, sourceDirectory) =>
+    recognizeMaterialProject(sourceDirectory, { projectRoot: DEFAULT_PROJECT_ROOT }));
+
+  ipcMain.handle('edit:preflight', (_event, sourceDirectory) =>
+    buildEditPreflight(sourceDirectory, { projectRoot: DEFAULT_PROJECT_ROOT }));
+
+  ipcMain.handle('edit:create-job', (_event, args) =>
+    createEditJob(app.getPath('userData'), {
+      ...args,
+      projectRoot: DEFAULT_PROJECT_ROOT,
+    }));
+
+  ipcMain.handle('edit:run-job', async (_event, jobPath) => {
+    const started = await assertUserDataEditJob(app.getPath('userData'), jobPath);
+    const finished = await runEditJob(app.getPath('userData'), started.jobFilePath);
+    if (finished.resultProjectPath) authorizeProject(finished.resultProjectPath);
+    return finished;
+  });
+
+  ipcMain.handle('edit:read-job', (_event, jobPath) =>
+    assertUserDataEditJob(app.getPath('userData'), jobPath));
+
+  ipcMain.handle('edit:list-jobs', () => listEditJobs(app.getPath('userData')));
+
+  ipcMain.handle('edit:update-job', (_event, args) =>
+    updateEditJob(args.jobPath, args.patch || {}));
+
+  ipcMain.handle('edit:open-final-cut', async (_event, jobPathOrProjectPath) => {
+    let projectPath = jobPathOrProjectPath;
+    if (String(jobPathOrProjectPath || '').endsWith('.json')) {
+      const job = await assertUserDataEditJob(app.getPath('userData'), jobPathOrProjectPath);
+      projectPath = job.resultProjectPath;
+      if (!projectPath) throw new Error('还没有可交接的正式项目。');
+    }
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    authorizeProject(validated);
+    return openEditJobInFinalCut(validated);
+  });
+
+  ipcMain.handle('edit:open-project', async (_event, projectPath) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    authorizeProject(validated);
+    const error = await shell.openPath(validated);
+    if (error) throw new Error(error);
+    return { opened: true, projectPath: validated };
+  });
+
+  ipcMain.handle('edit:show-editorial-review', async (_event, projectPath) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
+    authorizeProject(validated);
+    const reviewPath = path.join(validated, EDITORIAL_REVIEW_FILE);
+    const stat = await fs.stat(reviewPath).catch(() => null);
+    if (!stat?.isFile()) throw new Error('editorial-review.json 不存在。');
+    shell.showItemInFolder(reviewPath);
+    return { opened: true, path: reviewPath };
   });
 
   ipcMain.handle('project:create', (_event, args) =>

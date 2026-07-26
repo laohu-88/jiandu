@@ -21,6 +21,22 @@ contextBridge.exposeInMainWorld('plannerApi', {
     return () => ipcRenderer.removeListener('handoff:terminal', listener);
   },
   selectRoot: () => ipcRenderer.invoke('dialog:select-root'),
+  selectMaterialDirectory: () => ipcRenderer.invoke('dialog:select-material'),
+  recognizeEditMaterial: (sourceDirectory) =>
+    ipcRenderer.invoke('edit:recognize', sourceDirectory),
+  buildEditPreflight: (sourceDirectory) =>
+    ipcRenderer.invoke('edit:preflight', sourceDirectory),
+  createEditJob: (args) => ipcRenderer.invoke('edit:create-job', args),
+  runEditJob: (jobPath) => ipcRenderer.invoke('edit:run-job', jobPath),
+  readEditJob: (jobPath) => ipcRenderer.invoke('edit:read-job', jobPath),
+  listEditJobs: () => ipcRenderer.invoke('edit:list-jobs'),
+  updateEditJob: (args) => ipcRenderer.invoke('edit:update-job', args),
+  openEditJobInFinalCut: (jobPathOrProjectPath) =>
+    ipcRenderer.invoke('edit:open-final-cut', jobPathOrProjectPath),
+  openEditProjectFolder: (projectPath) =>
+    ipcRenderer.invoke('edit:open-project', projectPath),
+  showEditEditorialReview: (projectPath) =>
+    ipcRenderer.invoke('edit:show-editorial-review', projectPath),
   createProject: (args) => ipcRenderer.invoke('project:create', args),
   chooseAndOpenProject: () => ipcRenderer.invoke('project:choose-open'),
   openProjectPath: (projectPath) => ipcRenderer.invoke('project:open-path', projectPath),

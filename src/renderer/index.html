@@ -43,7 +43,8 @@
               <input id="autoOpenFcpSetting" type="checkbox">
               <span>验证全部通过后，自动打开 Final Cut Pro</span>
             </label>
-            <button id="refreshPendingButton" class="button primary" type="button">刷新素材</button>
+            <button id="newEditJobButton" class="button primary" type="button">新建剪辑任务</button>
+            <button id="refreshPendingButton" class="button secondary" type="button">刷新素材</button>
           </div>
         </div>
         <div id="pendingCatalogError" class="notice warning hidden"></div>
@@ -51,6 +52,37 @@
         <div id="pendingMediaEmpty" class="card empty hidden">
           <strong>尚未发现一期素材</strong>
           <p>只读取待处理根目录下的直属子目录，不会把内部目录误识别为独立一期。</p>
+        </div>
+      </section>
+
+      <section id="editPreflightView" class="handoff-view hidden">
+        <div class="card handoff-panel">
+          <p class="eyebrow">STAGE 6A · 生成前检查</p>
+          <h2 id="editPreflightTitle">新建剪辑任务</h2>
+          <div id="editPreflightNotice" class="notice neutral hidden"></div>
+          <div id="editPreflightSummary"></div>
+          <div id="editPreflightAffected" class="hidden"></div>
+          <div class="result-actions handoff-actions">
+            <button id="cancelEditPreflightButton" class="button ghost" type="button">取消</button>
+            <button id="chooseOtherMaterialButton" class="button secondary" type="button">重选素材目录</button>
+            <button id="editCodexHandoffButton" class="button secondary" type="button">交给 Codex 分析生成</button>
+            <button id="editLocalBuildButton" class="button secondary hidden" type="button">再次生成到新项目</button>
+            <button id="editReuseExistingButton" class="button primary" type="button">使用已有结果并交接</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="editJobView" class="handoff-view hidden">
+        <div class="card handoff-panel">
+          <p class="eyebrow">STAGE 6A · 剪辑任务</p>
+          <h2 id="editJobName">—</h2>
+          <div id="editJobStatus" class="handoff-status-card"></div>
+          <div id="editJobWarnings" class="notice warning hidden"></div>
+          <div id="editJobError" class="notice warning hidden"></div>
+          <div class="result-actions handoff-actions">
+            <button id="editJobShowSourceButton" class="button secondary" type="button">在 Finder 中显示素材</button>
+            <button id="editJobCancelButton" class="button ghost" type="button">返回</button>
+          </div>
         </div>
       </section>
 
@@ -111,7 +143,8 @@
             <button id="completionPlayButton" class="button secondary" type="button">播放粗剪</button>
             <button id="completionDetailsButton" class="button secondary" type="button">查看详细结果</button>
             <button id="completionReturnCodexButton" class="button secondary" type="button">返回 Codex</button>
-            <button id="completionShowProjectButton" class="button ghost" type="button">Finder 中显示项目</button>
+            <button id="completionShowProjectButton" class="button ghost" type="button">打开项目目录</button>
+            <button id="completionShowReviewButton" class="button ghost" type="button">打开审核文件</button>
           </div>
         </div>
       </section>

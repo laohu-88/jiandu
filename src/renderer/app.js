@@ -43,6 +43,9 @@ const state = {
   activeHandoffTask: null,
   handoffPollTimer: null,
   completionResult: null,
+  editPreflight: null,
+  activeEditJob: null,
+  completionSource: null,
 };
 
 const TEXT_PREVIEW_MAX_BYTES = 64 * 1024;
@@ -81,6 +84,8 @@ const elements = {
   version: document.querySelector('#version'),
   viewEyebrow: document.querySelector('#viewEyebrow'),
   pendingMediaView: document.querySelector('#pendingMediaView'),
+  editPreflightView: document.querySelector('#editPreflightView'),
+  editJobView: document.querySelector('#editJobView'),
   handoffConfirmView: document.querySelector('#handoffConfirmView'),
   handoffTaskView: document.querySelector('#handoffTaskView'),
   handoffCompletionView: document.querySelector('#handoffCompletionView'),
@@ -89,12 +94,28 @@ const elements = {
   showPendingMediaButton: document.querySelector('#showPendingMediaButton'),
   showResultsCenterButton: document.querySelector('#showResultsCenterButton'),
   showWorkspaceButton: document.querySelector('#showWorkspaceButton'),
+  newEditJobButton: document.querySelector('#newEditJobButton'),
   refreshPendingButton: document.querySelector('#refreshPendingButton'),
   pendingCatalogSummary: document.querySelector('#pendingCatalogSummary'),
   pendingCatalogError: document.querySelector('#pendingCatalogError'),
   pendingMediaList: document.querySelector('#pendingMediaList'),
   pendingMediaEmpty: document.querySelector('#pendingMediaEmpty'),
   autoOpenFcpSetting: document.querySelector('#autoOpenFcpSetting'),
+  editPreflightTitle: document.querySelector('#editPreflightTitle'),
+  editPreflightNotice: document.querySelector('#editPreflightNotice'),
+  editPreflightSummary: document.querySelector('#editPreflightSummary'),
+  editPreflightAffected: document.querySelector('#editPreflightAffected'),
+  cancelEditPreflightButton: document.querySelector('#cancelEditPreflightButton'),
+  chooseOtherMaterialButton: document.querySelector('#chooseOtherMaterialButton'),
+  editCodexHandoffButton: document.querySelector('#editCodexHandoffButton'),
+  editLocalBuildButton: document.querySelector('#editLocalBuildButton'),
+  editReuseExistingButton: document.querySelector('#editReuseExistingButton'),
+  editJobName: document.querySelector('#editJobName'),
+  editJobStatus: document.querySelector('#editJobStatus'),
+  editJobWarnings: document.querySelector('#editJobWarnings'),
+  editJobError: document.querySelector('#editJobError'),
+  editJobShowSourceButton: document.querySelector('#editJobShowSourceButton'),
+  editJobCancelButton: document.querySelector('#editJobCancelButton'),
   handoffSourceSummary: document.querySelector('#handoffSourceSummary'),
   handoffNarrativePreview: document.querySelector('#handoffNarrativePreview'),
   handoffWorkList: document.querySelector('#handoffWorkList'),
@@ -119,6 +140,7 @@ const elements = {
   completionDetailsButton: document.querySelector('#completionDetailsButton'),
   completionReturnCodexButton: document.querySelector('#completionReturnCodexButton'),
   completionShowProjectButton: document.querySelector('#completionShowProjectButton'),
+  completionShowReviewButton: document.querySelector('#completionShowReviewButton'),
   refreshCatalogButton: document.querySelector('#refreshCatalogButton'),
   catalogSummary: document.querySelector('#catalogSummary'),
   catalogError: document.querySelector('#catalogError'),
@@ -407,26 +429,34 @@ function createTextElement(tag, text, className = '') {
 
 function switchMainView(view) {
   const showPending = view === 'pending';
+  const showEditPreflight = view === 'edit-preflight';
+  const showEditJob = view === 'edit-job';
   const showConfirm = view === 'handoff-confirm';
   const showTask = view === 'handoff-task';
   const showCompletion = view === 'handoff-completion';
   const showResults = view === 'results';
   const showWorkspace = view === 'workspace';
   elements.pendingMediaView.classList.toggle('hidden', !showPending);
+  elements.editPreflightView.classList.toggle('hidden', !showEditPreflight);
+  elements.editJobView.classList.toggle('hidden', !showEditJob);
   elements.handoffConfirmView.classList.toggle('hidden', !showConfirm);
   elements.handoffTaskView.classList.toggle('hidden', !showTask);
   elements.handoffCompletionView.classList.toggle('hidden', !showCompletion);
   elements.resultsCenterView.classList.toggle('hidden', !showResults);
   elements.workspaceView.classList.toggle('hidden', !showWorkspace);
-  elements.showPendingMediaButton.classList.toggle('active', showPending || showConfirm || showTask || showCompletion);
+  const pendingActive = showPending || showEditPreflight || showEditJob
+    || showConfirm || showTask || showCompletion;
+  elements.showPendingMediaButton.classList.toggle('active', pendingActive);
   elements.showResultsCenterButton.classList.toggle('active', showResults);
   elements.showWorkspaceButton.classList.toggle('active', showWorkspace);
   elements.viewEyebrow.textContent = showResults ? 'CODEX · 项目结果中心'
     : showWorkspace ? 'STAGE 1 · 素材筛选台'
-      : showCompletion ? 'STAGE 4D · 完成验收'
-        : showTask ? 'STAGE 4D · 任务状态'
-          : showConfirm ? 'STAGE 4D · CODEX 交接'
-            : 'STAGE 4D · 待处理素材';
+      : showCompletion ? 'STAGE 6A · 结果交接'
+        : showEditJob ? 'STAGE 6A · 任务执行'
+          : showEditPreflight ? 'STAGE 6A · 生成前检查'
+            : showTask ? 'STAGE 4D · 任务状态'
+              : showConfirm ? 'STAGE 4D · CODEX 交接'
+                : 'STAGE 4D · 待处理素材';
 }
 
 const PENDING_STATUS_LABELS = {
@@ -487,12 +517,15 @@ function renderPendingMedia() {
     }
     const actions = document.createElement('div');
     actions.className = 'result-actions';
-    const handoff = createTextElement('button', '交给 Codex 处理', 'button primary');
+    const editJob = createTextElement('button', '新建剪辑任务', 'button primary');
+    editJob.disabled = episode.empty || episode.unreadable;
+    editJob.addEventListener('click', () => openEditPreflight(episode.sourceDirectory));
+    const handoff = createTextElement('button', '交给 Codex 处理', 'button secondary');
     handoff.disabled = episode.empty || episode.unreadable;
     handoff.addEventListener('click', () => openHandoffConfirm(episode));
-    const finder = createTextElement('button', '在 Finder 中显示', 'button secondary');
+    const finder = createTextElement('button', '在 Finder 中显示', 'button ghost');
     finder.addEventListener('click', () => window.plannerApi.showPendingMediaInFinder(episode.sourceDirectory));
-    actions.append(handoff, finder);
+    actions.append(editJob, handoff, finder);
     const resultPath = episode.latestTask?.resultProjectPath || episode.existingProject?.projectPath;
     if (resultPath) {
       const latest = createTextElement('button', '查看最新结果', 'button ghost');
@@ -624,40 +657,284 @@ function showHandoffTask(task) {
 
 async function showHandoffCompletion(task) {
   state.activeHandoffTask = task;
+  state.completionSource = 'handoff';
   clearInterval(state.handoffPollTimer);
   let result = null;
   if (task.resultProjectPath) result = await window.plannerApi.openHandoffResult(task.taskFilePath).catch(() => null);
   state.completionResult = result;
   const failed = task.status === 'failed';
   const warning = task.status === 'completed_with_warnings';
+  renderCompletionPanel({
+    failed,
+    warning,
+    stageMessage: task.stageMessage,
+    errors: task.errors,
+    warnings: task.warnings,
+    verification: task.verification || {},
+    result,
+    showReturnCodex: true,
+  });
+}
+
+function renderCompletionPanel({
+  failed,
+  warning,
+  stageMessage,
+  errors = [],
+  warnings = [],
+  verification = {},
+  result = null,
+  showReturnCodex = false,
+  summary = null,
+}) {
   elements.completionEyebrow.textContent = failed ? '处理失败' : warning ? '完成验收 · 有警告' : '完成验收 · 验证通过';
   elements.completionTitle.textContent = failed ? '本期处理未完成' : '本期粗剪已完成';
   elements.completionNotice.className = `notice ${failed || warning ? 'warning' : 'neutral'}`;
   elements.completionNotice.textContent = failed
-    ? `${task.stageMessage}；${(task.errors || []).map((item) => item.message || item).join('；')}`
-    : warning ? `已完成但有警告：${(task.warnings || []).join('；')}` : '验证：通过';
-  const verification = task.verification || {};
+    ? `${stageMessage || '任务失败'}；${(errors || []).map((item) => item.message || item).join('；')}`
+    : warning ? `已完成但有警告：${(warnings || []).join('；')}` : '验证：通过';
+  const metricsSummary = summary || (result && {
+    shotCount: result?.timeline?.shotCount,
+    videoCount: (result?.timeline?.shots || []).filter((shot) => /\.(mp4|mov|m4v|mkv|webm)$/i.test(shot.filename || '')).length,
+    markerCount: result?.timeline?.markers?.length,
+    titleCount: result?.formats?.fcpxmlTitleCount,
+    subtitleCount: result?.explanationReview?.summary
+      ? Number(result.explanationReview.summary.approved || 0)
+        + Number(result.explanationReview.summary.editedApproved || 0)
+      : null,
+    totalDurationSec: result?.timeline?.totalDurationSec,
+    timeline: result?.formats?.timeline,
+    artifacts: {
+      projectPath: result?.project?.path,
+      fcpxmlPath: result?.artifacts?.fcpxml?.path,
+      previewPath: result?.artifacts?.preview?.path,
+      editorialReviewPath: result?.project?.path
+        ? `${result.project.path}/00-项目总控/editorial-review.json`
+        : null,
+    },
+  });
   elements.completionMetrics.replaceChildren(createDefinitionGrid([
     ['建议标题', result?.summary?.recommendedTitle || '—'],
-    ['正式项目名称', result?.project?.name || task.resultProjectId || '—'],
-    ['镜头数', String(result?.timeline?.shotCount ?? verification.shotCount ?? '—')],
-    ['总时长', formatResultDuration(result?.timeline?.totalDurationSec ?? verification.durationSec)],
-    ['Marker 数', String(result?.timeline?.markers?.length ?? verification.markerCount ?? '—')],
-    ['FCP Title 数', String(result?.formats?.fcpxmlTitleCount ?? verification.titleCount ?? '—')],
-    ['HyperFrames', result?.hyperframes?.enabled ? '启用' : '未启用'],
-    ['HyperFrames 数量', String(result?.hyperframes?.count ?? verification.hyperframesCount ?? 0)],
-    ['粗剪', result?.artifacts?.preview?.exists ? '已生成' : '未生成'],
-    ['FCPXML', result?.artifacts?.fcpxml?.exists ? '已生成' : '未生成'],
-    ['正式项目规格', formatVideoSpec(result?.formats?.timeline || verification.timelineFormat)],
+    ['正式项目名称', result?.project?.name || metricsSummary?.projectName || '—'],
+    ['镜头数', String(metricsSummary?.shotCount ?? verification.shotCount ?? '—')],
+    ['视频镜头', String(metricsSummary?.videoCount ?? '—')],
+    ['字幕数（人工确认）', String(metricsSummary?.subtitleCount ?? '—')],
+    ['Marker 数', String(metricsSummary?.markerCount ?? verification.markerCount ?? '—')],
+    ['FCP Title 数', String(metricsSummary?.titleCount ?? verification.titleCount ?? '—')],
+    ['总时长', formatResultDuration(metricsSummary?.totalDurationSec ?? result?.timeline?.totalDurationSec ?? verification.durationSec)],
+    ['时间线规格', formatVideoSpec(metricsSummary?.timeline || result?.formats?.timeline || verification.timelineFormat)],
     ['粗剪规格', formatVideoSpec(result?.formats?.preview || verification.previewFormat)],
+    ['项目目录', metricsSummary?.artifacts?.projectPath || result?.project?.path || '—'],
+    ['FCPXML', metricsSummary?.artifacts?.fcpxmlPath || result?.artifacts?.fcpxml?.path || '—'],
+    ['审核文件', metricsSummary?.artifacts?.editorialReviewPath || '—'],
+    ['HyperFrames', result?.hyperframes?.enabled ? '启用' : '未启用'],
   ], 'completion-grid'));
   elements.completionPreview.src = result?.artifacts?.preview?.fileUrl || '';
   elements.completionPreview.classList.toggle('hidden', !result?.artifacts?.preview?.fileUrl);
   elements.completionOpenFcpButton.disabled = failed || !result?.artifacts?.fcpxml?.exists;
   elements.completionPlayButton.disabled = !result?.artifacts?.preview?.fileUrl;
-  elements.completionDetailsButton.disabled = !result;
-  elements.completionShowProjectButton.disabled = !result;
+  elements.completionDetailsButton.disabled = !result && !metricsSummary?.artifacts?.projectPath;
+  elements.completionShowProjectButton.disabled = !(result?.project?.path || metricsSummary?.artifacts?.projectPath);
+  elements.completionShowReviewButton.disabled = !(result?.project?.path || metricsSummary?.artifacts?.projectPath);
+  elements.completionReturnCodexButton.classList.toggle('hidden', !showReturnCodex);
   switchMainView('handoff-completion');
+}
+
+const EDIT_JOB_STAGE_LABELS = {
+  ready: '已准备',
+  preflight: '生成前检查',
+  preparing: '正在准备素材',
+  building_project: '正在创建正式项目',
+  rendering_preview: '正在生成粗剪',
+  generating_fcpxml: '正在生成 FCPXML',
+  verifying: '正在完整验证',
+  reusing_existing: '正在读取已有正式结果',
+  completed: '已完成',
+  completed_with_warnings: '已完成但有警告',
+  failed: '已失败',
+  blocked: '已阻塞',
+  cancelled: '已取消',
+};
+
+async function openEditPreflight(sourceDirectory) {
+  const preflight = await window.plannerApi.buildEditPreflight(sourceDirectory);
+  state.editPreflight = preflight;
+  renderEditPreflight(preflight);
+  switchMainView('edit-preflight');
+}
+
+function renderEditPreflight(preflight) {
+  const material = preflight.material;
+  elements.editPreflightTitle.textContent = `${preflight.generationModeLabel} · ${material.name}`;
+  const canReuse = preflight.actions.reuse_existing;
+  const canLocal = preflight.actions.local_build && preflight.generationMode !== 'first';
+  const canCodex = preflight.actions.codex_handoff;
+  elements.editReuseExistingButton.classList.toggle('hidden', !canReuse);
+  elements.editLocalBuildButton.classList.toggle('hidden', !canLocal);
+  elements.editCodexHandoffButton.disabled = !canCodex || (!preflight.canContinue && !canReuse);
+  elements.editReuseExistingButton.disabled = !canReuse;
+  elements.editLocalBuildButton.disabled = !canLocal;
+  const noticeParts = [];
+  if (!preflight.canContinue) noticeParts.push(...preflight.blockers.map((item) => item.message));
+  if (preflight.generationMode === 'regenerate') {
+    noticeParts.push('检测到已有生成结果。首次/再次生成已区分；不会覆盖 editorial-review.json，也不会修改 HotIngest 来源素材。');
+  }
+  if (preflight.existingProject?.success) {
+    noticeParts.push('已有成功项目将保持不动；再次生成会写入新项目目录。');
+  }
+  elements.editPreflightNotice.textContent = noticeParts.join(' ');
+  elements.editPreflightNotice.className = `notice ${preflight.canContinue ? 'neutral' : 'warning'}`;
+  elements.editPreflightNotice.classList.toggle('hidden', noticeParts.length === 0);
+
+  const editorial = preflight.editorialReview;
+  const timeline = preflight.timelineSpec;
+  elements.editPreflightSummary.replaceChildren(createDefinitionGrid([
+    ['素材类型', material.kindLabel],
+    ['图片', String(preflight.mediaCounts.image)],
+    ['视频', String(preflight.mediaCounts.video)],
+    ['音频', String(preflight.mediaCounts.audio)],
+    ['文本/支持', String(preflight.mediaCounts.support)],
+    ['不支持', String(preflight.unsupportedCount)],
+    ['项目上下文', material.hotIngest?.detected
+      ? `HotIngest（context ${material.hotIngest.counts.contextHtml}，metadata ${material.hotIngest.counts.metadataJson}）`
+      : '普通素材项目'],
+    ['章节', String((preflight.context.chapters || []).length)],
+    ['本期说明', (preflight.context.briefFilesUsed || []).join('、') || '无'],
+    ['时间线规格', timeline.width && timeline.height
+      ? `${timeline.width}×${timeline.height} · ${timeline.fps || '—'}fps · ${timeline.orientation || '—'}`
+      : timeline.rationale || '待分析后判定'],
+    ['规格依据', timeline.rationale || '—'],
+    ['生成模式', preflight.generationModeLabel],
+    ['推荐动作', preflight.recommendedAction === 'reuse_existing' ? '使用已有结果'
+      : preflight.recommendedAction === 'local_build' ? 'App 内再次生成'
+        : preflight.recommendedAction === 'codex_handoff' ? '交给 Codex'
+          : '已阻塞'],
+    ['已有正式项目', preflight.existingProject?.projectPath || '无'],
+    ['editorial-review.json', editorial.exists ? '已识别' : '未找到'],
+    ['人工字幕（确认）', String(editorial.humanCaptionCount || editorial.confirmedCaptionCount || 0)],
+    ['是否可继续', preflight.canContinue ? '可以' : '不可继续'],
+    ['保护策略', '不覆盖人工审核；不修改 HotIngest 来源；不破坏已有成功项目'],
+  ]));
+
+  const affected = preflight.affectedFiles || [];
+  elements.editPreflightAffected.classList.toggle('hidden', affected.length === 0);
+  if (affected.length) {
+    const heading = createTextElement('h3', '可能受到影响的文件');
+    const list = document.createElement('ul');
+    list.className = 'compact-list';
+    list.replaceChildren(...affected.map((item) => createTextElement(
+      'li',
+      `${item.label}${item.protected ? '（受保护，不会覆盖）' : ''} — ${item.note}`,
+    )));
+    elements.editPreflightAffected.replaceChildren(heading, list);
+  }
+}
+
+function renderEditJob(job) {
+  state.activeEditJob = job;
+  elements.editJobName.textContent = job.preflight?.material?.name || job.sourceDirectory;
+  elements.editJobStatus.replaceChildren(createDefinitionGrid([
+    ['当前阶段', EDIT_JOB_STAGE_LABELS[job.status] || job.status],
+    ['阶段说明', job.stageMessage || '—'],
+    ['动作', job.action],
+    ['生成模式', job.generationMode === 'first' ? '首次生成' : '再次生成'],
+    ['素材类型', job.materialKind === 'hotingest' ? 'HotIngest 项目' : '普通素材项目'],
+    ['目标项目', job.targetProjectName || '—'],
+    ['结果项目', job.resultProjectPath || '尚未生成'],
+    ['任务 ID', job.jobId],
+  ]));
+  const warnings = [...(job.warnings || [])];
+  elements.editJobWarnings.textContent = warnings.join('；');
+  elements.editJobWarnings.classList.toggle('hidden', warnings.length === 0);
+  const errorText = job.error
+    ? `${job.error.message}${job.error.diagnostic?.detail && job.error.diagnostic.detail !== job.error.message
+      ? `（诊断：${job.error.diagnostic.detail}）` : ''}`
+    : '';
+  elements.editJobError.textContent = errorText;
+  elements.editJobError.classList.toggle('hidden', !errorText);
+}
+
+async function showEditJobCompletion(job) {
+  state.activeEditJob = job;
+  state.completionSource = 'edit-job';
+  state.activeHandoffTask = null;
+  const failed = job.status === 'failed' || job.status === 'blocked';
+  const warning = job.status === 'completed_with_warnings';
+  let result = null;
+  if (job.resultProjectPath && !failed) {
+    result = await window.plannerApi.getCodexProjectResult(job.resultProjectPath).catch(() => null);
+  }
+  // Failed jobs must not be presented as successful projects.
+  if (failed) {
+    state.completionResult = null;
+  } else {
+    state.completionResult = result;
+  }
+  renderCompletionPanel({
+    failed,
+    warning,
+    stageMessage: job.stageMessage,
+    errors: job.error ? [job.error] : [],
+    warnings: job.warnings,
+    verification: job.result?.verification || {},
+    result: failed ? null : result,
+    summary: job.result?.summary || null,
+    showReturnCodex: false,
+  });
+  if (failed && job.resultProjectPath) {
+    elements.completionDetailsButton.disabled = false;
+    elements.completionShowProjectButton.disabled = false;
+    elements.completionShowReviewButton.disabled = false;
+    state.completionResult = {
+      project: { path: job.resultProjectPath, name: pathBasename(job.resultProjectPath) },
+      artifacts: { fcpxml: { exists: false } },
+    };
+  }
+}
+
+function pathBasename(filePath) {
+  const parts = String(filePath || '').split(/[/\\]/);
+  return parts[parts.length - 1] || filePath;
+}
+
+async function startEditJob(action) {
+  const preflight = state.editPreflight;
+  if (!preflight) throw new Error('请先完成生成前检查。');
+  if (action === 'codex_handoff') {
+    await window.plannerApi.createEditJob({
+      sourceDirectory: preflight.material.sourceDirectory,
+      action: 'codex_handoff',
+      preflight,
+    });
+    state.selectedPendingEpisode = {
+      ...preflight.material,
+      sourceDirectory: preflight.material.sourceDirectory,
+      sourceDirectoryRealPath: preflight.material.sourceDirectoryRealPath,
+      name: preflight.material.name,
+      counts: preflight.mediaCounts,
+      warnings: preflight.warnings,
+      chapters: preflight.context.chapters,
+      briefFilesUsed: preflight.context.briefFilesUsed,
+      durationPolicy: preflight.context.durationPolicy,
+      hasUnsupported: preflight.unsupportedCount > 0,
+      empty: preflight.material.empty,
+      unreadable: preflight.material.unreadable,
+    };
+    openHandoffConfirm(state.selectedPendingEpisode);
+    return;
+  }
+  const job = await window.plannerApi.createEditJob({
+    sourceDirectory: preflight.material.sourceDirectory,
+    action,
+    preflight,
+  });
+  renderEditJob(job);
+  switchMainView('edit-job');
+  const finished = await window.plannerApi.runEditJob(job.jobFilePath);
+  renderEditJob(finished);
+  if (['completed', 'completed_with_warnings', 'failed', 'blocked'].includes(finished.status)) {
+    await showEditJobCompletion(finished);
+  }
 }
 
 function formatDateTime(value) {
@@ -2456,6 +2733,31 @@ elements.refreshPendingButton.addEventListener('click', () =>
     await loadPendingCatalog();
     showToast('待处理素材与交接任务已刷新。');
   }, '正在刷新…'));
+elements.newEditJobButton.addEventListener('click', () =>
+  withBusy(elements.newEditJobButton, async () => {
+    const selected = await window.plannerApi.selectMaterialDirectory();
+    if (!selected) return;
+    await openEditPreflight(selected);
+  }, '正在检查…'));
+elements.cancelEditPreflightButton.addEventListener('click', () => switchMainView('pending'));
+elements.chooseOtherMaterialButton.addEventListener('click', () =>
+  withBusy(elements.chooseOtherMaterialButton, async () => {
+    const selected = await window.plannerApi.selectMaterialDirectory();
+    if (!selected) return;
+    await openEditPreflight(selected);
+  }, '正在检查…'));
+elements.editCodexHandoffButton.addEventListener('click', () =>
+  withBusy(elements.editCodexHandoffButton, () => startEditJob('codex_handoff'), '正在准备…'));
+elements.editLocalBuildButton.addEventListener('click', () =>
+  withBusy(elements.editLocalBuildButton, () => startEditJob('local_build'), '正在生成…'));
+elements.editReuseExistingButton.addEventListener('click', () =>
+  withBusy(elements.editReuseExistingButton, () => startEditJob('reuse_existing'), '正在读取…'));
+elements.editJobShowSourceButton.addEventListener('click', () => {
+  if (state.activeEditJob) {
+    window.plannerApi.showPendingMediaInFinder(state.activeEditJob.sourceDirectory);
+  }
+});
+elements.editJobCancelButton.addEventListener('click', () => switchMainView('pending'));
 elements.autoOpenFcpSetting.addEventListener('change', async () => {
   const settings = await window.plannerApi.saveHandoffSettings({
     autoOpenFcp: elements.autoOpenFcpSetting.checked,
@@ -2506,8 +2808,10 @@ elements.cancelHandoffTaskButton.addEventListener('click', () =>
 elements.completionOpenFcpButton.addEventListener('click', () =>
   withBusy(elements.completionOpenFcpButton, async () => {
     const result = state.completionResult;
-    if (!result) throw new Error('没有可打开的正式项目结果。');
-    const opened = await window.plannerApi.openProjectFcpxmlInFinalCut(result.project.path);
+    if (!result?.project?.path) throw new Error('没有可打开的正式项目结果。');
+    const opened = state.completionSource === 'edit-job'
+      ? await window.plannerApi.openEditJobInFinalCut(result.project.path)
+      : await window.plannerApi.openProjectFcpxmlInFinalCut(result.project.path);
     showToast(`已通过 ${opened.strategy === 'bundle-id' ? 'Bundle ID' : '应用路径'} 打开 Final Cut Pro。`);
   }, '正在打开…'));
 elements.completionPlayButton.addEventListener('click', () => {
@@ -2516,7 +2820,7 @@ elements.completionPlayButton.addEventListener('click', () => {
 });
 elements.completionDetailsButton.addEventListener('click', async () => {
   const result = state.completionResult;
-  if (!result) return;
+  if (!result?.project?.path) return;
   await loadProjectCatalog();
   switchMainView('results');
   await loadCatalogProject(result.project.path);
@@ -2524,13 +2828,25 @@ elements.completionDetailsButton.addEventListener('click', async () => {
 elements.completionReturnCodexButton.addEventListener('click', () => {
   if (state.activeHandoffTask) window.plannerApi.activateCodexHandoff(state.activeHandoffTask.taskFilePath);
 });
-elements.completionShowProjectButton.addEventListener('click', () => {
-  const result = state.completionResult;
-  if (result) window.plannerApi.runProjectArtifactAction({
-    projectPath: result.project.path,
-    target: 'projectRoot',
-  });
-});
+elements.completionShowProjectButton.addEventListener('click', () =>
+  withBusy(elements.completionShowProjectButton, async () => {
+    const result = state.completionResult;
+    if (!result?.project?.path) throw new Error('没有可打开的项目目录。');
+    if (state.completionSource === 'edit-job') {
+      await window.plannerApi.openEditProjectFolder(result.project.path);
+      return;
+    }
+    await window.plannerApi.runProjectArtifactAction({
+      projectPath: result.project.path,
+      target: 'projectRoot',
+    });
+  }, '正在打开…'));
+elements.completionShowReviewButton.addEventListener('click', () =>
+  withBusy(elements.completionShowReviewButton, async () => {
+    const result = state.completionResult;
+    if (!result?.project?.path) throw new Error('没有可打开的审核文件。');
+    await window.plannerApi.showEditEditorialReview(result.project.path);
+  }, '正在打开…'));
 elements.refreshCatalogButton.addEventListener('click', () =>
   withBusy(elements.refreshCatalogButton, async () => {
     await loadProjectCatalog();

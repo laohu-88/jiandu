@@ -2234,6 +2234,20 @@ tbody tr:last-child td {
   margin-bottom: 10px;
 }
 
+#editPreflightAffected {
+  margin-top: 18px;
+}
+
+#editPreflightAffected h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+#editJobError:not(.hidden) {
+  margin-top: 12px;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 980px) {
   .pending-media-grid,
   .handoff-columns {

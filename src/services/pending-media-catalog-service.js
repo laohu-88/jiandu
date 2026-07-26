@@ -205,6 +205,7 @@ async function scanEpisode(directoryPath, options = {}) {
     safePathSummary: sourceDirectoryRealPath,
     counts,
     chapters,
+    mediaFacts,
     projectBrief: narrative.projectBrief,
     briefFilesUsed: narrative.briefFilesUsed,
     durationPolicy,
