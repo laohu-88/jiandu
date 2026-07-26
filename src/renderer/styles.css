@@ -1988,11 +1988,22 @@ tbody tr:last-child td {
   border-radius: 14px;
 }
 
+.engine-picker {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 0;
+  padding: 16px;
+  border: 1px solid #dfe4ed;
+  border-radius: 14px;
+}
+
+.engine-picker legend,
 .hyperframes-mode-picker legend {
   padding: 0 8px;
   font-weight: 700;
 }
 
+.engine-picker label,
 .hyperframes-mode-picker label {
   display: flex;
   gap: 10px;
@@ -2001,13 +2012,39 @@ tbody tr:last-child td {
   background: #f7f8fc;
 }
 
+.engine-picker span,
 .hyperframes-mode-picker span {
   display: grid;
   gap: 4px;
 }
 
+.engine-picker small,
 .hyperframes-mode-picker small {
   color: #717b8d;
+}
+
+.handoff-prompt-preview {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #f7f8fc;
+  border: 1px solid #dfe4ed;
+}
+
+.handoff-prompt-preview pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+
+.muted-note {
+  color: #717b8d;
+  font-size: 13px;
+  margin: 0;
 }
 
 .handoff-actions,

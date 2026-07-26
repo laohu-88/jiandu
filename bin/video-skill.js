@@ -233,7 +233,42 @@ async function execute(argv) {
       required(options, 'analysis'),
       formatOptions(options),
     );
-    await report('deciding_hyperframes', '真实素材初步时间线已通过协议校验，正在判断 HyperFrames。');
+    const taskPath = options['handoff-task'];
+    let nextStage = 'deciding_hyperframes';
+    let nextMessage = '真实素材初步时间线已通过协议校验，正在判断 HyperFrames。';
+    if (taskPath) {
+      const task = await readHandoffTask(taskPath);
+      if (task.engine === 'cursor_agent') {
+        nextStage = 'analysis_complete';
+        nextMessage = 'Cursor Agent 分析已通过协议校验，等待 App 继续构建与验证。';
+        await report(nextStage, nextMessage, {
+          artifacts: {
+            ...(task.artifacts || {}),
+            manifestPath: validated.manifestPath,
+            analysisPath: validated.analysisPath,
+          },
+          hyperframesDecision: task.hyperframesDecision || 'disabled',
+          hyperframesReason: task.hyperframesReason
+            || 'Stage 6B 默认由 App 继续构建；HyperFrames 保持关闭，除非后续显式启用。',
+          hyperframesGap: task.hyperframesGap || '无',
+        });
+        return {
+          command,
+          options,
+          result: {
+            ok: true,
+            engine: 'cursor_agent',
+            status: 'analysis_complete',
+            manifestPath: validated.manifestPath,
+            analysisPath: validated.analysisPath,
+            assetCount: validated.analysis.assets.length,
+            shotCount: validated.analysis.timeline.shots.length,
+            formats: validated.formats,
+          },
+        };
+      }
+    }
+    await report(nextStage, nextMessage);
     return {
       command,
       options,
@@ -367,8 +402,8 @@ async function execute(argv) {
   if (command === 'handoff-return') {
     const taskPath = required(options, 'handoff-task');
     const task = await readHandoffTask(taskPath);
-    if (!['completed', 'completed_with_warnings', 'failed'].includes(task.status)) {
-      throw Object.assign(new Error('只有完成、警告或失败任务可以触发回流。'), {
+    if (!['completed', 'completed_with_warnings', 'failed', 'analysis_complete'].includes(task.status)) {
+      throw Object.assign(new Error('只有完成、警告、失败或分析完成任务可以触发回流。'), {
         code: 'HANDOFF_NOT_TERMINAL',
       });
     }

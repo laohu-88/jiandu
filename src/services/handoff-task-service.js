@@ -8,16 +8,32 @@ const HANDOFF_SCHEMA_VERSION = 1;
 const HANDOFF_DIRNAME = 'handoffs';
 const SETTINGS_FILENAME = 'handoff-settings.json';
 const TERMINAL_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'cancelled']);
+const AGENT_ENGINES = Object.freeze({
+  codex: Object.freeze({
+    id: 'codex',
+    label: 'Codex',
+    launchStatus: 'launching_codex',
+    awaitingMessage: 'Codex 已打开并预填提示词，等待用户按一次发送。',
+  }),
+  cursor_agent: Object.freeze({
+    id: 'cursor_agent',
+    label: 'Cursor Agent',
+    launchStatus: 'launching_cursor',
+    awaitingMessage: 'Cursor 已打开，正式任务提示词已复制到剪贴板；请在 Cursor Agent 中粘贴并显式启动任务。',
+  }),
+});
 const HANDOFF_STATUSES = Object.freeze([
   'draft',
   'ready',
   'launching_codex',
+  'launching_cursor',
   'awaiting_user_send',
   'scanning_media',
   'extracting_metadata',
   'extracting_frames',
   'analyzing_media',
   'planning_story',
+  'analysis_complete',
   'deciding_hyperframes',
   'designing_hyperframes',
   'rendering_hyperframes',
@@ -36,12 +52,14 @@ const STAGE_LABELS = Object.freeze({
   draft: '准备交接',
   ready: '准备交接',
   launching_codex: '正在打开 Codex',
-  awaiting_user_send: '等待在 Codex 中发送',
+  launching_cursor: '正在打开 Cursor',
+  awaiting_user_send: '等待在 Agent 中启动',
   scanning_media: '正在扫描素材',
   extracting_metadata: '正在读取素材信息',
   extracting_frames: '正在抽帧',
   analyzing_media: '正在分析素材',
   planning_story: '正在编排镜头',
+  analysis_complete: '分析完成，可继续构建',
   deciding_hyperframes: '正在判断 HyperFrames',
   designing_hyperframes: '正在设计 HyperFrames',
   rendering_hyperframes: '正在渲染 HyperFrames',
@@ -56,6 +74,7 @@ const STAGE_LABELS = Object.freeze({
   cancelled: '已取消',
 });
 const HYPERFRAMES_MODES = new Set(['auto', 'disabled', 'force-attempt']);
+const LAUNCH_STATUSES = new Set(['launching_codex', 'launching_cursor']);
 
 function isInside(rootPath, candidatePath) {
   const relative = path.relative(rootPath, candidatePath);
@@ -70,8 +89,24 @@ function taskFilePath(userDataPath, taskId) {
   return path.join(taskRoot(userDataPath), `${taskId}.json`);
 }
 
+function packageDirForTask(taskPath) {
+  const resolved = path.resolve(String(taskPath || ''));
+  const taskId = path.basename(resolved, '.json');
+  return path.join(path.dirname(resolved), `${taskId}.cursor-package`);
+}
+
 function eventFilePath(taskPath) {
   return taskPath.replace(/\.json$/i, '.events.ndjson');
+}
+
+function normalizeEngine(engine) {
+  const value = String(engine || 'codex');
+  if (!AGENT_ENGINES[value]) {
+    throw Object.assign(new Error(`不支持的剪辑引擎：${value}`), {
+      code: 'INVALID_AGENT_ENGINE',
+    });
+  }
+  return value;
 }
 
 async function atomicWriteJson(filePath, value) {
@@ -108,6 +143,9 @@ function validateTaskShape(task, expectedPath = null) {
   }
   if (!HYPERFRAMES_MODES.has(task.hyperframesMode)) {
     throw Object.assign(new Error('交接任务 HyperFrames 模式无效。'), { code: 'INVALID_HYPERFRAMES_MODE' });
+  }
+  if (task.engine != null && !AGENT_ENGINES[task.engine]) {
+    throw Object.assign(new Error('交接任务剪辑引擎无效。'), { code: 'INVALID_AGENT_ENGINE' });
   }
   if (expectedPath) {
     const resolved = path.resolve(expectedPath);
@@ -184,6 +222,49 @@ ${mode}
 build 完成后必须实际观看粗剪；启用 HyperFrames 时还要观看独立动画，写入 reviewing_hyperframes 和质量复核，必要时返工或放弃。确认正式结果后执行 handoff-complete，把正式项目路径、镜头数、时长、Marker、FCP Title、HyperFrames、粗剪、FCPXML 和验证结果写入终态；警告或失败也必须如实记录。无论成功、警告或失败，最后执行 handoff-return 触发返回视频剪辑编排器 v3。`;
 }
 
+function buildCursorAgentPrompt(input) {
+  const mode = input.hyperframesMode;
+  const packageDir = input.packageDir || packageDirForTask(input.taskFilePath);
+  return `使用视频剪辑编排器 v3 的 video-cut-planner Skill，处理这期素材：
+
+${input.sourceDirectory}
+
+本次由视频剪辑编排器 v3 以 Cursor Agent 剪辑引擎发起（Stage 6B）。
+交接任务 ID：
+${input.taskId}
+
+交接任务状态文件：
+${input.taskFilePath}
+
+Cursor Agent 交接包目录：
+${packageDir}
+
+HyperFrames 模式：
+${mode}
+
+请严格使用现有共享 service 与 Video Skill CLI，不得复制剪辑算法，不得另建分析结果格式。
+
+阶段要求（Cursor Agent 默认分析后交回 App）：
+1. 运行 prepare --source 上述素材目录 --handoff-task 上述状态文件 --json
+2. 阅读 analysis-request.json 与 manifest.json，查看全部图片预览与视频故事板，按现有分析协议产出 analysis.json
+3. 将 analysis.json 写到交接包目录下的 analysis.json（同时可写到 prepare 缓存）
+4. 运行 validate-analysis --manifest <manifest> --analysis <analysis> --handoff-task 上述状态文件 --json
+5. 校验通过后，用 handoff-update 将阶段设为 analysis_complete，并在消息中写明 manifest 与 analysis 绝对路径；随后执行 handoff-return，把控制权交回 App
+6. App 将继续执行既有 build、verify、结果交接与 FCP 打开；不要在 Cursor Agent 中擅自创建正式项目，除非用户明确要求完整 Agent 闭环
+
+必须把 --handoff-task ${JSON.stringify(input.taskFilePath)} 传给支持该参数的 video-skill 命令，并在 analyzing_media、planning_story、analysis_complete 等节点使用 handoff-update 更新阶段与心跳。
+
+分析结果必须符合 schemas/codex-video-analysis.schema.json 与现有运行时校验合同。保持：不预设成片目标时长、视频内容完整性优先、视频原声默认保留、时间线按实际 frameDuration 对齐、不修改来源素材、不改写 editorial-review.json 与人工字幕。
+
+不得修改、移动、重命名或删除原始素材；不得覆盖非空正式项目目录；失败时如实写入 failed，不要把失败标成成功；成功项目不得原地覆盖。`;
+}
+
+function buildAgentPrompt(engine, input) {
+  const resolved = normalizeEngine(engine);
+  if (resolved === 'cursor_agent') return buildCursorAgentPrompt(input);
+  return buildCodexPrompt(input);
+}
+
 function buildCodexDeepLink(prompt, workspacePath) {
   const workspace = path.resolve(String(workspacePath || ''));
   if (!path.isAbsolute(workspace)) throw new Error('Codex 工作目录必须为绝对路径。');
@@ -224,21 +305,25 @@ async function createHandoffTask(userDataPath, input) {
   if (!HYPERFRAMES_MODES.has(input.hyperframesMode)) {
     throw Object.assign(new Error('HyperFrames 模式无效。'), { code: 'INVALID_HYPERFRAMES_MODE' });
   }
+  const engine = normalizeEngine(input.engine || 'codex');
   const source = await resolveSourceDirectory(input.pendingRoot, input.sourceDirectory);
   const taskId = crypto.randomUUID();
   const filePath = taskFilePath(userDataPath, taskId);
+  const packageDir = packageDirForTask(filePath);
   const now = new Date().toISOString();
-  const prompt = buildCodexPrompt({
+  const prompt = buildAgentPrompt(engine, {
     sourceDirectory: source.sourceDirectoryRealPath,
     taskId,
     taskFilePath: filePath,
+    packageDir,
     hyperframesMode: input.hyperframesMode,
   });
-  const deepLink = buildCodexDeepLink(prompt, input.appWorkspace);
+  const deepLink = engine === 'codex' ? buildCodexDeepLink(prompt, input.appWorkspace) : null;
   const task = {
     schemaVersion: HANDOFF_SCHEMA_VERSION,
     taskId,
     taskFilePath: filePath,
+    engine,
     sourceDirectory: source.sourceDirectory,
     sourceDirectoryRealPath: source.sourceDirectoryRealPath,
     sourceSnapshot: input.sourceSnapshot || null,
@@ -261,6 +346,7 @@ async function createHandoffTask(userDataPath, input) {
     hyperframesQualityReview: null,
     prompt,
     codexDeepLink: deepLink,
+    cursorPackagePath: engine === 'cursor_agent' ? packageDir : null,
     resultProjectPath: null,
     resultProjectId: null,
     artifacts: {},
@@ -274,6 +360,17 @@ async function createHandoffTask(userDataPath, input) {
   validateTaskShape(task, filePath);
   await atomicWriteJson(filePath, task);
   await appendEvent(filePath, task.eventHistory[0]);
+  if (engine === 'cursor_agent') {
+    const { writeCursorAgentPackage } = require('./cursor-agent-handoff-service');
+    const packageInfo = await writeCursorAgentPackage(task);
+    task.cursorPackagePath = packageInfo.packageDir;
+    task.artifacts = {
+      ...task.artifacts,
+      cursorPackagePath: packageInfo.packageDir,
+      analysisOutputPath: packageInfo.analysisOutputPath,
+    };
+    await atomicWriteJson(filePath, task);
+  }
   return task;
 }
 
@@ -328,14 +425,26 @@ async function updateHandoffTask(taskPath, patch = {}) {
     stageStartedAt: statusChanged ? now : task.stageStartedAt,
     startedAt: task.startedAt || (HANDOFF_STATUSES.indexOf(nextStatus)
       >= HANDOFF_STATUSES.indexOf('scanning_media') ? now : null),
-    launchedAt: task.launchedAt || (HANDOFF_STATUSES.indexOf(nextStatus)
-      >= HANDOFF_STATUSES.indexOf('launching_codex') ? now : null),
+    launchedAt: task.launchedAt || (
+      LAUNCH_STATUSES.has(nextStatus)
+        || HANDOFF_STATUSES.indexOf(nextStatus) >= HANDOFF_STATUSES.indexOf('awaiting_user_send')
+        ? now
+        : null
+    ),
     completedAt: TERMINAL_STATUSES.has(nextStatus) ? (task.completedAt || now) : null,
     eventHistory: [...task.eventHistory, event].slice(-200),
   };
   validateTaskShape(updated, taskPath);
   await atomicWriteJson(taskPath, updated);
   await appendEvent(taskPath, event);
+  if (updated.engine === 'cursor_agent' && updated.cursorPackagePath) {
+    try {
+      const { syncPackageStatusPointer } = require('./cursor-agent-handoff-service');
+      await syncPackageStatusPointer(updated);
+    } catch {
+      // Package pointer sync is best-effort; task snapshot remains authoritative.
+    }
+  }
   return updated;
 }
 
@@ -394,24 +503,31 @@ async function saveHandoffSettings(userDataPath, input) {
 }
 
 module.exports = {
+  AGENT_ENGINES,
   HANDOFF_SCHEMA_VERSION,
   HANDOFF_STATUSES,
   HYPERFRAMES_MODES,
+  LAUNCH_STATUSES,
   STAGE_LABELS,
   TERMINAL_STATUSES,
   assertTransition,
   assertUserDataTask,
   atomicWriteJson,
+  buildAgentPrompt,
   buildCodexDeepLink,
   buildCodexPrompt,
+  buildCursorAgentPrompt,
   createHandoffTask,
   eventFilePath,
   heartbeatHandoffTask,
   listHandoffTasks,
   loadHandoffSettings,
+  normalizeEngine,
+  packageDirForTask,
   readHandoffTask,
   readTaskEvents,
   saveHandoffSettings,
+  taskFilePath,
   taskRoot,
   updateHandoffTask,
   validateTaskShape,

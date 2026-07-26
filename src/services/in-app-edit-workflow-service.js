@@ -78,6 +78,7 @@ const STAGE_LABELS = Object.freeze({
   cancelled: '已取消',
 });
 const ACTIONS = new Set([
+  'cursor_agent_handoff',
   'codex_handoff',
   'local_build',
   'reuse_existing',
@@ -130,7 +131,7 @@ function userFacingError(error) {
     PROJECT_ALREADY_EXISTS: '正式项目目录已存在。为保护已有成功结果，不会原地覆盖；请改用“使用已有结果”或生成到新项目。',
     SOURCE_CHANGED_AFTER_PREPARE: '原始素材在准备后发生变化，已停止生成以避免结果不一致。',
     PROJECT_VERIFICATION_FAILED: '生成后的项目未通过完整性验证，不会标记为成功。',
-    MISSING_ANALYSIS: '还没有可用的 Codex 分析结果。请先交给 Codex 完成分析，或选择已有正式项目。',
+    MISSING_ANALYSIS: '还没有可用的分析结果。请先交给 Cursor Agent 或 Codex 完成分析，或选择已有正式项目。',
     BLOCKED_PREFLIGHT: '生成前检查未通过，当前不能继续生成。',
     UNSAFE_EDIT_JOB_PATH: '剪辑任务文件路径不安全。',
     INVALID_EDIT_ACTION: '不支持的剪辑任务动作。',
@@ -408,7 +409,7 @@ async function buildEditPreflight(sourceDirectory, options = {}) {
       ? 'regenerate'
       : 'first';
 
-  let recommendedAction = 'codex_handoff';
+  let recommendedAction = 'cursor_agent_handoff';
   if (existing?.success) recommendedAction = 'reuse_existing';
   else if (existing?.hasAnalysis && existing?.hasManifest) recommendedAction = 'local_build';
   else if (material.empty || material.unreadable) recommendedAction = 'blocked';
@@ -470,9 +471,13 @@ async function buildEditPreflight(sourceDirectory, options = {}) {
     },
     canContinue,
     recommendedAction,
+    recommendedEngine: recommendedAction === 'cursor_agent_handoff' || recommendedAction === 'codex_handoff'
+      ? (recommendedAction === 'codex_handoff' ? 'codex' : 'cursor_agent')
+      : null,
     actions: {
       reuse_existing: Boolean(existing?.success || existing?.hasAnalysis),
       local_build: Boolean(existing?.hasAnalysis && existing?.hasManifest),
+      cursor_agent_handoff: !material.empty && !material.unreadable,
       codex_handoff: !material.empty && !material.unreadable,
     },
   };
@@ -570,7 +575,7 @@ function uniqueProjectName(baseName, existingNames = []) {
 
 async function createEditJob(userDataPath, input = {}) {
   const preflight = input.preflight || await buildEditPreflight(input.sourceDirectory, input);
-  const action = String(input.action || preflight.recommendedAction || 'codex_handoff');
+  const action = String(input.action || preflight.recommendedAction || 'cursor_agent_handoff');
   if (!ACTIONS.has(action) && action !== 'preflight_only') {
     throw Object.assign(new Error('不支持的剪辑任务动作。'), { code: 'INVALID_EDIT_ACTION' });
   }
@@ -959,14 +964,17 @@ async function runEditJob(userDataPath, jobPath, options = {}) {
   };
 
   try {
-    if (resolved.action === 'codex_handoff') {
-      // Codex handoff is orchestrated by the App using the existing handoff service.
+    if (resolved.action === 'cursor_agent_handoff' || resolved.action === 'codex_handoff') {
+      // Agent handoff is orchestrated by the App using the shared handoff service.
       // The edit job remains a planning record that points at the handoff path.
       return helpers.update({
         status: 'ready',
-        stageMessage: '请继续使用现有 Codex 交接管线完成分析与生成。',
+        stageMessage: resolved.action === 'cursor_agent_handoff'
+          ? '请继续使用 Cursor Agent 交接管线完成分析；完成后可在 App 内继续构建与验证。'
+          : '请继续使用现有 Codex 交接管线完成分析与生成。',
         result: {
           handoffRequired: true,
+          engine: resolved.action === 'cursor_agent_handoff' ? 'cursor_agent' : 'codex',
           sourceDirectory: resolved.sourceDirectory,
         },
       });

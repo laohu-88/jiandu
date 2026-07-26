@@ -57,14 +57,26 @@
 
       <section id="editPreflightView" class="handoff-view hidden">
         <div class="card handoff-panel">
-          <p class="eyebrow">STAGE 6A · 生成前检查</p>
+          <p class="eyebrow">STAGE 6B · 生成前检查</p>
           <h2 id="editPreflightTitle">新建剪辑任务</h2>
           <div id="editPreflightNotice" class="notice neutral hidden"></div>
           <div id="editPreflightSummary"></div>
           <div id="editPreflightAffected" class="hidden"></div>
+          <fieldset id="editEnginePicker" class="engine-picker">
+            <legend>剪辑引擎（首次无分析）</legend>
+            <label>
+              <input type="radio" name="editEngine" value="cursor_agent" checked>
+              <span><strong>Cursor Agent</strong><small>默认。分析后返回 App，继续构建、验证与 FCP 交接。</small></span>
+            </label>
+            <label>
+              <input type="radio" name="editEngine" value="codex">
+              <span><strong>Codex</strong><small>沿用现有 Codex 可视化交接管线。</small></span>
+            </label>
+          </fieldset>
           <div class="result-actions handoff-actions">
             <button id="cancelEditPreflightButton" class="button ghost" type="button">取消</button>
             <button id="chooseOtherMaterialButton" class="button secondary" type="button">重选素材目录</button>
+            <button id="editCursorHandoffButton" class="button primary" type="button">交给 Cursor Agent 分析</button>
             <button id="editCodexHandoffButton" class="button secondary" type="button">交给 Codex 分析生成</button>
             <button id="editLocalBuildButton" class="button secondary hidden" type="button">再次生成到新项目</button>
             <button id="editReuseExistingButton" class="button primary" type="button">使用已有结果并交接</button>
@@ -88,13 +100,13 @@
 
       <section id="handoffConfirmView" class="handoff-view hidden">
         <div class="card handoff-panel">
-          <p class="eyebrow">CODEX 可视化交接</p>
-          <h2>确认交给 Codex 处理</h2>
+          <p id="handoffConfirmEyebrow" class="eyebrow">CODEX 可视化交接</p>
+          <h2 id="handoffConfirmTitle">确认交给 Codex 处理</h2>
           <div id="handoffSourceSummary"></div>
           <section id="handoffNarrativePreview" class="handoff-narrative-preview"></section>
           <div class="handoff-columns">
             <section>
-              <h3>Codex 将执行</h3>
+              <h3 id="handoffWorkHeading">Codex 将执行</h3>
               <ul id="handoffWorkList" class="compact-list"></ul>
             </section>
             <section>
@@ -102,14 +114,20 @@
               <ul id="handoffArtifactList" class="compact-list"></ul>
             </section>
           </div>
+          <section id="handoffPromptPreview" class="handoff-prompt-preview hidden">
+            <h3>正式任务提示词</h3>
+            <pre id="handoffPromptText"></pre>
+            <p class="muted-note">打开 Cursor 后不会自动发送。请在 Cursor Agent 中粘贴提示词并显式启动。</p>
+          </section>
           <fieldset class="hyperframes-mode-picker">
             <legend>HyperFrames 模式</legend>
-            <label><input type="radio" name="hyperframesMode" value="auto" checked><span><strong>Codex 自动判断</strong><small>根据真实素材完整度、镜头连贯性和表达缺口决定。</small></span></label>
+            <label><input type="radio" name="hyperframesMode" value="auto" checked><span><strong>Agent 自动判断</strong><small>根据真实素材完整度、镜头连贯性和表达缺口决定。</small></span></label>
             <label><input type="radio" name="hyperframesMode" value="disabled"><span><strong>本期禁止 HyperFrames</strong><small>仅使用真实素材、普通剪辑、轻字幕、Marker 和转场。</small></span></label>
             <label><input type="radio" name="hyperframesMode" value="force-attempt"><span><strong>本期明确尝试 HyperFrames</strong><small>认真设计并经过质量门；不提升成片时允许放弃。</small></span></label>
           </fieldset>
           <div class="result-actions handoff-actions">
             <button id="cancelHandoffConfirmButton" class="button ghost" type="button">取消</button>
+            <button id="launchCursorButton" class="button primary hidden" type="button">打开 Cursor 并复制提示词</button>
             <button id="launchCodexButton" class="button primary" type="button">打开 Codex 并开始</button>
           </div>
         </div>
@@ -121,11 +139,19 @@
           <h2 id="handoffTaskName">—</h2>
           <div id="handoffTaskStatus" class="handoff-status-card"></div>
           <div id="handoffTaskWarnings" class="notice warning hidden"></div>
+          <div id="handoffPromptInline" class="handoff-prompt-preview hidden">
+            <h3>正式任务提示词</h3>
+            <pre id="handoffPromptInlineText"></pre>
+          </div>
           <div class="result-actions handoff-actions">
             <button id="activateCodexButton" class="button primary" type="button">切换到 Codex</button>
+            <button id="activateCursorButton" class="button primary hidden" type="button">切换到 Cursor</button>
+            <button id="continueBuildButton" class="button primary hidden" type="button">继续构建与验证</button>
             <button id="showHandoffSourceButton" class="button secondary" type="button">在 Finder 中显示素材</button>
+            <button id="showHandoffPackageButton" class="button secondary hidden" type="button">打开交接包</button>
             <button id="retryCodexButton" class="button secondary hidden" type="button">重试打开 Codex</button>
-            <button id="copyPromptButton" class="button ghost hidden" type="button">复制完整提示词</button>
+            <button id="retryCursorButton" class="button secondary hidden" type="button">重试打开 Cursor</button>
+            <button id="copyPromptButton" class="button ghost" type="button">复制完整提示词</button>
             <button id="cancelHandoffTaskButton" class="button ghost" type="button">取消任务</button>
           </div>
         </div>

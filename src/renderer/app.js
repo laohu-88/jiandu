@@ -40,6 +40,7 @@ const state = {
   explanationAssetPlayback: null,
   pendingCatalog: null,
   selectedPendingEpisode: null,
+  selectedHandoffEngine: 'cursor_agent',
   activeHandoffTask: null,
   handoffPollTimer: null,
   completionResult: null,
@@ -105,8 +106,10 @@ const elements = {
   editPreflightNotice: document.querySelector('#editPreflightNotice'),
   editPreflightSummary: document.querySelector('#editPreflightSummary'),
   editPreflightAffected: document.querySelector('#editPreflightAffected'),
+  editEnginePicker: document.querySelector('#editEnginePicker'),
   cancelEditPreflightButton: document.querySelector('#cancelEditPreflightButton'),
   chooseOtherMaterialButton: document.querySelector('#chooseOtherMaterialButton'),
+  editCursorHandoffButton: document.querySelector('#editCursorHandoffButton'),
   editCodexHandoffButton: document.querySelector('#editCodexHandoffButton'),
   editLocalBuildButton: document.querySelector('#editLocalBuildButton'),
   editReuseExistingButton: document.querySelector('#editReuseExistingButton'),
@@ -116,18 +119,30 @@ const elements = {
   editJobError: document.querySelector('#editJobError'),
   editJobShowSourceButton: document.querySelector('#editJobShowSourceButton'),
   editJobCancelButton: document.querySelector('#editJobCancelButton'),
+  handoffConfirmEyebrow: document.querySelector('#handoffConfirmEyebrow'),
+  handoffConfirmTitle: document.querySelector('#handoffConfirmTitle'),
   handoffSourceSummary: document.querySelector('#handoffSourceSummary'),
   handoffNarrativePreview: document.querySelector('#handoffNarrativePreview'),
+  handoffWorkHeading: document.querySelector('#handoffWorkHeading'),
   handoffWorkList: document.querySelector('#handoffWorkList'),
   handoffArtifactList: document.querySelector('#handoffArtifactList'),
+  handoffPromptPreview: document.querySelector('#handoffPromptPreview'),
+  handoffPromptText: document.querySelector('#handoffPromptText'),
   cancelHandoffConfirmButton: document.querySelector('#cancelHandoffConfirmButton'),
   launchCodexButton: document.querySelector('#launchCodexButton'),
+  launchCursorButton: document.querySelector('#launchCursorButton'),
   handoffTaskName: document.querySelector('#handoffTaskName'),
   handoffTaskStatus: document.querySelector('#handoffTaskStatus'),
   handoffTaskWarnings: document.querySelector('#handoffTaskWarnings'),
+  handoffPromptInline: document.querySelector('#handoffPromptInline'),
+  handoffPromptInlineText: document.querySelector('#handoffPromptInlineText'),
   activateCodexButton: document.querySelector('#activateCodexButton'),
+  activateCursorButton: document.querySelector('#activateCursorButton'),
+  continueBuildButton: document.querySelector('#continueBuildButton'),
   showHandoffSourceButton: document.querySelector('#showHandoffSourceButton'),
+  showHandoffPackageButton: document.querySelector('#showHandoffPackageButton'),
   retryCodexButton: document.querySelector('#retryCodexButton'),
+  retryCursorButton: document.querySelector('#retryCursorButton'),
   copyPromptButton: document.querySelector('#copyPromptButton'),
   cancelHandoffTaskButton: document.querySelector('#cancelHandoffTaskButton'),
   completionEyebrow: document.querySelector('#completionEyebrow'),
@@ -451,11 +466,11 @@ function switchMainView(view) {
   elements.showWorkspaceButton.classList.toggle('active', showWorkspace);
   elements.viewEyebrow.textContent = showResults ? 'CODEX · 项目结果中心'
     : showWorkspace ? 'STAGE 1 · 素材筛选台'
-      : showCompletion ? 'STAGE 6A · 结果交接'
+      : showCompletion ? 'STAGE 6B · 结果交接'
         : showEditJob ? 'STAGE 6A · 任务执行'
-          : showEditPreflight ? 'STAGE 6A · 生成前检查'
+          : showEditPreflight ? 'STAGE 6B · 生成前检查'
             : showTask ? 'STAGE 4D · 任务状态'
-              : showConfirm ? 'STAGE 4D · CODEX 交接'
+              : showConfirm ? 'STAGE 6B · Agent 交接'
                 : 'STAGE 4D · 待处理素材';
 }
 
@@ -473,9 +488,11 @@ const PENDING_STATUS_LABELS = {
 };
 
 const HANDOFF_STAGE_LABELS = {
-  ready: '准备交接', launching_codex: '正在打开 Codex', awaiting_user_send: '等待在 Codex 中发送',
+  ready: '准备交接', launching_codex: '正在打开 Codex', launching_cursor: '正在打开 Cursor',
+  awaiting_user_send: '等待在 Agent 中启动',
   scanning_media: '正在扫描素材', extracting_metadata: '正在读取素材信息', extracting_frames: '正在抽帧',
-  analyzing_media: '正在分析素材', planning_story: '正在编排镜头', deciding_hyperframes: '正在判断 HyperFrames',
+  analyzing_media: '正在分析素材', planning_story: '正在编排镜头', analysis_complete: '分析完成，可继续构建',
+  deciding_hyperframes: '正在判断 HyperFrames',
   designing_hyperframes: '正在设计 HyperFrames', rendering_hyperframes: '正在渲染 HyperFrames',
   reviewing_hyperframes: '正在复核 HyperFrames', building_project: '正在创建正式项目',
   rendering_preview: '正在生成粗剪', generating_fcpxml: '正在生成 FCPXML', verifying: '正在完整验证',
@@ -522,10 +539,13 @@ function renderPendingMedia() {
     editJob.addEventListener('click', () => openEditPreflight(episode.sourceDirectory));
     const handoff = createTextElement('button', '交给 Codex 处理', 'button secondary');
     handoff.disabled = episode.empty || episode.unreadable;
-    handoff.addEventListener('click', () => openHandoffConfirm(episode));
+    handoff.addEventListener('click', () => openHandoffConfirm(episode, 'codex'));
+    const cursorHandoff = createTextElement('button', '交给 Cursor Agent', 'button secondary');
+    cursorHandoff.disabled = episode.empty || episode.unreadable;
+    cursorHandoff.addEventListener('click', () => openHandoffConfirm(episode, 'cursor_agent'));
     const finder = createTextElement('button', '在 Finder 中显示', 'button ghost');
     finder.addEventListener('click', () => window.plannerApi.showPendingMediaInFinder(episode.sourceDirectory));
-    actions.append(editJob, handoff, finder);
+    actions.append(editJob, cursorHandoff, handoff, finder);
     const resultPath = episode.latestTask?.resultProjectPath || episode.existingProject?.projectPath;
     if (resultPath) {
       const latest = createTextElement('button', '查看最新结果', 'button ghost');
@@ -567,10 +587,24 @@ function fillList(list, values) {
   list.replaceChildren(...values.map((value) => createTextElement('li', value)));
 }
 
-function openHandoffConfirm(episode) {
+function openHandoffConfirm(episode, engine = 'codex') {
   state.selectedPendingEpisode = episode;
+  state.selectedHandoffEngine = engine;
+  const isCursor = engine === 'cursor_agent';
+  elements.handoffConfirmEyebrow.textContent = isCursor ? 'CURSOR AGENT 可视化交接' : 'CODEX 可视化交接';
+  elements.handoffConfirmTitle.textContent = isCursor
+    ? '确认交给 Cursor Agent 分析'
+    : '确认交给 Codex 处理';
+  elements.handoffWorkHeading.textContent = isCursor ? 'Cursor Agent 将执行' : 'Codex 将执行';
+  elements.launchCursorButton.classList.toggle('hidden', !isCursor);
+  elements.launchCodexButton.classList.toggle('hidden', isCursor);
+  elements.handoffPromptPreview.classList.toggle('hidden', !isCursor);
+  elements.handoffPromptText.textContent = isCursor
+    ? '正式任务提示词将在创建交接任务后完整展示，并复制到剪贴板。'
+    : '';
   elements.handoffSourceSummary.replaceChildren(createDefinitionGrid([
     ['期名', episode.name], ['素材目录', episode.sourceDirectoryRealPath],
+    ['剪辑引擎', isCursor ? 'Cursor Agent（默认）' : 'Codex'],
     ['图片', String(episode.counts.image)], ['视频', String(episode.counts.video)],
     ['音频', String(episode.counts.audio)], ['总文件', String(episode.totalFileCount)],
     ['视频总时长', formatResultDuration(episode.totalVideoDurationSec)],
@@ -597,13 +631,20 @@ function openHandoffConfirm(episode) {
     'hidden',
     chapters.length === 0 && (episode.briefFilesUsed || []).length === 0,
   );
-  fillList(elements.handoffWorkList, [
+  fillList(elements.handoffWorkList, isCursor ? [
+    '扫描和验证素材', 'ffprobe 元数据', '抽帧与场景变化抽帧', '按现有分析合同产出 analysis.json',
+    'validate-analysis 校验', '将状态更新为 analysis_complete 并回流 App',
+    'App 继续 build / verify / 结果交接 / 打开 FCP',
+  ] : [
     '扫描和验证素材', 'ffprobe 元数据', '抽帧与场景变化抽帧', '素材语义分析',
     '主题与标题判断', '采用、候选和淘汰判断', '有效区间与镜头编排', '连贯度检查',
     '少量轻字幕 Marker 与 FCP 原生可编辑 Title', 'HyperFrames 决策',
     '正式 v3 项目、粗剪预览、FCPXML 和完整验证',
   ]);
-  fillList(elements.handoffArtifactList, [
+  fillList(elements.handoffArtifactList, isCursor ? [
+    'Cursor Agent 交接包（任务清单 / 提示词 / 路径 / 预期产物 / 状态 / 恢复说明）',
+    '结构化素材清单', '符合现有合同的分析结果', 'App 续建后的正式项目、粗剪、FCPXML 与验证状态',
+  ] : [
     '结构化素材清单', 'Codex 分析结果', '正式项目目录', '精选独立素材',
     '粗剪预览', 'FCPXML', 'HyperFrames 动画（仅决定启用时）', '验证状态',
   ]);
@@ -612,11 +653,13 @@ function openHandoffConfirm(episode) {
 
 function renderHandoffTask(task) {
   state.activeHandoffTask = task;
+  const isCursor = task.engine === 'cursor_agent';
   elements.handoffTaskName.textContent = task.sourceSummary?.name || task.sourceDirectoryRealPath;
   const heartbeatAge = task.lastHeartbeatAt ? Date.now() - Date.parse(task.lastHeartbeatAt) : Infinity;
-  const stale = !['completed', 'completed_with_warnings', 'failed', 'cancelled', 'awaiting_user_send'].includes(task.status)
+  const stale = !['completed', 'completed_with_warnings', 'failed', 'cancelled', 'awaiting_user_send', 'analysis_complete'].includes(task.status)
     && heartbeatAge > 120_000;
   elements.handoffTaskStatus.replaceChildren(createDefinitionGrid([
+    ['剪辑引擎', isCursor ? 'Cursor Agent' : 'Codex'],
     ['当前阶段', HANDOFF_STAGE_LABELS[task.status] || task.status],
     ['阶段说明', task.stageMessage],
     ['阶段开始', formatDateTime(task.stageStartedAt)],
@@ -625,16 +668,25 @@ function renderHandoffTask(task) {
     ['HyperFrames 决策', task.hyperframesDecision || '尚未决定'],
     ['决策理由', task.hyperframesReason || '—'],
     ['表达缺口', task.hyperframesGap || '—'],
+    ['交接包', task.cursorPackagePath || '—'],
     ['任务 ID', task.taskId],
   ]));
   const warnings = [...(task.warnings || []), ...(task.errors || []).map((item) => item.message || item)];
   elements.handoffTaskWarnings.textContent = warnings.join('；');
   elements.handoffTaskWarnings.classList.toggle('hidden', warnings.length === 0);
-  const cancellable = ['draft', 'ready', 'launching_codex', 'awaiting_user_send'].includes(task.status);
+  const cancellable = ['draft', 'ready', 'launching_codex', 'launching_cursor', 'awaiting_user_send'].includes(task.status);
   elements.cancelHandoffTaskButton.classList.toggle('hidden', !cancellable);
-  const launchFailed = task.status === 'launching_codex' && (task.errors || []).length > 0;
-  elements.retryCodexButton.classList.toggle('hidden', !launchFailed);
-  elements.copyPromptButton.classList.toggle('hidden', !launchFailed);
+  const launchFailed = (task.status === 'launching_codex' || task.status === 'launching_cursor')
+    && (task.errors || []).length > 0;
+  elements.retryCodexButton.classList.toggle('hidden', !(launchFailed && !isCursor));
+  elements.retryCursorButton.classList.toggle('hidden', !(launchFailed && isCursor));
+  elements.activateCodexButton.classList.toggle('hidden', isCursor);
+  elements.activateCursorButton.classList.toggle('hidden', !isCursor);
+  elements.showHandoffPackageButton.classList.toggle('hidden', !isCursor || !task.cursorPackagePath);
+  elements.continueBuildButton.classList.toggle('hidden', task.status !== 'analysis_complete');
+  elements.copyPromptButton.classList.toggle('hidden', false);
+  elements.handoffPromptInline.classList.toggle('hidden', !isCursor);
+  elements.handoffPromptInlineText.textContent = task.prompt || '';
 }
 
 function showHandoffTask(task) {
@@ -659,6 +711,11 @@ async function showHandoffCompletion(task) {
   state.activeHandoffTask = task;
   state.completionSource = 'handoff';
   clearInterval(state.handoffPollTimer);
+  if (task.status === 'analysis_complete') {
+    showHandoffTask(task);
+    showToast('Cursor Agent 分析已完成。可在任务页点击「继续构建与验证」。');
+    return;
+  }
   let result = null;
   if (task.resultProjectPath) result = await window.plannerApi.openHandoffResult(task.taskFilePath).catch(() => null);
   state.completionResult = result;
@@ -672,7 +729,7 @@ async function showHandoffCompletion(task) {
     warnings: task.warnings,
     verification: task.verification || {},
     result,
-    showReturnCodex: true,
+    showReturnCodex: (task.engine || 'codex') === 'codex',
   });
 }
 
@@ -768,9 +825,20 @@ function renderEditPreflight(preflight) {
   elements.editPreflightTitle.textContent = `${preflight.generationModeLabel} · ${material.name}`;
   const canReuse = preflight.actions.reuse_existing;
   const canLocal = preflight.actions.local_build && preflight.generationMode !== 'first';
+  const canCursor = preflight.actions.cursor_agent_handoff;
   const canCodex = preflight.actions.codex_handoff;
+  const isFirst = preflight.generationMode === 'first';
+  elements.editEnginePicker.classList.toggle('hidden', !isFirst || canReuse);
   elements.editReuseExistingButton.classList.toggle('hidden', !canReuse);
   elements.editLocalBuildButton.classList.toggle('hidden', !canLocal);
+  elements.editCursorHandoffButton.classList.toggle('hidden', !isFirst && !canCursor);
+  elements.editCodexHandoffButton.classList.toggle('hidden', !isFirst && !canCodex);
+  if (isFirst) {
+    const engine = preflight.recommendedEngine || 'cursor_agent';
+    const radio = document.querySelector(`input[name="editEngine"][value="${engine}"]`);
+    if (radio) radio.checked = true;
+  }
+  elements.editCursorHandoffButton.disabled = !canCursor || (!preflight.canContinue && !canReuse);
   elements.editCodexHandoffButton.disabled = !canCodex || (!preflight.canContinue && !canReuse);
   elements.editReuseExistingButton.disabled = !canReuse;
   elements.editLocalBuildButton.disabled = !canLocal;
@@ -781,6 +849,9 @@ function renderEditPreflight(preflight) {
   }
   if (preflight.existingProject?.success) {
     noticeParts.push('已有成功项目将保持不动；再次生成会写入新项目目录。');
+  }
+  if (isFirst) {
+    noticeParts.push('首次无分析项目默认推荐 Cursor Agent；也可改选 Codex。');
   }
   elements.editPreflightNotice.textContent = noticeParts.join(' ');
   elements.editPreflightNotice.className = `notice ${preflight.canContinue ? 'neutral' : 'warning'}`;
@@ -807,8 +878,9 @@ function renderEditPreflight(preflight) {
     ['生成模式', preflight.generationModeLabel],
     ['推荐动作', preflight.recommendedAction === 'reuse_existing' ? '使用已有结果'
       : preflight.recommendedAction === 'local_build' ? 'App 内再次生成'
-        : preflight.recommendedAction === 'codex_handoff' ? '交给 Codex'
-          : '已阻塞'],
+        : preflight.recommendedAction === 'cursor_agent_handoff' ? '交给 Cursor Agent'
+          : preflight.recommendedAction === 'codex_handoff' ? '交给 Codex'
+            : '已阻塞'],
     ['已有正式项目', preflight.existingProject?.projectPath || '无'],
     ['editorial-review.json', editorial.exists ? '已识别' : '未找到'],
     ['人工字幕（确认）', String(editorial.humanCaptionCount || editorial.confirmedCaptionCount || 0)],
@@ -900,10 +972,10 @@ function pathBasename(filePath) {
 async function startEditJob(action) {
   const preflight = state.editPreflight;
   if (!preflight) throw new Error('请先完成生成前检查。');
-  if (action === 'codex_handoff') {
+  if (action === 'cursor_agent_handoff' || action === 'codex_handoff') {
     await window.plannerApi.createEditJob({
       sourceDirectory: preflight.material.sourceDirectory,
-      action: 'codex_handoff',
+      action,
       preflight,
     });
     state.selectedPendingEpisode = {
@@ -920,7 +992,10 @@ async function startEditJob(action) {
       empty: preflight.material.empty,
       unreadable: preflight.material.unreadable,
     };
-    openHandoffConfirm(state.selectedPendingEpisode);
+    openHandoffConfirm(
+      state.selectedPendingEpisode,
+      action === 'cursor_agent_handoff' ? 'cursor_agent' : 'codex',
+    );
     return;
   }
   const job = await window.plannerApi.createEditJob({
@@ -2746,6 +2821,8 @@ elements.chooseOtherMaterialButton.addEventListener('click', () =>
     if (!selected) return;
     await openEditPreflight(selected);
   }, '正在检查…'));
+elements.editCursorHandoffButton.addEventListener('click', () =>
+  withBusy(elements.editCursorHandoffButton, () => startEditJob('cursor_agent_handoff'), '正在准备…'));
 elements.editCodexHandoffButton.addEventListener('click', () =>
   withBusy(elements.editCodexHandoffButton, () => startEditJob('codex_handoff'), '正在准备…'));
 elements.editLocalBuildButton.addEventListener('click', () =>
@@ -2776,27 +2853,67 @@ elements.launchCodexButton.addEventListener('click', () =>
     let task = await window.plannerApi.createHandoffTask({
       sourceDirectory: episode.sourceDirectory,
       hyperframesMode: mode,
+      engine: 'codex',
     });
     showHandoffTask(task);
     task = await window.plannerApi.launchCodexHandoff(task.taskFilePath);
     renderHandoffTask(task);
   }, '正在打开 Codex…'));
+elements.launchCursorButton.addEventListener('click', () =>
+  withBusy(elements.launchCursorButton, async () => {
+    const episode = state.selectedPendingEpisode;
+    if (!episode) throw new Error('请重新选择一期素材。');
+    const mode = document.querySelector('input[name="hyperframesMode"]:checked')?.value || 'disabled';
+    let task = await window.plannerApi.createHandoffTask({
+      sourceDirectory: episode.sourceDirectory,
+      hyperframesMode: mode,
+      engine: 'cursor_agent',
+    });
+    elements.handoffPromptText.textContent = task.prompt;
+    elements.handoffPromptPreview.classList.remove('hidden');
+    showHandoffTask(task);
+    task = await window.plannerApi.launchCursorHandoff(task.taskFilePath);
+    renderHandoffTask(task);
+    showToast('已打开 Cursor 并复制提示词。请在 Cursor Agent 中粘贴后显式启动，应用不会自动发送。');
+  }, '正在打开 Cursor…'));
 elements.activateCodexButton.addEventListener('click', () => {
   if (state.activeHandoffTask) window.plannerApi.activateCodexHandoff(state.activeHandoffTask.taskFilePath);
+});
+elements.activateCursorButton.addEventListener('click', () => {
+  if (state.activeHandoffTask) window.plannerApi.activateCursorHandoff(state.activeHandoffTask.taskFilePath);
 });
 elements.showHandoffSourceButton.addEventListener('click', () => {
   if (state.activeHandoffTask) {
     window.plannerApi.showPendingMediaInFinder(state.activeHandoffTask.sourceDirectory);
   }
 });
+elements.showHandoffPackageButton.addEventListener('click', () => {
+  if (state.activeHandoffTask) window.plannerApi.showHandoffPackage(state.activeHandoffTask.taskFilePath);
+});
 elements.retryCodexButton.addEventListener('click', () =>
   withBusy(elements.retryCodexButton, async () => {
     const task = await window.plannerApi.launchCodexHandoff(state.activeHandoffTask.taskFilePath);
     renderHandoffTask(task);
   }, '正在重试…'));
+elements.retryCursorButton.addEventListener('click', () =>
+  withBusy(elements.retryCursorButton, async () => {
+    const task = await window.plannerApi.launchCursorHandoff(state.activeHandoffTask.taskFilePath);
+    renderHandoffTask(task);
+  }, '正在重试…'));
+elements.continueBuildButton.addEventListener('click', () =>
+  withBusy(elements.continueBuildButton, async () => {
+    if (!state.activeHandoffTask) throw new Error('没有可续建的交接任务。');
+    const finished = await window.plannerApi.continueHandoffBuild({
+      taskPath: state.activeHandoffTask.taskFilePath,
+    });
+    renderHandoffTask(finished);
+    if (['completed', 'completed_with_warnings', 'failed'].includes(finished.status)) {
+      await showHandoffCompletion(finished);
+    }
+  }, '正在构建与验证…'));
 elements.copyPromptButton.addEventListener('click', async () => {
   await window.plannerApi.copyHandoffPrompt(state.activeHandoffTask.taskFilePath);
-  showToast('完整提示词已复制；这是深链接失败时的故障恢复方式。');
+  showToast('完整提示词已复制。请在 Agent 中粘贴并显式启动。');
 });
 elements.cancelHandoffTaskButton.addEventListener('click', () =>
   withBusy(elements.cancelHandoffTaskButton, async () => {

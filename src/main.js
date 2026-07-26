@@ -133,6 +133,13 @@ const {
   updateHandoffTask,
 } = require('./services/handoff-task-service');
 const {
+  buildCursorLaunchPlan,
+  classifyAgentHandoffState,
+  continueBuildFromAnalysis,
+  inspectAnalysisArtifacts,
+  markAnalysisComplete,
+} = require('./services/cursor-agent-handoff-service');
+const {
   assertUserDataEditJob,
   buildEditPreflight,
   createEditJob,
@@ -142,6 +149,7 @@ const {
   runEditJob,
   updateEditJob,
 } = require('./services/in-app-edit-workflow-service');
+const { spawn } = require('node:child_process');
 
 let mainWindow;
 let aiAnalysisRunning = false;
@@ -316,8 +324,8 @@ function restoreMainWindow() {
 async function handleReturnProtocol(entry) {
   const taskPath = path.join(taskRoot(app.getPath('userData')), `${entry.taskId}.json`);
   const task = await assertUserDataTask(app.getPath('userData'), taskPath);
-  if (!TERMINAL_STATUSES.has(task.status)) {
-    throw Object.assign(new Error('只有终态任务可以通过协议回流。'), {
+  if (!TERMINAL_STATUSES.has(task.status) && task.status !== 'analysis_complete') {
+    throw Object.assign(new Error('只有终态或分析完成任务可以通过协议回流。'), {
       code: 'HANDOFF_NOT_TERMINAL',
     });
   }
@@ -428,12 +436,16 @@ function registerIpc() {
       },
       appWorkspace: CODEX_WORKSPACE_ROOT,
       hyperframesMode: args?.hyperframesMode || 'auto',
+      engine: args?.engine || 'codex',
       autoOpenFcp: settings.autoOpenFcp,
     });
   });
 
   ipcMain.handle('handoff:launch-codex', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    if ((task.engine || 'codex') !== 'codex') {
+      throw new Error('当前任务不是 Codex 引擎任务。');
+    }
     const launching = await updateHandoffTask(task.taskFilePath, {
       status: 'launching_codex',
       stageMessage: '正在使用官方深链接打开 Codex。',
@@ -454,16 +466,80 @@ function registerIpc() {
     }
   });
 
+  ipcMain.handle('handoff:launch-cursor', async (_event, taskPath) => {
+    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    if (task.engine !== 'cursor_agent') {
+      throw new Error('当前任务不是 Cursor Agent 引擎任务。');
+    }
+    const plan = buildCursorLaunchPlan(task);
+    await updateHandoffTask(task.taskFilePath, {
+      status: 'launching_cursor',
+      stageMessage: '正在打开 Cursor，并准备正式任务提示词。',
+    });
+    try {
+      clipboard.writeText(plan.clipboardText || task.prompt);
+      await new Promise((resolve, reject) => {
+        const child = spawn('cursor', plan.openArgs, {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.on('error', reject);
+        child.unref();
+        // Opening the IDE is fire-and-forget; give spawn a brief chance to fail.
+        setTimeout(resolve, 300);
+      });
+      return updateHandoffTask(task.taskFilePath, {
+        status: 'awaiting_user_send',
+        stageMessage: plan.userInstruction,
+      });
+    } catch (error) {
+      await updateHandoffTask(task.taskFilePath, {
+        status: 'launching_cursor',
+        stageMessage: `打开 Cursor 失败：${error.message}。提示词仍可复制后手动粘贴到 Cursor Agent。`,
+        errors: [{ code: 'CURSOR_LAUNCH_FAILED', message: error.message, at: new Date().toISOString() }],
+      });
+      throw error;
+    }
+  });
+
   ipcMain.handle('handoff:read', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
     return task;
+  });
+
+  ipcMain.handle('handoff:classify', async (_event, taskPath) => {
+    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    const classification = classifyAgentHandoffState(task);
+    const inspection = task.status === 'analysis_complete'
+      ? await inspectAnalysisArtifacts(task)
+      : null;
+    return { task, classification, inspection };
+  });
+
+  ipcMain.handle('handoff:continue-build', async (_event, args) => {
+    const task = await assertUserDataTask(app.getPath('userData'), args?.taskPath);
+    return continueBuildFromAnalysis(task.taskFilePath, {
+      projectRoot: DEFAULT_PROJECT_ROOT,
+      projectName: args?.projectName,
+    });
+  });
+
+  ipcMain.handle('handoff:mark-analysis-complete', async (_event, args) => {
+    const task = await assertUserDataTask(app.getPath('userData'), args?.taskPath);
+    return markAnalysisComplete(task.taskFilePath, {
+      manifestPath: args?.manifestPath,
+      analysisPath: args?.analysisPath,
+      analysisRequestPath: args?.analysisRequestPath,
+      cacheDirectory: args?.cacheDirectory,
+      stageMessage: args?.stageMessage,
+    });
   });
 
   ipcMain.handle('handoff:list', () => listHandoffTasks(app.getPath('userData')));
 
   ipcMain.handle('handoff:cancel', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
-    if (!['draft', 'ready', 'launching_codex', 'awaiting_user_send'].includes(task.status)) {
+    if (!['draft', 'ready', 'launching_codex', 'launching_cursor', 'awaiting_user_send'].includes(task.status)) {
       throw new Error('只有尚未进入生产的交接任务可以取消。');
     }
     return updateHandoffTask(task.taskFilePath, {
@@ -478,10 +554,32 @@ function registerIpc() {
     return { activated: true };
   });
 
+  ipcMain.handle('handoff:activate-cursor', async (_event, taskPath) => {
+    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    const plan = buildCursorLaunchPlan(task);
+    await new Promise((resolve, reject) => {
+      const child = spawn('cursor', ['--new-window', plan.workspace], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.on('error', reject);
+      child.unref();
+      setTimeout(resolve, 300);
+    });
+    return { activated: true };
+  });
+
   ipcMain.handle('handoff:copy-prompt', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
     clipboard.writeText(task.prompt);
     return { copied: true };
+  });
+
+  ipcMain.handle('handoff:show-package', async (_event, taskPath) => {
+    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    if (!task.cursorPackagePath) throw new Error('当前任务没有 Cursor Agent 交接包。');
+    shell.showItemInFolder(task.cursorPackagePath);
+    return { shown: true, packageDir: task.cursorPackagePath };
   });
 
   ipcMain.handle('handoff:settings-load', () => loadHandoffSettings(app.getPath('userData')));
