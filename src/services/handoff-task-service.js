@@ -199,6 +199,7 @@ async function readTaskEvents(taskPath) {
 
 function buildCodexPrompt(input) {
   const mode = input.hyperframesMode;
+  const { sharedEditingRulesText } = require('./editing-contract-service');
   return `使用 $video-cut-planner，处理这期素材：
 
 ${input.sourceDirectory}
@@ -215,6 +216,8 @@ ${mode}
 
 请严格使用现有共享 service 和 Video Skill 完成：素材扫描、ffprobe 元数据、抽帧、场景变化抽帧、语义分析、主题与标题、采用/候选/淘汰判断、有效区间、无口播镜头编排、连贯度检查、少量轻字幕 Marker、FCP 原生可编辑 Title、按规则判断 HyperFrames、正式 v3 项目、粗剪预览、独立素材 FCPXML 和完整验证。
 
+${sharedEditingRulesText()}
+
 必须把 --handoff-task ${JSON.stringify(input.taskFilePath)} 传给支持该参数的 video-skill 命令，并在语义分析、镜头编排、HyperFrames 判断/设计/复核等 Codex 决策节点使用 handoff-update 持续更新阶段、心跳、决策依据、表达缺口和质量复核。先仅用真实素材形成初步时间线，再决定 HyperFrames。auto 仅在动画明显优于普通剪辑、轻字幕或转场时启用；disabled 禁止生成；force-attempt 必须认真尝试但质量不足必须放弃。
 
 不得修改、移动、重命名或删除原始素材；不得覆盖非空正式项目目录；不得省略验证；不得把粗剪预览写入 FCPXML；FCPXML 必须引用正式项目内的独立素材；正式时间线规格与预览规格必须分离；生成结果必须可由结果中心读取。
@@ -225,6 +228,7 @@ build 完成后必须实际观看粗剪；启用 HyperFrames 时还要观看独�
 function buildCursorAgentPrompt(input) {
   const mode = input.hyperframesMode;
   const packageDir = input.packageDir || packageDirForTask(input.taskFilePath);
+  const { sharedEditingRulesText } = require('./editing-contract-service');
   return `使用视频剪辑编排器 v3 的 video-cut-planner Skill，处理这期素材：
 
 ${input.sourceDirectory}
@@ -243,6 +247,8 @@ HyperFrames 模式：
 ${mode}
 
 请严格使用现有共享 service 与 Video Skill CLI，不得复制剪辑算法，不得另建分析结果格式。
+
+${sharedEditingRulesText()}
 
 阶段要求（Cursor Agent 默认分析后交回 App）：
 1. 运行 prepare --source 上述素材目录 --handoff-task 上述状态文件 --json

@@ -36,6 +36,7 @@ const {
   verifyCodexVideoProject,
 } = require('./codex-video-service');
 const { openInFinalCut } = require('./project-action-service');
+const { summarizeMaterialCoverage } = require('./editing-contract-service');
 
 const EDIT_JOB_SCHEMA_VERSION = 1;
 const EDIT_JOB_DIRNAME = 'edit-jobs';
@@ -429,12 +430,16 @@ async function buildEditPreflight(sourceDirectory, options = {}) {
   }));
 
   const canContinue = blockers.length === 0 && recommendedAction !== 'blocked';
+  const materialCoverage = existing?.analysis && existing?.manifest
+    ? summarizeMaterialCoverage(existing.analysis, existing.manifest)
+    : null;
   return {
     material,
     existingProject: existing,
     generationMode,
     generationModeLabel: generationMode === 'first' ? '首次生成' : '再次生成',
     timelineSpec,
+    materialCoverage,
     editorialReview: existing ? {
       exists: existing.hasEditorialReview,
       path: existing.editorialReviewPath,

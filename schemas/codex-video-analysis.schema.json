@@ -174,12 +174,13 @@
     "durationPolicy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["minSec", "maxSec", "source", "rationale"],
+      "required": ["minSec", "source", "rationale"],
       "properties": {
         "minSec": { "type": "number", "minimum": 0 },
-        "maxSec": { "type": "number", "exclusiveMinimum": 0 },
+        "maxSec": { "type": ["number", "null"], "minimum": 0 },
         "source": { "type": "string", "minLength": 1, "maxLength": 100 },
-        "rationale": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "constrained": { "type": "boolean" }
       }
     },
     "chapterSegment": {

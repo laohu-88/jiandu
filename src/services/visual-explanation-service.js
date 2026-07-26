@@ -698,8 +698,9 @@ function validateShotAgainstStage5C(shot, field, asset, source, errors) {
 }
 
 function validateDurationConflictReporting(analysis, manifest, errors, analysisById) {
+  const { isDurationPolicyConstrained } = require('./editing-contract-service');
   const policy = analysis.timeline?.durationPolicy || manifest?.narrative?.durationPolicy;
-  if (!policy || !Array.isArray(analysis.timeline?.shots)) return;
+  if (!policy || !isDurationPolicyConstrained(policy) || !Array.isArray(analysis.timeline?.shots)) return;
   const shots = analysis.timeline.shots;
   const duration = Number(shots.reduce((sum, shot) => sum + Number(shot.durationSec || 0), 0).toFixed(3));
   const hasFullPreserveVideo = shots.some((shot) => {

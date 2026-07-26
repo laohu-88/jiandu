@@ -52,10 +52,10 @@ function analysisFor(manifest) {
     contextSourceFiles: unit.evidence.contextSourceFiles,
     representativeAssetIds: unit.representativeAssetIds,
     supportingAssetIds: [],
-    alternateAssetIds: unit.assetIds.filter(
+    alternateAssetIds: [],
+    duplicateAssetIds: unit.assetIds.filter(
       (assetId) => !unit.representativeAssetIds.includes(assetId),
     ),
-    duplicateAssetIds: [],
     unusableAssetIds: [],
     sourcePlatform: unit.sourcePlatform,
     sourceUrl: unit.sourceUrl,
@@ -75,8 +75,10 @@ function analysisFor(manifest) {
     semanticLabels: ['事件'],
     contentSummary: '画面显示事件主体。',
     suggestedUse: ['上下文说明'],
-    status: representativeIds.has(item.assetId) ? 'adopt' : 'candidate',
-    reason: representativeIds.has(item.assetId) ? '作为代表素材。' : '作为未入选变体保留。',
+    status: representativeIds.has(item.assetId) ? 'adopt' : 'reject',
+    reason: representativeIds.has(item.assetId)
+      ? '作为代表素材。'
+      : '与代表素材画面重复，不进入时间线。',
     ranges: [],
     confidence: 0.88,
     contextUsage: {
@@ -95,6 +97,18 @@ function analysisFor(manifest) {
     warnings: [],
   }));
   const chosen = manifest.items.find((item) => representativeIds.has(item.assetId));
+  const lightCaptionPlan = manifest.items
+    .filter((item) => representativeIds.has(item.assetId) && item.context?.translation)
+    .map((item, index) => ({
+      captionId: `cap-context-${index + 1}`,
+      assetId: item.assetId,
+      text: '补充理解',
+      purpose: 'clarify',
+      basedOn: 'HotIngest 翻译仅生成轻字幕建议，不自动写 Marker/Title',
+      confidence: 0.8,
+      reviewRequired: false,
+      warnings: [],
+    }));
   return {
     schemaVersion: 1,
     theme: {
@@ -110,6 +124,7 @@ function analysisFor(manifest) {
     },
     storyUnits: units,
     assets,
+    lightCaptionPlan,
     timeline: {
       shots: [{
         id: 'shot-1',
@@ -200,7 +215,7 @@ test('语义画像保留翻译、来源和字段来源，不伪造视觉摘要',
   assert.equal(Object.hasOwn(profile, 'visualSummary'), false);
 });
 
-test('Stage 5B 分析只把代表素材放入镜头，并保留三类证据与角色', () => {
+test('Stage 5B 分析可把真实重复变体标为 duplicate 后仅代表素材入镜', () => {
   const grouped = buildStoryUnits([
     visual('video', '004_youtube_Event_01.mp4', { platform: 'youtube' }),
     visual('image', '004_youtube_Event_02.jpg', { platform: 'youtube' }),
@@ -209,6 +224,7 @@ test('Stage 5B 分析只把代表素材放入镜头，并保留三类证据与�
   const analysis = analysisFor(manifest);
   assert.equal(validateVideoAnalysis(analysis, manifest), analysis);
   assert.deepEqual(analysis.timeline.shots.map((shot) => shot.assetId), ['video']);
+  assert.deepEqual(analysis.storyUnits[0].duplicateAssetIds, ['image']);
   assert.equal(analysis.storyUnits[0].narrativeRole, 'context');
   assert.equal(analysis.storyUnits[0].evidence.visualEvidenceUsed.length, 1);
   assert.equal(analysis.storyUnits[0].evidence.contextEvidenceUsed.length, 1);
@@ -270,7 +286,7 @@ test('manifest 已发现的上下文冲突和归组 warning 不能被分析静�
   assert.equal(validateVideoAnalysis(analysis, manifest), analysis);
 });
 
-test('context 标题和翻译不会自动产生 Marker、字幕或 FCP Title', () => {
+test('context 标题和翻译不会自动产生 Marker 或 FCP Title，但必须写入轻字幕建议', () => {
   const grouped = buildStoryUnits([visual('real', '001_alpha_A.jpg', {
     platform: 'alpha',
     title: '应只用于理解',
@@ -279,6 +295,7 @@ test('context 标题和翻译不会自动产生 Marker、字幕或 FCP Title', (
   const manifest = { items: grouped.items, storyUnits: grouped.storyUnits };
   const analysis = analysisFor(manifest);
   assert.equal(validateVideoAnalysis(analysis, manifest), analysis);
+  assert.equal(analysis.lightCaptionPlan.length, 1);
   assert.deepEqual(analysis.timeline.markers, []);
   assert.equal(collectFcpTitles(analysis).length, 0);
 });

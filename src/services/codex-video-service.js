@@ -33,6 +33,10 @@ const {
 const { resolvePreviewFormat, resolveVideoFormats } = require('./video-format-service');
 const { collectFcpTitles, validateFcpxmlStructure, writeFcpxml } = require('./fcpxml-service');
 const {
+  formatDurationPolicyLabel,
+  summarizeMaterialCoverage,
+} = require('./editing-contract-service');
+const {
   GENERATED_ASSET_ID,
   addHyperframesAsset,
   inspectHyperframesEnvironment,
@@ -478,8 +482,7 @@ function buildHumanSummary({
       '',
       `- 使用的说明文件：${(analysis.projectBrief?.sourceDocuments || []).join('、') || '无'}`,
       `- 章节交叉：${manifest.narrative?.allowChapterInterleave ? '允许' : '禁止'}`,
-      `- 允许时长：${analysis.timeline.durationPolicy?.minSec ?? '—'}`
-        + `–${analysis.timeline.durationPolicy?.maxSec ?? '—'} 秒`,
+      `- 成片时长策略：${formatDurationPolicyLabel(analysis.timeline.durationPolicy)}`,
     );
     const segments = computeChapterSegments(timelineAnalysis.timeline.shots);
     for (const chapter of analysis.chapters || []) {
@@ -719,8 +722,47 @@ async function verifyCodexVideoProject(projectPath) {
     }
   }
 
+  const markerTitleCount = collectFcpTitles(effectiveAnalysis).length;
+  const managedTitleCount = Number(fcpxmlReport.managedTitleCount || 0);
+  const materialCoverage = summarizeMaterialCoverage(effectiveAnalysis, manifest);
+  if (materialCoverage.hasUnusedRequiredAssets) {
+    errors.push(
+      `有 ${materialCoverage.unusedAssetCount} 个可用视觉素材未进入时间线。`,
+    );
+  }
+  if (!materialCoverage.lightCaptionsComplete) {
+    errors.push(
+      `应生成轻字幕却未写入 lightCaptionPlan：${materialCoverage.missingLightCaptionAssetIds.join('、')}`,
+    );
+  }
+  const expectedCaptionExports = Math.max(
+    materialCoverage.actualLightCaptionCount,
+    materialCoverage.requiredLightCaptionCount,
+  );
+  const exportedTitleCount = markerTitleCount + managedTitleCount;
+  if (expectedCaptionExports > 0 && exportedTitleCount === 0) {
+    // Stage 5E still requires human approval before managed Titles land; do not
+    // treat a successful rough cut as fully complete when captions remain unexported.
+    warnings.push(
+      `分析结果含 ${expectedCaptionExports} 条应导出轻字幕，但 FCPXML 尚未写入原生 Title；`
+      + '请在结果中心确认并生成/更新 FCP 轻字幕后再次验证。',
+    );
+  }
+  for (const shot of effectiveAnalysis.timeline.shots || []) {
+    const source = (manifest.items || []).find((item) => item.assetId === shot.assetId);
+    const asset = (effectiveAnalysis.assets || []).find((item) => item.assetId === shot.assetId);
+    if (source?.type === 'video'
+      && source.metadata?.hasAudio
+      && shot.audioMode === 'mute'
+      && asset?.audioAnalysis?.preserveOriginalAudio !== false
+      && !asset?.audioAnalysis?.muteReason) {
+      errors.push(`镜头 ${shot.id} 异常丢失原声：有音频流却被静音且无 muteReason。`);
+    }
+  }
+
   const report = {
     ok: errors.length === 0,
+    fullySuccessful: errors.length === 0 && warnings.length === 0,
     verifiedAt: new Date().toISOString(),
     projectPath: resolved,
     errors,
@@ -730,12 +772,19 @@ async function verifyCodexVideoProject(projectPath) {
     xmlSyntax,
     previewMetadata,
     hyperframes,
+    materialCoverage: {
+      ...materialCoverage,
+      expectedLightCaptionExportCount: expectedCaptionExports,
+      actualFcpTitleCount: exportedTitleCount,
+      lightCaptionExportComplete: expectedCaptionExports === 0 || exportedTitleCount > 0,
+    },
     narrative: {
       ok: true,
       chapterCount: manifest.chapters?.length || 0,
       chapterSegments: computeChapterSegments(effectiveAnalysis.timeline.shots),
       durationSec: timelineDuration(effectiveAnalysis.timeline.shots),
       durationPolicy: manifest.narrative?.durationPolicy || null,
+      durationPolicyLabel: formatDurationPolicyLabel(manifest.narrative?.durationPolicy),
       fcpxmlOrderMatchesAnalysis: fcpxmlReport.errors.every((error) => !/镜头素材顺序/.test(error)),
     },
     formats: { timeline: timelineFormat, preview: previewFormat },

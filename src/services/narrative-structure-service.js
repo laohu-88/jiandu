@@ -194,39 +194,34 @@ function assignSubchapters(chapterName, files) {
 
 function computeDurationPolicy(chapters, mediaFacts = {}, projectBrief = null) {
   const explicit = projectBrief?.durationRequirement;
+  // Only an explicit project-brief range may constrain finished length.
+  // Never invent default 15–60 / 60–90 / 75–110 caps that push agents to skip media.
   if (explicit?.minSec && explicit?.maxSec) {
     return {
       minSec: explicit.minSec,
       maxSec: explicit.maxSec,
       source: 'project-brief',
+      constrained: true,
       rationale: '根目录本期说明明确给出了成片时长范围。',
     };
   }
-  const mediaCount = Number(mediaFacts.imageCount || 0) + Number(mediaFacts.videoCount || 0);
-  const videoDuration = Number(mediaFacts.totalVideoDurationSec || 0);
-  if (chapters.length > 1) {
-    const processAndResult = chapters.some((chapter) => /搭建|开发|过程|准备/.test(chapter.chapterName))
-      && chapters.some((chapter) => /成果|结果|成品|发布/.test(chapter.chapterName));
-    if (processAndResult || mediaCount >= 12 || videoDuration >= 180) {
-      return {
-        minSec: 75,
-        maxSec: 110,
-        source: 'multi-chapter-policy',
-        rationale: '项目同时包含过程与成果，且有效素材量足以支撑完整多章节叙事。',
-      };
-    }
+  if (explicit?.minSec && !explicit?.maxSec) {
     return {
-      minSec: Math.max(60, explicit?.minSec || 0),
-      maxSec: 90,
-      source: explicit ? 'project-brief-minimum' : 'multi-chapter-policy',
-      rationale: '多章节项目至少需要完整交代各章，不沿用单一演示的极短时长。',
+      minSec: explicit.minSec,
+      maxSec: null,
+      source: 'project-brief-minimum',
+      constrained: false,
+      rationale: '本期说明仅给出最短时长要求，不设默认成片上限；可用视觉素材仍须完整进入时间线。',
     };
   }
+  void chapters;
+  void mediaFacts;
   return {
-    minSec: 15,
-    maxSec: 60,
-    source: 'single-chapter-policy',
-    rationale: '单章节项目按有效素材与表达任务保持紧凑。',
+    minSec: 0,
+    maxSec: null,
+    source: 'unconstrained',
+    constrained: false,
+    rationale: '未在本期说明中指定成片时长；默认不设目标时长或上限，不得以“不要太长”淘汰普通素材。',
   };
 }
 

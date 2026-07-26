@@ -16,6 +16,7 @@ const {
 } = require('./handoff-task-service');
 const { validateAnalysisFile, buildCodexVideoProject, verifyCodexVideoProject } = require('./codex-video-service');
 const { readCodexProjectResult } = require('./codex-project-result-service');
+const { uniqueProjectName } = require('./in-app-edit-workflow-service');
 
 const EXPECTED_ANALYSIS_ARTIFACTS = Object.freeze([
   {
@@ -123,6 +124,7 @@ async function writeCursorAgentPackage(task) {
     '- 不覆盖已有成功正式项目',
     '- 不改写 `editorial-review.json` 与人工字幕',
     '- 不另建与现有分析合同重复的数据格式',
+    '- 不设默认成片时长上限，不跳过可用视觉素材，视频原声默认保留，应有轻字幕不得遗漏',
     '',
   ].join('\n');
   const recovery = [
@@ -385,12 +387,28 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
   }
 
   const projectRoot = path.resolve(options.projectRoot || DEFAULT_PROJECT_ROOT);
-  const projectName = options.projectName
+  const requestedName = options.projectName
     || task.sourceSummary?.name
     || path.basename(task.sourceDirectoryRealPath);
+  // Match buildCodexVideoProject's safeFilename collapse so uniqueness checks the real target name.
+  const sanitizedRequested = String(requestedName || '')
+    .trim()
+    .replace(/[\\/:*?"<>|\0]/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 100)
+    .trim() || '未命名项目';
+  let existingNames = [];
+  try {
+    existingNames = (await fs.readdir(projectRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch {
+    existingNames = [];
+  }
+  const projectName = uniqueProjectName(sanitizedRequested, existingNames);
   const targetPath = path.join(projectRoot, projectName);
-  const targetExists = await pathExists(targetPath);
-  if (targetExists) {
+  if (await pathExists(targetPath)) {
     throw Object.assign(new Error('正式项目目录已存在，为保护成功结果不会原地覆盖。请改用新项目名。'), {
       code: 'PROJECT_ALREADY_EXISTS',
       projectPath: targetPath,

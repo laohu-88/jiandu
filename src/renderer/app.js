@@ -622,7 +622,11 @@ function openHandoffConfirm(episode, engine = 'codex') {
     ['检测到的章节数', String(chapters.length)],
     ['使用的本期说明文件', (episode.briefFilesUsed || []).join('、') || '无'],
     ['预计成片时长范围', episode.durationPolicy
-      ? `${episode.durationPolicy.minSec}–${episode.durationPolicy.maxSec} 秒`
+      ? (episode.durationPolicy.constrained === false
+        || episode.durationPolicy.source === 'unconstrained'
+        || episode.durationPolicy.maxSec == null
+        ? '不设默认成片时长上限'
+        : `${episode.durationPolicy.minSec}–${episode.durationPolicy.maxSec} 秒`)
       : '待分析'],
     ['章节交叉', episode.allowChapterInterleave ? '允许' : '禁止'],
   ]);
@@ -861,11 +865,21 @@ function renderEditPreflight(preflight) {
   const timeline = preflight.timelineSpec;
   elements.editPreflightSummary.replaceChildren(createDefinitionGrid([
     ['素材类型', material.kindLabel],
+    ['可用视觉素材', String(
+      (preflight.mediaCounts.image || 0) + (preflight.mediaCounts.video || 0),
+    )],
     ['图片', String(preflight.mediaCounts.image)],
     ['视频', String(preflight.mediaCounts.video)],
     ['音频', String(preflight.mediaCounts.audio)],
     ['文本/支持', String(preflight.mediaCounts.support)],
     ['不支持', String(preflight.unsupportedCount)],
+    ['成片时长策略', preflight.context.durationPolicy
+      ? (preflight.context.durationPolicy.constrained === false
+        || preflight.context.durationPolicy.source === 'unconstrained'
+        || preflight.context.durationPolicy.maxSec == null
+        ? '不设默认成片时长上限'
+        : `${preflight.context.durationPolicy.minSec}–${preflight.context.durationPolicy.maxSec} 秒`)
+      : '不设默认成片时长上限'],
     ['项目上下文', material.hotIngest?.detected
       ? `HotIngest（context ${material.hotIngest.counts.contextHtml}，metadata ${material.hotIngest.counts.metadataJson}）`
       : '普通素材项目'],
@@ -884,6 +898,24 @@ function renderEditPreflight(preflight) {
     ['已有正式项目', preflight.existingProject?.projectPath || '无'],
     ['editorial-review.json', editorial.exists ? '已识别' : '未找到'],
     ['人工字幕（确认）', String(editorial.humanCaptionCount || editorial.confirmedCaptionCount || 0)],
+    ['应生成轻字幕', String(preflight.materialCoverage?.requiredLightCaptionCount
+      ?? editorial.humanCaptionCount
+      ?? 0)],
+    ['已进入时间线条数', preflight.materialCoverage
+      ? String(preflight.materialCoverage.timelineAssetCount)
+      : (preflight.existingProject?.success ? '见已有结果' : '待分析后统计')],
+    ['未使用可用素材', preflight.materialCoverage
+      ? (preflight.materialCoverage.hasUnusedRequiredAssets ? `有 ${preflight.materialCoverage.unusedAssetCount} 项` : '无')
+      : '待分析后统计'],
+    ['完整使用 / 截取使用', preflight.materialCoverage
+      ? `${preflight.materialCoverage.fullUseCount} / ${preflight.materialCoverage.trimmedUseCount}`
+      : '待分析后统计'],
+    ['保留原声视频', preflight.materialCoverage
+      ? String(preflight.materialCoverage.videosKeepOriginalAudioCount)
+      : '待分析后统计'],
+    ['轻字幕 应有/实际', preflight.materialCoverage
+      ? `${preflight.materialCoverage.requiredLightCaptionCount} / ${preflight.materialCoverage.actualLightCaptionCount}`
+      : '待分析后统计'],
     ['是否可继续', preflight.canContinue ? '可以' : '不可继续'],
     ['保护策略', '不覆盖人工审核；不修改 HotIngest 来源；不破坏已有成功项目'],
   ]));
@@ -1461,6 +1493,26 @@ function renderCodexProjectResult(result) {
     ['FCPXML 结构', result.verification.fcpxml?.ok === true ? '通过' : (result.verification.fcpxml ? '失败' : '—')],
     ['FCPXML XML', result.verification.xmlSyntax?.ok === true ? '通过' : (result.verification.xmlSyntax ? '失败' : '—')],
     ['粗剪', result.verification.preview?.hasVideo === true ? '通过' : (result.verification.preview ? '失败' : '—')],
+    ['可用视觉素材', String(result.verification.materialCoverage?.eligibleVisualCount ?? '—')],
+    ['已进入时间线', String(result.verification.materialCoverage?.timelineAssetCount ?? '—')],
+    ['未使用可用素材', result.verification.materialCoverage
+      ? (result.verification.materialCoverage.hasUnusedRequiredAssets
+        ? `有 ${result.verification.materialCoverage.unusedAssetCount} 项`
+        : '无')
+      : '—'],
+    ['完整使用 / 截取使用', result.verification.materialCoverage
+      ? `${result.verification.materialCoverage.fullUseCount} / ${result.verification.materialCoverage.trimmedUseCount}`
+      : '—'],
+    ['保留原声视频', String(result.verification.materialCoverage?.videosKeepOriginalAudioCount ?? '—')],
+    ['轻字幕 应有/实际', result.verification.materialCoverage
+      ? `${result.verification.materialCoverage.requiredLightCaptionCount} / ${result.verification.materialCoverage.actualLightCaptionCount}`
+      : '—'],
+    ['FCP 轻字幕 Title', String(
+      result.verification.materialCoverage?.actualFcpTitleCount
+      ?? result.verification.fcpxml?.managedTitleCount
+      ?? result.verification.fcpxml?.titleCount
+      ?? '—',
+    )],
     ['HyperFrames', result.hyperframes.enabled ? (result.hyperframes.checkOk ? '通过' : '未通过') : '本期未启用'],
     ['warnings', result.verification.warnings.join('；') || '无'],
     ['errors', result.verification.errors.join('；') || '无'],

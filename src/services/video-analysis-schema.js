@@ -1,4 +1,9 @@
 const { validateStage5CAnalysis } = require('./visual-explanation-service');
+const {
+  isDurationPolicyConstrained,
+  validateMaterialCoverage,
+  validateRequiredLightCaptions,
+} = require('./editing-contract-service');
 
 const ASSET_STATUSES = new Set(['adopt', 'candidate', 'reject']);
 const FIT_MODES = new Set(['contain', 'cover']);
@@ -247,7 +252,7 @@ function validateNarrativeAnalysis(analysis, manifest, errors) {
   )) {
     errors.push('timeline.durationPolicy 与素材扫描阶段的多章节策略不一致。');
   }
-  if (expectedPolicy) {
+  if (expectedPolicy && isDurationPolicyConstrained(expectedPolicy)) {
     const duration = timelineDuration(shots);
     const outside = duration < expectedPolicy.minSec - 0.02
       || duration > expectedPolicy.maxSec + 0.02;
@@ -430,9 +435,15 @@ function validateStoryUnitAnalysis(analysis, manifest, errors, analysisById) {
       errors.push(`${field}.selectionReason 必须解释镜头选择。`);
     }
     validateEvidenceDecision(shot.evidence, `${field}.evidence`, errors);
-    if (unit && !(unit.representativeAssetIds || []).includes(shot.assetId)
-      && !(unit.supportingAssetIds || []).includes(shot.assetId)) {
-      errors.push(`${field} 使用了未列为 representative/supporting 的 Story Unit 素材。`);
+    if (unit && (unit.unusableAssetIds || []).includes(shot.assetId)) {
+      errors.push(`${field} 使用了已标为 unusable 的 Story Unit 素材。`);
+    }
+    if (unit
+      && !(unit.representativeAssetIds || []).includes(shot.assetId)
+      && !(unit.supportingAssetIds || []).includes(shot.assetId)
+      && !(unit.alternateAssetIds || []).includes(shot.assetId)
+      && !(unit.duplicateAssetIds || []).includes(shot.assetId)) {
+      errors.push(`${field} 使用了未在 Story Unit 中分类的素材。`);
     }
     const conflicts = [
       ...(Array.isArray(unit?.conflicts) ? unit.conflicts : []),
@@ -637,6 +648,13 @@ function validateVideoAnalysis(analysis, manifest) {
       }
       if (!FIT_MODES.has(shot.fitMode)) errors.push(`${field}.fitMode 无效。`);
       if (!AUDIO_MODES.has(shot.audioMode)) errors.push(`${field}.audioMode 无效。`);
+      if (source?.type === 'video'
+        && source.metadata?.hasAudio
+        && shot.audioMode === 'mute'
+        && !isNonEmptyString(analyzed?.audioAnalysis?.muteReason, 500)
+        && analyzed?.audioAnalysis?.preserveOriginalAudio !== false) {
+        errors.push(`${field} 有原声的视频默认必须 keep；静音须有明确 muteReason。`);
+      }
       if (!isNonEmptyString(shot.purpose, 500)) errors.push(`${field}.purpose 无效。`);
       if (!isConfidence(shot.confidence)) errors.push(`${field}.confidence 必须在 0 到 1 之间。`);
       if (shot.reviewRequired != null && typeof shot.reviewRequired !== 'boolean') {
@@ -693,6 +711,15 @@ function validateVideoAnalysis(analysis, manifest) {
   }
   validateNarrativeAnalysis(analysis, manifest, errors);
   validateStage5CAnalysis(analysis, manifest, errors, analysisById);
+  validateMaterialCoverage(analysis, manifest, errors);
+  // Light-caption completeness is enforced when Stage 5C explanation fields exist
+  // or a caption plan is already present; missing required captions must fail validation.
+  const hasExplanationSignals = (analysis.assets || []).some((asset) => asset.explanationPlan)
+    || analysis.lightCaptionPlan != null
+    || (manifest?.items || []).some((item) => item.context);
+  if (hasExplanationSignals) {
+    validateRequiredLightCaptions(analysis, manifest, errors);
+  }
 
   if (errors.length > 0) {
     throw Object.assign(new Error(`Codex 视频分析协议校验失败：${errors[0]}`), {

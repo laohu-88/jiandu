@@ -71,13 +71,21 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   `audioAvailable: true`.
 - `assets[].videoPreservationPlan`: optional Stage 5C structure. Videos default to
   `preserveFullClip: true` using the full valid source range. Do not invent a
-  uniform short-shot cap or silently truncate to fit the target duration. Allowed
-  trims need an explicit `trimReason` and must keep protected subtitle/action/audio
-  ranges. If completeness conflicts with `durationPolicy`, prefer
-  `timeline.durationException`.
-- `lightCaptionPlan`: optional top-level Stage 5C suggestions only. Natural concise
-  Chinese, timed to the relevant moment, never automatic FCP Titles/Markers/tracks.
-  Self-explanatory assets may omit captions entirely.
+  uniform short-shot cap, a default finished-duration target, or “keep it short”
+  guidance. Allowed trims need an explicit `trimReason` and must keep protected
+  subtitle/action/audio ranges. Exceptionally long videos may be trimmed but must
+  still appear on the timeline. When a project brief supplies an explicit
+  `durationPolicy` range and completeness conflicts with it, prefer
+  `timeline.durationException`. When the policy is `unconstrained` (`maxSec: null`),
+  do not invent a replacement max.
+- `lightCaptionPlan`: Stage 5C suggestions that become required when
+  `audienceNeedsExplanation` is background / translate_on_screen_text /
+  humor_or_twist / multi_panel_dialogue, or when HotIngest foreign explanations /
+  human-reviewed captions are present. Natural concise Chinese, timed to the
+  relevant moment. Missing required captions fails validation. Suggestions still
+  do not auto-write FCP Titles/Markers/tracks until the App Stage 5E export path,
+  but verification must not report full success if required captions were never
+  planned or never exported as FCP Titles.
 - Stage 5D human review: the App Results Center section “解释与轻字幕” loads Stage
   5C fields for review. Human decisions persist in
   `00-项目总控/editorial-review.json` with statuses `pending`, `approved`,
@@ -115,19 +123,31 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
 - `confidence`: number from 0 to 1. Use lower values and `reviewRequired: true` for sparse evidence.
 - `timeline.orientation`: `horizontal` or `vertical`, based on the actual adopted media and dominant video rather than the folder name, first image, or preview size.
 - `timeline.width`, `height`, `fps`: intended production sequence. Horizontal defaults to 1920×1080, vertical defaults to 1080×1920, and an unreliable or unavailable source frame rate defaults to 30 fps. Use even dimensions. The rough-cut preview is a separate lightweight artifact and does not set these values.
-- `shots`: ordered no-voiceover visual timeline. Every shot in a narrative-aware manifest must retain `chapterId` and `subchapterId`. Every context-aware shot must also record `storyUnitId`, `narrativeRole`, `selectionReason`, and separated `evidence`. Different chapters and ordered subchapters may not interleave unless the brief explicitly allows it. For still images, encode display length as `inSec: 0`, `outSec: <duration>`, `durationSec: <duration>`.
+- `shots`: ordered no-voiceover visual timeline. Every usable visual asset must appear
+  in at least one shot unless classified as `duplicateAssetIds` or `unusableAssetIds`.
+  Every shot in a narrative-aware manifest must retain `chapterId` and `subchapterId`.
+  Every context-aware shot must also record `storyUnitId`, `narrativeRole`,
+  `selectionReason`, and separated `evidence`. Different chapters and ordered
+  subchapters may not interleave unless the brief explicitly allows it. For still
+  images, encode display length as `inSec: 0`, `outSec: <duration>`,
+  `durationSec: <duration>`.
 - Conflicts between visible content and context must remain in `conflicts` or
   `warnings`. An adopted conflicting shot requires `reviewRequired: true` and
   confidence no higher than `0.6`; otherwise reject or keep it as a candidate.
 - HotIngest titles, bodies, translations, comments, and media descriptions never
   create markers, subtitles, or FCP Titles by themselves. Stage 5C
-  `lightCaptionPlan` likewise does not auto-write FCP Titles.
+  `lightCaptionPlan` likewise does not auto-write FCP Titles, but required plans
+  must still be present.
 - `timeline.chapterSegments`: record each contiguous chapter's first/last shot, timeline start/end, and shot count.
-- `timeline.durationPolicy`: copy the manifest policy. A timeline outside that range requires a concrete `durationException`; never apply the short single-demonstration target to a multi-chapter process-plus-results story, and never silently cut protected video content just to fit.
+- `timeline.durationPolicy`: copy the manifest policy. Default prepare output is
+  unconstrained (`source: unconstrained`, `maxSec: null`) unless the project brief
+  explicitly sets a range. A constrained timeline outside that range requires a
+  concrete `durationException`; never invent a short single-demonstration target,
+  and never silently cut protected video content or skip ordinary assets just to fit.
 - `fitMode`: `contain` or `cover`.
 - `audioMode`: `keep` or `mute`. For videos with an audio stream, default to
   `keep`. FCPXML must not mute a clip whose `audioAnalysis.preserveOriginalAudio`
-  is `true`.
+  is `true`. Do not mute because BGM, captions, or other videos exist.
 - `markers`: zero or a few brief explanatory suggestions, not full subtitles. Existing
   `{timeSec, text}` markers remain valid. When the user explicitly requests editable
   light subtitles for a release project, a marker may additionally provide `id`, `type`,

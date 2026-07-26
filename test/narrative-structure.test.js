@@ -112,16 +112,23 @@ test('无说明文件时仍按数字前缀和自然目录顺序运行', async ()
   assert.deepEqual(narrative.chapters.map((item) => item.chapterName), ['01-过程', '02-成果']);
 });
 
-test('多章节过程加成果采用 75–110 秒策略，单目录继续使用短片策略', () => {
+test('未指定成片时长时不设默认上限；仅本期说明可约束时长', () => {
   const multi = computeDurationPolicy([
     { chapterName: '搭建过程' },
     { chapterName: '两期成果' },
   ], { imageCount: 8, videoCount: 13, totalVideoDurationSec: 303 });
-  assert.deepEqual([multi.minSec, multi.maxSec], [75, 110]);
+  assert.equal(multi.source, 'unconstrained');
+  assert.equal(multi.maxSec, null);
+  assert.equal(multi.constrained, false);
   const single = computeDurationPolicy([{ chapterName: '单一演示' }], {
     imageCount: 1, videoCount: 1, totalVideoDurationSec: 20,
   });
-  assert.deepEqual([single.minSec, single.maxSec], [15, 60]);
+  assert.equal(single.source, 'unconstrained');
+  assert.equal(single.maxSec, null);
+  const explicit = computeDurationPolicy([{ chapterName: '单一演示' }], {}, {
+    durationRequirement: { minSec: 30, maxSec: 90, source: 'projectBrief' },
+  });
+  assert.deepEqual([explicit.minSec, explicit.maxSec, explicit.constrained], [30, 90, true]);
 });
 
 function narrativeManifest() {
@@ -326,5 +333,6 @@ test('交接确认页包含章节预览、说明文件、时长范围和交叉�
   assert.match(app, /检测到的章节数/);
   assert.match(app, /使用的本期说明文件/);
   assert.match(app, /预计成片时长范围/);
+  assert.match(app, /不设默认成片时长上限/);
   assert.match(app, /章节交叉/);
 });
