@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "profileId": "douyin-vertical-v1",
+  "platform": "douyin",
+  "displayName": "抖音",
+  "format": {
+    "aspectRatio": "9:16",
+    "orientation": "vertical",
+    "width": 1080,
+    "height": 1920,
+    "dynamicRange": "SDR",
+    "colorSpace": "Rec. 709",
+    "fpsPolicy": "project-primary-media"
+  },
+  "safeZones": {
+    "subtitle": {
+      "x": 0.08,
+      "y": 0.12,
+      "width": 0.72,
+      "height": 0.68
+    },
+    "subject": {
+      "x": 0.07,
+      "y": 0.08,
+      "width": 0.72,
+      "height": 0.72
+    }
+  },
+  "uiOcclusionZones": [
+    {
+      "id": "top-controls",
+      "label": "顶部状态与搜索区域",
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 0.08
+    },
+    {
+      "id": "right-actions",
+      "label": "右侧头像与互动按钮",
+      "x": 0.79,
+      "y": 0.18,
+      "width": 0.21,
+      "height": 0.58
+    },
+    {
+      "id": "bottom-controls",
+      "label": "底部标题、描述与导航",
+      "x": 0,
+      "y": 0.8,
+      "width": 1,
+      "height": 0.2
+    }
+  ],
+  "subtitlePlacements": {
+    "bottom-safe": {
+      "x": 0.12,
+      "y": 0.69,
+      "width": 0.64,
+      "height": 0.08,
+      "fcpTransform": {
+        "x": -8,
+        "y": -58
+      }
+    },
+    "top-safe": {
+      "x": 0.12,
+      "y": 0.13,
+      "width": 0.64,
+      "height": 0.08,
+      "fcpTransform": {
+        "x": -8,
+        "y": 58
+      }
+    },
+    "center": {
+      "x": 0.12,
+      "y": 0.43,
+      "width": 0.64,
+      "height": 0.1,
+      "fcpTransform": {
+        "x": -8,
+        "y": 0
+      }
+    }
+  },
+  "layouts": {
+    "native_vertical": {
+      "label": "原生竖屏完整显示",
+      "conform": "fit",
+      "background": "none"
+    },
+    "center_crop": {
+      "label": "中央裁切",
+      "conform": "fill",
+      "background": "none"
+    },
+    "landscape_card": {
+      "label": "完整横屏卡片",
+      "conform": "fit",
+      "background": "solid"
+    },
+    "landscape_card_blur": {
+      "label": "完整横屏卡片（同画面模糊背景）",
+      "conform": "fit",
+      "background": "same-frame-blur"
+    }
+  }
+}

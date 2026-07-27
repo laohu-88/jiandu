@@ -78,28 +78,37 @@ async function installMacLocal(options = {}) {
   const previousExists = await pathExists(target);
   const backupPath = previousExists ? backupPathFor() : null;
   const stagingPath = path.join('/Applications', `.${productName}.installing-${process.pid}.app`);
+  const legacyVerificationOptions = {
+    skipRuntimeEntitlements: true,
+    skipRuntimeFileRequirements: true,
+    skipVersionCheck: true,
+  };
   let targetRemoved = false;
   try {
     await fs.rm(stagingPath, { recursive: true, force: true });
     if (previousExists) {
+      const installedVerification = await verifyImpl(target, legacyVerificationOptions);
       await fs.mkdir(path.dirname(backupPath), { recursive: true });
       await runImpl('/usr/bin/ditto', [target, backupPath], { timeout: 10 * 60 * 1000 });
-      await verifyImpl(backupPath, { skipRuntimeEntitlements: true });
+      const backupVerification = await verifyImpl(backupPath, legacyVerificationOptions);
+      if (backupVerification.appAsarSha256 !== installedVerification.appAsarSha256) {
+        throw new Error('旧 App 备份与已安装版本的 app.asar 不一致。');
+      }
       await fs.rm(target, { recursive: true });
       targetRemoved = true;
     }
     await runImpl('/usr/bin/ditto', [source, stagingPath], { timeout: 10 * 60 * 1000 });
     await verifyImpl(stagingPath);
     await fs.rename(stagingPath, target);
-    targetRemoved = false;
     const verification = await verifyImpl(target);
+    targetRemoved = false;
     return { installed: true, target, previousExists, backupPath, verification };
   } catch (error) {
     await fs.rm(stagingPath, { recursive: true, force: true }).catch(() => {});
     if (previousExists && targetRemoved && backupPath && await pathExists(backupPath)) {
       await fs.rm(target, { recursive: true, force: true }).catch(() => {});
       await runImpl('/usr/bin/ditto', [backupPath, target], { timeout: 10 * 60 * 1000 });
-      await verifyImpl(target, { skipRuntimeEntitlements: true });
+      await verifyImpl(target, legacyVerificationOptions);
     }
     throw error;
   }

@@ -16,6 +16,18 @@ const SHARED_EDITING_RULES_LINES = Object.freeze([
   '7. 不把上下文文件、图标、头像、无效下载、损坏或无法读取的文件计入应上时间线素材；真实重复画面可标为 duplicateAssetIds，无可用视觉实体可标为 unusableAssetIds。',
 ]);
 
+const SHARED_DOUYIN_RULES_LINES = Object.freeze([
+  '抖音平台变体规划合同（Cursor Agent 与 Codex 共用；不得替代或削弱默认主成片合同）：',
+  '1. 默认主成片仍按上述完整素材、普通视频完整使用和原声保留规则生成；抖音规划只写入 analysis.platformVariants.douyin，修改抖音规划不得改写默认 timeline、来源素材、人工字幕或 editorial-review.json。',
+  '2. 抖音可以主动选择部分素材，也可以规划一条或多条相互独立的成片；HotIngest 趣味素材与开发记录不强制拼接。',
+  '3. 每项可用视觉素材必须记录 selected、separate 或 excluded 之一，并写明确原因；选材依据须覆盖画面吸引力、独立成立程度、主题一致性、手机适配、竖屏表现、上下文成本、视觉变化、原声价值和重复程度。',
+  '4. 不得写入或使用固定目标时长、建议时长区间、固定镜头数量或固定成片数量；不得据此反推删除素材。',
+  '5. 较长视频允许选择精彩片段，但必须记录 selectedRanges 的实际时间范围和原因；所选有声视频默认 keep，静音必须写 muteReason。',
+  '6. 每条成片必须独立记录 theme、rationale、openingAssetId、naturalEnding、shots、逐镜头 layout、lightCaptions 和 warnings；布局仅可使用 native_vertical、center_crop、landscape_card、landscape_card_blur。',
+  '7. 人工审核字幕、HotIngest 翻译、外文解释和受管字幕规则继续生效；人工文字不得改写；应有轻字幕缺失时抖音变体不得标为完全成功。',
+  '8. 水印、二维码、敏感内容和其他人工确认项必须进入 warnings，并在生成前由用户确认。',
+]);
+
 const EXPLANATION_NEEDS_REQUIRING_CAPTION = new Set([
   'background',
   'translate_on_screen_text',
@@ -28,6 +40,10 @@ const DUPLICATE_REJECT_PATTERN = /重复|duplicate|相同画面|无补充.*叙�
 
 function sharedEditingRulesText() {
   return SHARED_EDITING_RULES_LINES.join('\n');
+}
+
+function sharedDouyinPlanningContractText() {
+  return SHARED_DOUYIN_RULES_LINES.join('\n');
 }
 
 function isDurationPolicyConstrained(policy) {
@@ -184,11 +200,13 @@ function validateRequiredLightCaptions(analysis, manifest, errors) {
 module.exports = {
   EXPLANATION_NEEDS_REQUIRING_CAPTION,
   SHARED_EDITING_RULES_LINES,
+  SHARED_DOUYIN_RULES_LINES,
   assetNeedsLightCaption,
   formatDurationPolicyLabel,
   isDurationPolicyConstrained,
   listEligibleVisualItems,
   sharedEditingRulesText,
+  sharedDouyinPlanningContractText,
   summarizeMaterialCoverage,
   validateMaterialCoverage,
   validateRequiredLightCaptions,

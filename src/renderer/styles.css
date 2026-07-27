@@ -642,6 +642,344 @@ p {
   color: #b23636;
 }
 
+.douyin-editor {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.douyin-summary-grid {
+  margin-bottom: 4px;
+}
+
+.douyin-block,
+.douyin-video-card {
+  padding: 15px;
+  border: 1px solid #e1e5ec;
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+
+.douyin-block h4,
+.douyin-video-card h4,
+.douyin-caption-list h5,
+.douyin-warning-list h5 {
+  margin: 0 0 12px;
+}
+
+.douyin-block-heading,
+.douyin-video-heading,
+.douyin-shot-heading,
+.douyin-preview-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.douyin-block-heading h4 {
+  margin: 0;
+}
+
+.douyin-selection-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(150px, 0.45fr) minmax(260px, 1.5fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px 0;
+  border-top: 1px solid #e8ebf0;
+}
+
+.douyin-selection-row:first-of-type {
+  border-top: 0;
+}
+
+.douyin-selection-identity {
+  min-width: 0;
+  padding-top: 24px;
+}
+
+.douyin-selection-identity strong,
+.douyin-selection-identity small {
+  display: block;
+}
+
+.douyin-selection-identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.douyin-selection-identity small,
+.douyin-shot-heading small,
+.douyin-caption-row small {
+  margin-top: 5px;
+  color: #858d99;
+  font-size: 11px;
+}
+
+.douyin-control {
+  display: block;
+  min-width: 0;
+  margin-top: 10px;
+}
+
+.douyin-control > span {
+  display: block;
+  margin-bottom: 5px;
+  color: #707986;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.douyin-control select,
+.douyin-control input,
+.douyin-control textarea {
+  width: 100%;
+}
+
+.douyin-control textarea {
+  min-height: 68px;
+  padding: 9px 11px;
+  resize: vertical;
+  border: 1px solid #d9dde4;
+  border-radius: 9px;
+  outline: none;
+  color: #20242b;
+  background: #fff;
+}
+
+.douyin-video-card {
+  background: #fff;
+}
+
+.douyin-video-heading {
+  margin-bottom: 12px;
+}
+
+.douyin-shot-list,
+.douyin-caption-list,
+.douyin-warning-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.douyin-shot-row,
+.douyin-caption-row {
+  padding: 12px;
+  border: 1px solid #e5e8ee;
+  border-radius: 10px;
+  background: #f8f9fb;
+}
+
+.douyin-shot-heading > div:first-child,
+.douyin-shot-heading strong,
+.douyin-shot-heading small {
+  min-width: 0;
+}
+
+.douyin-shot-heading strong,
+.douyin-shot-heading small {
+  display: block;
+}
+
+.douyin-layout-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(100px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.douyin-caption-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(140px, 0.6fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.douyin-caption-row small {
+  grid-column: 1 / -1;
+}
+
+.douyin-warning-list {
+  padding: 12px;
+  border-radius: 10px;
+  background: #fff7df;
+}
+
+.douyin-warning-list label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #745517;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.douyin-warning-list input {
+  width: auto;
+  height: auto;
+  margin-top: 3px;
+}
+
+.douyin-warning-list label > span {
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.douyin-preview-controls {
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.douyin-preview-controls .douyin-control {
+  flex: 1 1 auto;
+}
+
+.douyin-preview-canvas {
+  position: relative;
+  width: min(100%, 360px);
+  aspect-ratio: 9 / 16;
+  margin: 0 auto 12px;
+  overflow: hidden;
+  border-radius: 15px;
+  background: #0b0d11;
+  box-shadow: 0 10px 30px rgba(19, 24, 34, 0.18);
+}
+
+.douyin-preview-media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.douyin-preview-media.background {
+  filter: blur(18px) brightness(0.62);
+  object-fit: cover !important;
+  transform: scale(1.15) !important;
+}
+
+.douyin-preview-media.foreground {
+  z-index: 1;
+  transform-origin: center;
+}
+
+.douyin-original-boundary,
+.douyin-safe-zone,
+.douyin-ui-mask,
+.douyin-caption-preview {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.douyin-original-boundary {
+  left: 4%;
+  top: 4%;
+  width: 92%;
+  height: 92%;
+  border: 1px dashed rgba(255, 255, 255, 0.72);
+}
+
+.douyin-original-boundary.horizontal {
+  top: 34%;
+  height: 32%;
+}
+
+.douyin-original-boundary span,
+.douyin-safe-zone span,
+.douyin-ui-mask span {
+  padding: 2px 4px;
+  color: #fff;
+  background: rgba(8, 10, 15, 0.62);
+  font-size: 8px;
+}
+
+.douyin-safe-zone {
+  border: 1px dashed rgba(100, 221, 165, 0.9);
+}
+
+.douyin-safe-zone.subtitle {
+  border-color: rgba(255, 211, 93, 0.95);
+}
+
+.douyin-ui-mask {
+  background: rgba(255, 80, 96, 0.18);
+  border: 1px solid rgba(255, 100, 112, 0.42);
+}
+
+.douyin-caption-preview {
+  display: grid;
+  place-items: center;
+  padding: 3px;
+  color: #fff;
+  background: rgba(5, 8, 12, 0.72);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.douyin-preview-info,
+.douyin-output-meta {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.douyin-editor-actions {
+  position: sticky;
+  bottom: 10px;
+  z-index: 8;
+  justify-content: flex-end;
+  padding: 10px;
+  border: 1px solid #dfe4ed;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 7px 22px rgba(22, 30, 47, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.douyin-output-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.douyin-output-card {
+  padding: 14px;
+  border: 1px solid #e2e6ed;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.douyin-output-card h4 {
+  margin: 0 0 10px;
+}
+
+.douyin-output-preview {
+  display: block;
+  width: min(100%, 240px);
+  max-height: 426px;
+  margin: 12px auto;
+  border-radius: 10px;
+  background: #0b0d11;
+}
+
+@media (max-width: 1100px) {
+  .douyin-selection-row,
+  .douyin-caption-row {
+    grid-template-columns: 1fr;
+  }
+
+  .douyin-layout-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .douyin-caption-row small {
+    grid-column: auto;
+  }
+}
+
 @media (max-width: 1000px) {
   .results-layout {
     grid-template-columns: 1fr;

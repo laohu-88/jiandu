@@ -199,7 +199,10 @@ async function readTaskEvents(taskPath) {
 
 function buildCodexPrompt(input) {
   const mode = input.hyperframesMode;
-  const { sharedEditingRulesText } = require('./editing-contract-service');
+  const {
+    sharedDouyinPlanningContractText,
+    sharedEditingRulesText,
+  } = require('./editing-contract-service');
   return `使用 $video-cut-planner，处理这期素材：
 
 ${input.sourceDirectory}
@@ -218,6 +221,8 @@ ${mode}
 
 ${sharedEditingRulesText()}
 
+${sharedDouyinPlanningContractText()}
+
 必须把 --handoff-task ${JSON.stringify(input.taskFilePath)} 传给支持该参数的 video-skill 命令，并在语义分析、镜头编排、HyperFrames 判断/设计/复核等 Codex 决策节点使用 handoff-update 持续更新阶段、心跳、决策依据、表达缺口和质量复核。先仅用真实素材形成初步时间线，再决定 HyperFrames。auto 仅在动画明显优于普通剪辑、轻字幕或转场时启用；disabled 禁止生成；force-attempt 必须认真尝试但质量不足必须放弃。
 
 不得修改、移动、重命名或删除原始素材；不得覆盖非空正式项目目录；不得省略验证；不得把粗剪预览写入 FCPXML；FCPXML 必须引用正式项目内的独立素材；正式时间线规格与预览规格必须分离；生成结果必须可由结果中心读取。
@@ -228,7 +233,10 @@ build 完成后必须实际观看粗剪；启用 HyperFrames 时还要观看独�
 function buildCursorAgentPrompt(input) {
   const mode = input.hyperframesMode;
   const packageDir = input.packageDir || packageDirForTask(input.taskFilePath);
-  const { sharedEditingRulesText } = require('./editing-contract-service');
+  const {
+    sharedDouyinPlanningContractText,
+    sharedEditingRulesText,
+  } = require('./editing-contract-service');
   return `使用视频剪辑编排器 v3 的 video-cut-planner Skill，处理这期素材：
 
 ${input.sourceDirectory}
@@ -250,9 +258,11 @@ ${mode}
 
 ${sharedEditingRulesText()}
 
+${sharedDouyinPlanningContractText()}
+
 阶段要求（Cursor Agent 默认分析后交回 App）：
 1. 运行 prepare --source 上述素材目录 --handoff-task 上述状态文件 --json
-2. 阅读 analysis-request.json 与 manifest.json，查看全部图片预览与视频故事板，按现有分析协议产出 analysis.json
+2. 阅读 analysis-request.json 与 manifest.json，查看全部图片预览与视频故事板，按现有分析协议产出 analysis.json；在不修改默认 timeline 的前提下同时返回 platformVariants.douyin 规划
 3. 将 analysis.json 写到交接包目录下的 analysis.json（同时可写到 prepare 缓存）
 4. 运行 validate-analysis --manifest <manifest> --analysis <analysis> --handoff-task 上述状态文件 --json
 5. 校验通过后，用 handoff-update 将阶段设为 analysis_complete，并在消息中写明 manifest 与 analysis 绝对路径；随后执行 handoff-return，把控制权交回 App

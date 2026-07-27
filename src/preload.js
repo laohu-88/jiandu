@@ -108,6 +108,22 @@ contextBridge.exposeInMainWorld('plannerApi', {
   runProjectArtifactAction: (args) => ipcRenderer.invoke('catalog:artifact-action', args),
   openProjectFcpxmlInFinalCut: (projectPath) =>
     ipcRenderer.invoke('catalog:open-final-cut', projectPath),
+  createDouyinVariant: (args) =>
+    ipcRenderer.invoke('platform-variant:douyin-create', args),
+  readDouyinVariant: (args) =>
+    ipcRenderer.invoke('platform-variant:douyin-read', args),
+  saveDouyinVariant: (args) =>
+    ipcRenderer.invoke('platform-variant:douyin-save', args),
+  approveDouyinVariant: (args) =>
+    ipcRenderer.invoke('platform-variant:douyin-approve', args),
+  buildDouyinVariant: (args) =>
+    ipcRenderer.invoke('platform-variant:douyin-build', args),
+  verifyDouyinVariant: (args) =>
+    ipcRenderer.invoke('platform-variant:douyin-verify', args),
+  runDouyinArtifactAction: (args) =>
+    ipcRenderer.invoke('platform-variant:douyin-artifact', args),
+  openDouyinFcpxmlInFinalCut: (args) =>
+    ipcRenderer.invoke('platform-variant:douyin-open-final-cut', args),
   loadEditorialReview: (projectPath) =>
     ipcRenderer.invoke('catalog:load-editorial-review', projectPath),
   saveEditorialReview: (args) =>

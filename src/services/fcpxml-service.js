@@ -12,6 +12,10 @@ const BASIC_TITLE_EFFECT = Object.freeze({
   name: '基本字幕',
   uid: '.../Titles.localized/Bumper:Opener.localized/Basic Title.localized/Basic Title.moti',
 });
+const GAUSSIAN_BLUR_EFFECT = Object.freeze({
+  name: 'Gaussian',
+  uid: '.../Effects.localized/Blur.localized/Gaussian.localized/Gaussian.moef',
+});
 const MANAGED_CAPTION_NOTE_PREFIX = 'vcp-managed-caption:';
 
 function escapeXml(value) {
@@ -640,9 +644,75 @@ function normalizeManagedCaptionTitles(managedCaptionTitles = []) {
         offsetFcpTime: typeof item.offsetFcpTime === 'string' ? item.offsetFcpTime : null,
         durationFcpTime: typeof item.durationFcpTime === 'string' ? item.durationFcpTime : null,
         frameAlignment: item.frameAlignment || null,
+        position: typeof item.position === 'string' ? item.position : null,
+        transform: item.transform && Number.isFinite(Number(item.transform.x))
+          && Number.isFinite(Number(item.transform.y))
+          ? { x: Number(item.transform.x), y: Number(item.transform.y) }
+          : null,
       };
     })
     .filter(Boolean);
+}
+
+function normalizeShotLayout(shot = {}) {
+  const layout = shot.layout;
+  if (!layout || typeof layout !== 'object') {
+    return {
+      mode: shot.fitMode === 'cover' ? 'center_crop' : 'native_vertical',
+      conform: shot.fitMode === 'cover' ? 'fill' : 'fit',
+      scale: 1,
+      position: { x: 0, y: 0 },
+      crop: { left: 0, top: 0, right: 0, bottom: 0 },
+      blurredBackground: false,
+      explicit: false,
+    };
+  }
+  const mode = String(layout.mode || 'native_vertical');
+  const position = layout.position || {};
+  const crop = layout.crop || {};
+  return {
+    mode,
+    conform: mode === 'center_crop' ? 'fill' : 'fit',
+    scale: Number.isFinite(Number(layout.scale)) ? Number(layout.scale) : 1,
+    position: {
+      x: Number.isFinite(Number(position.x)) ? Number(position.x) : 0,
+      y: Number.isFinite(Number(position.y)) ? Number(position.y) : 0,
+    },
+    crop: {
+      left: Number.isFinite(Number(crop.left)) ? Number(crop.left) : 0,
+      top: Number.isFinite(Number(crop.top)) ? Number(crop.top) : 0,
+      right: Number.isFinite(Number(crop.right)) ? Number(crop.right) : 0,
+      bottom: Number.isFinite(Number(crop.bottom)) ? Number(crop.bottom) : 0,
+    },
+    blurredBackground: mode === 'landscape_card_blur',
+    explicit: true,
+  };
+}
+
+function shotLayoutAdjustments(layout, indent = '          ') {
+  const lines = [];
+  const crop = layout.crop;
+  // FCPXML 1.14 DTD intrinsic order is adjust-crop → adjust-conform →
+  // adjust-transform. Keep this order even though all three are optional.
+  if ([crop.left, crop.top, crop.right, crop.bottom].some((value) => value > 0)) {
+    const percent = (value) => Number((value * 100).toFixed(4));
+    lines.push(
+      `${indent}<adjust-crop mode="trim">`,
+      `${indent}  <trim-rect left="${percent(crop.left)}" top="${percent(crop.top)}"`
+        + ` right="${percent(crop.right)}" bottom="${percent(crop.bottom)}"/>`,
+      `${indent}</adjust-crop>`,
+    );
+  }
+  lines.push(`${indent}<adjust-conform type="${layout.conform}"/>`);
+  if (Math.abs(layout.scale - 1) > 1e-9
+    || Math.abs(layout.position.x) > 1e-9
+    || Math.abs(layout.position.y) > 1e-9) {
+    const x = Number((layout.position.x * 100).toFixed(4));
+    const y = Number((-layout.position.y * 100).toFixed(4));
+    const scale = Number(layout.scale.toFixed(6));
+    lines.push(`${indent}<adjust-transform position="${x} ${y}" scale="${scale} ${scale}"/>`);
+  }
+  return lines;
 }
 
 function unescapeXmlText(value) {
@@ -770,6 +840,9 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     assets.push({ ...mapping, formatId, resourceId });
   }
   const titleEffectId = fcpTitles.length > 0 ? `r${nextResourceId++}` : null;
+  const blurEffectId = analysis.timeline.shots.some(
+    (shot) => normalizeShotLayout(shot).blurredBackground,
+  ) ? `r${nextResourceId++}` : null;
 
   const timelinePlan = planFrameAlignedTimeline({ analysis, assetMappings });
   const sequenceFrameDuration = timelinePlan.sequenceFrameDuration;
@@ -860,6 +933,10 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
       `    <effect id="${titleEffectId}" name="${escapeXml(BASIC_TITLE_EFFECT.name)}"`
       + ` uid="${escapeXml(BASIC_TITLE_EFFECT.uid)}"/>`,
     ] : []),
+    ...(blurEffectId ? [
+      `    <effect id="${blurEffectId}" name="${escapeXml(GAUSSIAN_BLUR_EFFECT.name)}"`
+      + ` uid="${escapeXml(GAUSSIAN_BLUR_EFFECT.uid)}"/>`,
+    ] : []),
   ].join('\n');
 
   const clipsXml = timelinePlan.shots.map((planned) => {
@@ -867,10 +944,19 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     const mapping = planned.mapping || mappingById.get(shot.assetId);
     const resourceId = assetResourceById.get(shot.assetId);
     if (!mapping || !resourceId) throw new Error(`FCPXML 缺少镜头素材映射：${shot.assetId}`);
-    const nested = [];
-    nested.push(`          <adjust-conform type="${shot.fitMode === 'cover' ? 'fill' : 'fit'}"/>`);
+    const layout = normalizeShotLayout(shot);
+    const intrinsicItems = [];
+    const anchorItems = [];
+    const markerItems = [];
+    const videoFilterItems = [];
+    if (layout.blurredBackground) {
+      intrinsicItems.push('          <adjust-conform type="fill"/>');
+      videoFilterItems.push(`          <filter-video ref="${blurEffectId}"/>`);
+    } else {
+      intrinsicItems.push(...shotLayoutAdjustments(layout));
+    }
     if (fcpxmlShouldMuteShot(shot, analysisById.get(shot.assetId), mapping)) {
-      nested.push('          <adjust-volume amount="-96dB"/>');
+      intrinsicItems.push('          <adjust-volume amount="-96dB"/>');
     }
     const stillTimeOffset = mapping.type === 'image' ? 3600 : 0;
     const clipStartSec = stillTimeOffset + planned.sourceInSec;
@@ -927,12 +1013,16 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
       const noteChild = title.note
         ? `            <note>${escapeXml(title.note)}</note>\n`
         : '';
-      nested.push(
+      anchorItems.push(
         `          <title ref="${titleEffectId}" lane="1" offset="${offsetTime}"`
         + ` name="${escapeXml(`${title.text} - ${BASIC_TITLE_EFFECT.name}`)}"`
         + ` start="3600s" duration="${durationTime}">\n`
         + '            <param name="展平" key="9999/999166631/999166633/2/351" value="1"/>\n'
         + '            <param name="对齐" key="9999/999166631/999166633/2/354/999169573/401" value="1 (居中)"/>\n'
+        + (title.transform
+          ? `            <param name="位置" key="9999/999166631/999166633/1/100/101"`
+            + ` value="${title.transform.x} ${title.transform.y}"/>\n`
+          : '')
         + '            <text>\n'
         + `              <text-style ref="ts-title-${title.index + 1}">${escapeXml(title.text)}</text-style>\n`
         + '            </text>\n'
@@ -954,7 +1044,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
       );
       markerFrame = Math.min(Math.max(markerFrame, minMarkerFrame), maxMarkerFrame);
       const markerStart = fcpTimeFromFrameIndex(markerFrame, sequenceFrameDuration);
-      nested.push(
+      markerItems.push(
         `          <marker start="${markerStart}"`
         + ` duration="${sequenceFrameDuration}" value="${escapeXml(marker.text)}"/>`,
       );
@@ -965,6 +1055,26 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     const startTime = mapping.type === 'image' && planned.sourceInSec === 0
       ? '3600/1s'
       : fcpTimeAligned(clipStartSec, sequenceFrameDuration, 'nearest');
+    if (layout.blurredBackground) {
+      const foregroundTag = mapping.type === 'image' ? 'video' : 'asset-clip';
+      anchorItems.push(
+        `          <${foregroundTag} name="${escapeXml(`${mapping.projectFilename} · 完整横屏卡片`)}"`
+        + ` ref="${resourceId}" lane="1" offset="${startTime}" start="${startTime}"`
+        + ` duration="${planned.durationTime}">\n`
+        + `${shotLayoutAdjustments({ ...layout, conform: 'fit', blurredBackground: false }, '            ').join('\n')}\n`
+        + (mapping.metadata?.hasAudio ? '            <adjust-volume amount="-96dB"/>\n' : '')
+        + `          </${foregroundTag}>`,
+      );
+    }
+    // FCPXML 1.14 DTD container order is intrinsic params, anchored items,
+    // markers, then video filters. In particular, a blur filter cannot precede
+    // titles or the foreground card that it visually sits behind.
+    const nested = [
+      ...intrinsicItems,
+      ...anchorItems,
+      ...markerItems,
+      ...videoFilterItems,
+    ];
     const clip = `        <${clipElement} name="${escapeXml(mapping.projectFilename)}" ref="${resourceId}"`
       + ` offset="${planned.offsetTime}" start="${startTime}"`
       + ` duration="${planned.durationTime}"${audioRole}>\n`
@@ -995,6 +1105,155 @@ ${clipsXml}
 `;
 }
 
+function extractTopLevelSpineClips(xml) {
+  const body = String(xml || '').match(/<spine>([\s\S]*?)<\/spine>/)?.[1] || '';
+  const tags = [];
+  const stack = [];
+  const tokenPattern = /<\/?([a-zA-Z0-9-]+)\b([^>]*)\/?>/g;
+  let match = tokenPattern.exec(body);
+  while (match) {
+    const raw = match[0];
+    const name = match[1];
+    const closing = raw.startsWith('</');
+    const selfClosing = /\/>$/.test(raw);
+    if (closing) {
+      stack.pop();
+    } else {
+      if (stack.length === 0 && ['asset-clip', 'video', 'gap', 'clip'].includes(name)) {
+        tags.push({
+          tag: name,
+          attrs: match[2] || '',
+          ref: (match[2] || '').match(/\bref="([^"]+)"/)?.[1] || null,
+        });
+      }
+      if (!selfClosing) stack.push(name);
+    }
+    match = tokenPattern.exec(body);
+  }
+  return tags;
+}
+
+const FCPXML_ANCHOR_ITEM_NAMES = new Set([
+  'audio',
+  'video',
+  'clip',
+  'title',
+  'caption',
+  'mc-clip',
+  'ref-clip',
+  'sync-clip',
+  'asset-clip',
+  'audition',
+  'spine',
+  'live-drawing',
+]);
+const FCPXML_MARKER_ITEM_NAMES = new Set([
+  'marker',
+  'chapter-marker',
+  'rating',
+  'keyword',
+  'analysis-marker',
+  'hidden-clip-marker',
+]);
+const FCPXML_VIDEO_INTRINSIC_ORDER = [
+  'object-tracker',
+  'adjust-crop',
+  'adjust-corners',
+  'adjust-conform',
+  'adjust-transform',
+  'adjust-blend',
+  'adjust-stabilization',
+  'adjust-rollingShutter',
+  'adjust-360-transform',
+  'adjust-reorient',
+  'adjust-orientation',
+  'adjust-cinematic',
+  'adjust-colorConform',
+  'adjust-stereo-3D',
+];
+
+function extractFcpxmlContainerChildren(xml) {
+  const targets = new Set(['video', 'asset-clip']);
+  const records = [];
+  const stack = [];
+  const tokenPattern = /<\/?([a-zA-Z0-9-]+)\b[^>]*\/?>/g;
+  let match = tokenPattern.exec(String(xml || ''));
+  while (match) {
+    const raw = match[0];
+    const name = match[1];
+    const closing = raw.startsWith('</');
+    const selfClosing = /\/>$/.test(raw);
+    if (closing) {
+      while (stack.length) {
+        const current = stack.pop();
+        if (current.name === name) break;
+      }
+    } else {
+      const parent = stack[stack.length - 1];
+      if (parent?.record) parent.record.children.push(name);
+      const record = targets.has(name) ? { name, children: [] } : null;
+      if (record) records.push(record);
+      if (!selfClosing) stack.push({ name, record });
+    }
+    match = tokenPattern.exec(String(xml || ''));
+  }
+  return records;
+}
+
+function validateFcpxmlContainerOrder(xml) {
+  const errors = [];
+  for (const record of extractFcpxmlContainerChildren(xml)) {
+    let previousPhase = -1;
+    let previousIntrinsic = -1;
+    for (const child of record.children) {
+      let phase = null;
+      let intrinsicIndex = FCPXML_VIDEO_INTRINSIC_ORDER.indexOf(child);
+      if (record.name === 'video') {
+        if (child === 'param') phase = 0;
+        else if (child === 'note') phase = 1;
+        else if (child === 'conform-rate' || child === 'timeMap') phase = 2;
+        else if (intrinsicIndex >= 0) phase = 3;
+        else if (FCPXML_ANCHOR_ITEM_NAMES.has(child)) phase = 4;
+        else if (FCPXML_MARKER_ITEM_NAMES.has(child)) phase = 5;
+        else if (child === 'filter-video' || child === 'filter-video-mask') phase = 6;
+        else if (child === 'reserved') phase = 7;
+        else if (child === 'adjust-volume' || child === 'adjust-panner') {
+          errors.push(`video 元素不能直接包含 ${child}。`);
+        }
+      } else {
+        if (child === 'note') phase = 0;
+        else if (child === 'conform-rate' || child === 'timeMap') phase = 1;
+        else if (intrinsicIndex >= 0) phase = 2;
+        else if (child === 'adjust-volume' || child === 'adjust-panner') {
+          phase = 2;
+          intrinsicIndex = FCPXML_VIDEO_INTRINSIC_ORDER.length
+            + (child === 'adjust-volume' ? 0 : 1);
+        } else if (FCPXML_ANCHOR_ITEM_NAMES.has(child)) phase = 3;
+        else if (FCPXML_MARKER_ITEM_NAMES.has(child)) phase = 4;
+        else if (child === 'audio-channel-source') phase = 5;
+        else if (child === 'filter-video' || child === 'filter-video-mask') phase = 6;
+        else if (child === 'filter-audio') phase = 7;
+        else if (child === 'metadata' || child === 'reserved') phase = 8;
+      }
+      if (phase == null) continue;
+      if (phase < previousPhase) {
+        errors.push(`${record.name} 子元素顺序不符合 FCPXML 1.14 DTD：${child} 出现在不合法位置。`);
+        break;
+      }
+      if ((record.name === 'video' && phase === 3)
+        || (record.name === 'asset-clip' && phase === 2)) {
+        if (intrinsicIndex >= 0 && intrinsicIndex < previousIntrinsic) {
+          errors.push(`${record.name} 内在参数顺序不符合 FCPXML 1.14 DTD：${child}。`);
+          break;
+        }
+        previousIntrinsic = Math.max(previousIntrinsic, intrinsicIndex);
+      }
+      previousPhase = phase;
+    }
+  }
+  return errors;
+}
+
 function validateFcpxmlStructure(xml, expected = {}) {
   const errors = [];
   const version = xml.match(/<fcpxml\s+version="([^"]+)">/)?.[1] || null;
@@ -1003,8 +1262,12 @@ function validateFcpxmlStructure(xml, expected = {}) {
   }
   if (!/<resources>[\s\S]*<\/resources>/.test(xml)) errors.push('缺少 resources。');
   if (!/<sequence\b[^>]*>[\s\S]*<spine>[\s\S]*<\/spine>/.test(xml)) errors.push('缺少 sequence/spine。');
+  errors.push(...validateFcpxmlContainerOrder(xml));
   const assets = [...xml.matchAll(/<asset\s+id="([^"]+)"/g)];
-  const clips = [...xml.matchAll(/<(?:asset-clip|video)\s+[^>]*ref="([^"]+)"[^>]*>/g)];
+  const allClips = [...xml.matchAll(/<(?:asset-clip|video)\s+[^>]*ref="([^"]+)"[^>]*>/g)];
+  const clips = extractTopLevelSpineClips(xml)
+    .filter((clip) => clip.ref)
+    .map((clip) => [null, clip.ref]);
   const markers = [...xml.matchAll(/<marker\s+/g)];
   const effects = [...xml.matchAll(/<effect\s+([^>]+)\/>/g)].map((match) => ({
     id: match[1].match(/\bid="([^"]+)"/)?.[1] || null,
@@ -1063,7 +1326,7 @@ function validateFcpxmlStructure(xml, expected = {}) {
   const sequenceFormat = formatTags.find((format) => format.id === sequenceFormatId) || null;
   const assetIds = new Set(assets.map((match) => match[1]));
   const effectIds = new Set(effects.map((effect) => effect.id));
-  for (const clip of clips) {
+  for (const clip of allClips) {
     if (!assetIds.has(clip[1])) errors.push(`时间线镜头引用了不存在的资源 ${clip[1]}。`);
   }
   for (const media of mediaRepresentations) {
@@ -1508,6 +1771,7 @@ async function writeFcpxml(outputPath, payload, options = {}) {
 
 module.exports = {
   BASIC_TITLE_EFFECT,
+  GAUSSIAN_BLUR_EFFECT,
   FCPXML_DEFAULT_VERSION,
   FCPXML_TITLE_VERSION,
   FCPXML_TIMESCALE,
@@ -1517,6 +1781,7 @@ module.exports = {
   collectFcpTitles,
   escapeXml,
   extractManagedCaptionTitles,
+  extractTopLevelSpineClips,
   fcpTime,
   fcpTimeAligned,
   fcpTimeFromFrameIndex,

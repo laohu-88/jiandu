@@ -15,6 +15,7 @@ module.exports = {
     'src/renderer/**/*.html',
     'src/renderer/**/*.css',
     'schemas/*.json',
+    'config/**/*.json',
     '!**/*.test.js',
     '!test{,/**}',
     '!coverage{,/**}',

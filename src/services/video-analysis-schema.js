@@ -1,9 +1,11 @@
 const { validateStage5CAnalysis } = require('./visual-explanation-service');
 const {
+  assetNeedsLightCaption,
   isDurationPolicyConstrained,
   validateMaterialCoverage,
   validateRequiredLightCaptions,
 } = require('./editing-contract-service');
+const DOUYIN_PROFILE = require('../../config/platforms/douyin.json');
 
 const ASSET_STATUSES = new Set(['adopt', 'candidate', 'reject']);
 const FIT_MODES = new Set(['contain', 'cover']);
@@ -720,6 +722,40 @@ function validateVideoAnalysis(analysis, manifest) {
   if (hasExplanationSignals) {
     validateRequiredLightCaptions(analysis, manifest, errors);
   }
+  if (analysis.platformVariants != null) {
+    if (!isObject(analysis.platformVariants)) {
+      errors.push('platformVariants 必须是对象。');
+    } else {
+      const unsupported = Object.keys(analysis.platformVariants)
+        .filter((key) => key !== 'douyin');
+      if (unsupported.length) {
+        errors.push(`platformVariants 包含不支持的平台：${unsupported.join('、')}`);
+      }
+      if (analysis.platformVariants.douyin != null) {
+        try {
+          const { validateDouyinPlan } = require('./platform-variant-service');
+          const analysisByAssetId = new Map(
+            (analysis.assets || []).map((asset) => [asset.assetId, asset]),
+          );
+          const requiredCaptionAssetIds = listEligibleForDouyin(manifest)
+            .filter((item) => assetNeedsLightCaption(analysisByAssetId.get(item.assetId), item))
+            .map((item) => item.assetId);
+          validateDouyinPlan(analysis.platformVariants.douyin, {
+            manifest,
+            analysis,
+            profile: DOUYIN_PROFILE,
+            requiredCaptionAssetIds,
+          });
+        } catch (error) {
+          if (Array.isArray(error.details) && error.details.length) {
+            errors.push(...error.details.map((detail) => `platformVariants.douyin：${detail}`));
+          } else {
+            errors.push(`platformVariants.douyin：${error.message}`);
+          }
+        }
+      }
+    }
+  }
 
   if (errors.length > 0) {
     throw Object.assign(new Error(`Codex 视频分析协议校验失败：${errors[0]}`), {
@@ -728,6 +764,13 @@ function validateVideoAnalysis(analysis, manifest) {
     });
   }
   return analysis;
+}
+
+function listEligibleForDouyin(manifest) {
+  return (manifest?.items || []).filter((item) => (
+    item && (item.type === 'image' || item.type === 'video')
+    && String(item.extension || '').toLowerCase() !== 'webm'
+  ));
 }
 
 module.exports = {

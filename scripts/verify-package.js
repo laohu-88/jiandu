@@ -71,7 +71,9 @@ async function verifyPackage(appPath, options = {}) {
   const info = await readPlist(infoPath);
   assertEqual(info.CFBundleIdentifier, builderConfig.appId, 'Bundle ID');
   assertEqual(info.CFBundleDisplayName, builderConfig.productName, '显示名称');
-  assertEqual(info.CFBundleShortVersionString, packageJson.version, '版本');
+  if (!options.skipVersionCheck) {
+    assertEqual(info.CFBundleShortVersionString, packageJson.version, '版本');
+  }
   assertEqual(info.LSApplicationCategoryType, builderConfig.mac.category, '分类');
   const schemes = (info.CFBundleURLTypes || [])
     .flatMap((entry) => entry.CFBundleURLSchemes || []);
@@ -92,6 +94,7 @@ async function verifyPackage(appPath, options = {}) {
   if (!await pathExists(iconPath)) throw new Error(`App 图标不存在：${iconPath}`);
   const appAsarPath = path.join(resolved, 'Contents', 'Resources', 'app.asar');
   if (!await pathExists(appAsarPath)) throw new Error('缺少 app.asar。');
+  asar.uncache(appAsarPath);
   const packagedFiles = new Set(asar.listPackage(appAsarPath));
   const requiredFiles = [
     '/package.json',
@@ -103,9 +106,13 @@ async function verifyPackage(appPath, options = {}) {
     '/src/renderer/styles.css',
     '/src/renderer/app.js',
     '/schemas/codex-video-analysis.schema.json',
+    '/schemas/douyin-platform-variant.schema.json',
+    '/config/platforms/douyin.json',
   ];
-  for (const file of requiredFiles) {
-    if (!packagedFiles.has(file)) throw new Error(`app.asar 缺少运行时文件：${file}`);
+  if (!options.skipRuntimeFileRequirements) {
+    for (const file of requiredFiles) {
+      if (!packagedFiles.has(file)) throw new Error(`app.asar 缺少运行时文件：${file}`);
+    }
   }
   const forbidden = ['/test/', '/coverage/', '/dist/', '/.git/', '/handoffs/'];
   for (const file of packagedFiles) {

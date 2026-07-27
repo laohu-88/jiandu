@@ -84,6 +84,7 @@ async function writeCursorAgentPackage(task) {
     projectRoot: DEFAULT_PROJECT_ROOT,
     analysisOutputPath,
     expectedAnalysisContract: 'schemas/codex-video-analysis.schema.json',
+    expectedPlatformVariantContract: 'schemas/douyin-platform-variant.schema.json',
     videoSkillCli: path.join(task.appWorkspace, 'bin/video-skill.js'),
   };
   const expectedArtifacts = {
@@ -113,7 +114,7 @@ async function writeCursorAgentPackage(task) {
     '',
     '1. 在 Cursor Agent 中粘贴并启动 `prompt.md` 中的正式任务提示词',
     '2. 使用 `video-skill prepare` 扫描素材、元数据与抽帧',
-    '3. 按现有分析数据合同写出 `analysis.json`',
+    '3. 按现有分析数据合同写出 `analysis.json`，并包含独立的 `platformVariants.douyin` 规划',
     '4. 使用 `validate-analysis` 校验',
     '5. 将交接状态更新为 `analysis_complete` 并执行 `handoff-return`',
     '6. 回到「视频剪辑编排器 v3」继续 build / verify / 结果交接 / 打开 FCP',

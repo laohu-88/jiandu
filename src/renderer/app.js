@@ -47,6 +47,8 @@ const state = {
   editPreflight: null,
   activeEditJob: null,
   completionSource: null,
+  douyinVariant: null,
+  douyinPreview: null,
 };
 
 const TEXT_PREVIEW_MAX_BYTES = 64 * 1024;
@@ -1311,6 +1313,728 @@ function renderSubtitleSuggestions(result, playback) {
   return subtitles;
 }
 
+const DOUYIN_DECISION_LABELS = {
+  selected: '选用',
+  separate: '建议另拆一条',
+  excluded: '排除',
+};
+
+const DOUYIN_LAYOUT_LABELS = {
+  native_vertical: '原生竖屏完整显示',
+  center_crop: '中央裁切',
+  landscape_card: '完整横屏卡片',
+  landscape_card_blur: '横屏卡片 + 同画面模糊背景',
+};
+
+function cloneDouyinPlan(plan) {
+  return JSON.parse(JSON.stringify(plan));
+}
+
+function nextDouyinId(prefix, plan) {
+  const occupied = JSON.stringify(plan);
+  let index = 1;
+  while (occupied.includes(`"${prefix}-${index}"`)) index += 1;
+  return `${prefix}-${index}`;
+}
+
+function douyinDefaultLayout(asset) {
+  const width = Number(asset?.metadata?.displayWidth || asset?.metadata?.width);
+  const height = Number(asset?.metadata?.displayHeight || asset?.metadata?.height);
+  return {
+    mode: height > width ? 'native_vertical' : 'landscape_card_blur',
+    scale: 1,
+    position: { x: 0, y: 0 },
+    crop: { left: 0, top: 0, right: 0, bottom: 0 },
+    subjectBounds: null,
+  };
+}
+
+function updateDouyinOpening(video) {
+  video.openingAssetId = video.shots[0]?.assetId || '';
+}
+
+function createDouyinControl(label, value, onInput, options = {}) {
+  const wrapper = document.createElement('label');
+  wrapper.className = options.className || 'douyin-control';
+  wrapper.appendChild(createTextElement('span', label));
+  const control = options.multiline
+    ? document.createElement('textarea')
+    : document.createElement('input');
+  if (!options.multiline) control.type = options.type || 'text';
+  if (options.step != null) control.step = String(options.step);
+  if (options.min != null) control.min = String(options.min);
+  if (options.max != null) control.max = String(options.max);
+  control.value = value ?? '';
+  control.disabled = options.disabled === true;
+  control.addEventListener(options.commit ? 'change' : 'input', () => {
+    const next = options.type === 'number' ? Number(control.value) : control.value;
+    onInput(next);
+  });
+  wrapper.appendChild(control);
+  return wrapper;
+}
+
+function createDouyinSelect(label, value, choices, onChange, className = '') {
+  const wrapper = document.createElement('label');
+  wrapper.className = className || 'douyin-control';
+  wrapper.appendChild(createTextElement('span', label));
+  const select = document.createElement('select');
+  Object.entries(choices).forEach(([choiceValue, choiceLabel]) => {
+    const option = createTextElement('option', choiceLabel);
+    option.value = choiceValue;
+    option.selected = choiceValue === value;
+    select.appendChild(option);
+  });
+  select.addEventListener('change', () => onChange(select.value));
+  wrapper.appendChild(select);
+  return wrapper;
+}
+
+function appendDouyinRect(canvas, rect, className, label = '') {
+  if (!rect) return;
+  const box = document.createElement('div');
+  box.className = className;
+  box.style.left = `${rect.x * 100}%`;
+  box.style.top = `${rect.y * 100}%`;
+  box.style.width = `${rect.width * 100}%`;
+  box.style.height = `${rect.height * 100}%`;
+  if (label) box.appendChild(createTextElement('span', label));
+  canvas.appendChild(box);
+}
+
+function createDouyinMedia(asset, className, layout, beforeCrop) {
+  const media = document.createElement(asset?.type === 'video' ? 'video' : 'img');
+  media.className = className;
+  media.src = asset?.fileUrl || '';
+  if (asset?.type === 'video') {
+    media.controls = className.includes('foreground');
+    media.muted = true;
+    media.loop = true;
+    media.preload = 'metadata';
+  }
+  const mode = beforeCrop ? 'native_vertical' : layout.mode;
+  media.style.objectFit = mode === 'center_crop' ? 'cover' : 'contain';
+  if (!beforeCrop) {
+    media.style.transform = `translate(${layout.position.x * 50}%, ${layout.position.y * 50}%) scale(${layout.scale})`;
+    media.style.clipPath = `inset(${layout.crop.top * 100}% ${layout.crop.right * 100}% ${layout.crop.bottom * 100}% ${layout.crop.left * 100}%)`;
+  }
+  return media;
+}
+
+function renderDouyinVerticalPreview(container, variant, plan, selection) {
+  container.replaceChildren();
+  const allShots = plan.videos.flatMap((video) => video.shots.map((shot) => ({
+    videoId: video.videoId,
+    theme: video.theme,
+    shot,
+  })));
+  if (!allShots.length) {
+    container.appendChild(createTextElement('p', '当前计划没有可预览镜头。', 'empty-inline'));
+    return;
+  }
+  const requested = state.douyinPreview;
+  const current = allShots.find((item) => (
+    item.videoId === requested?.videoId && item.shot.shotId === requested?.shotId
+  )) || allShots[0];
+  const beforeCrop = requested?.beforeCrop === true;
+  state.douyinPreview = {
+    variantId: variant.variantId,
+    videoId: current.videoId,
+    shotId: current.shot.shotId,
+    beforeCrop,
+  };
+  const asset = variant.assets.find((item) => item.assetId === current.shot.assetId);
+  const controls = document.createElement('div');
+  controls.className = 'douyin-preview-controls';
+  const shotChoices = Object.fromEntries(allShots.map((item) => [
+    `${item.videoId}:${item.shot.shotId}`,
+    `${item.theme} · ${variant.assets.find((candidate) => (
+      candidate.assetId === item.shot.assetId
+    ))?.filename || item.shot.assetId}`,
+  ]));
+  const shotSelect = createDouyinSelect(
+    '预览镜头',
+    `${current.videoId}:${current.shot.shotId}`,
+    shotChoices,
+    (value) => {
+      const [videoId, shotId] = value.split(':');
+      state.douyinPreview = { variantId: variant.variantId, videoId, shotId, beforeCrop };
+      renderDouyinVerticalPreview(container, variant, plan, selection);
+    },
+  );
+  const toggle = createTextElement(
+    'button',
+    beforeCrop ? '查看裁切后' : '查看裁切前',
+    'button secondary',
+  );
+  toggle.type = 'button';
+  toggle.addEventListener('click', () => {
+    state.douyinPreview = { ...state.douyinPreview, beforeCrop: !beforeCrop };
+    renderDouyinVerticalPreview(container, variant, plan, selection);
+  });
+  controls.append(shotSelect, toggle);
+
+  const canvas = document.createElement('div');
+  canvas.className = 'douyin-preview-canvas';
+  const layout = current.shot.layout;
+  if (!beforeCrop && layout.mode === 'landscape_card_blur') {
+    canvas.appendChild(createDouyinMedia(asset, 'douyin-preview-media background', layout, false));
+  }
+  canvas.appendChild(createDouyinMedia(asset, 'douyin-preview-media foreground', layout, beforeCrop));
+  const width = Number(asset?.metadata?.displayWidth || asset?.metadata?.width);
+  const height = Number(asset?.metadata?.displayHeight || asset?.metadata?.height);
+  const boundary = document.createElement('div');
+  boundary.className = `douyin-original-boundary ${width > height ? 'horizontal' : 'vertical'}`;
+  boundary.appendChild(createTextElement('span', '原始画面边界'));
+  canvas.appendChild(boundary);
+  appendDouyinRect(canvas, variant.profile.safeZones.subject, 'douyin-safe-zone subject', '主体安全区');
+  appendDouyinRect(canvas, variant.profile.safeZones.subtitle, 'douyin-safe-zone subtitle', '字幕安全区');
+  variant.profile.uiOcclusionZones.forEach((zone) => {
+    appendDouyinRect(canvas, zone, 'douyin-ui-mask', zone.label);
+  });
+  const currentCaption = plan.videos.find((item) => item.videoId === current.videoId)
+    ?.lightCaptions.find((item) => item.shotId === current.shot.shotId);
+  if (currentCaption) {
+    appendDouyinRect(
+      canvas,
+      variant.profile.subtitlePlacements[currentCaption.position],
+      'douyin-caption-preview',
+      currentCaption.text,
+    );
+  }
+  const info = createDefinitionGrid([
+    ['当前布局', DOUYIN_LAYOUT_LABELS[layout.mode] || layout.mode],
+    ['当前模式', beforeCrop ? '裁切前 / 原始适配' : '裁切后 / 正式布局'],
+    ['原声', current.shot.audioMode === 'keep' ? '保留' : `静音：${current.shot.muteReason || '未说明'}`],
+    ['选材结论', DOUYIN_DECISION_LABELS[selection.get(current.shot.assetId)?.decision] || '—'],
+  ], 'douyin-preview-info');
+  container.append(controls, canvas, info);
+}
+
+function renderDouyinOutputs(container, result, variant) {
+  const resultVariant = result.platformVariants.variants
+    .find((item) => item.variantId === variant.variantId);
+  const outputs = resultVariant?.outputs || [];
+  if (!outputs.length) {
+    container.appendChild(createTextElement(
+      'p',
+      '尚未生成。批准规划后，每条成片会写入独立目录。',
+      'empty-inline',
+    ));
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'douyin-output-grid';
+  outputs.forEach((output) => {
+    const card = document.createElement('article');
+    card.className = 'douyin-output-card';
+    card.append(
+      createTextElement('h4', output.theme),
+      createDefinitionGrid([
+        ['规格', `${output.specs?.width}×${output.specs?.height} · ${output.specs?.aspectRatio} · ${output.specs?.fps}p`],
+        ['素材 / 镜头', `${output.assetCount} / ${output.shotCount}`],
+        ['FCP 原生字幕', String(output.subtitleCount)],
+        ['原声', `${output.originalAudio?.keptOriginalAudioCount ?? 0} 个视频镜头保留`],
+        ['验证', output.validationStatus],
+        ['输出位置', output.outputDirectory?.path || '—'],
+      ], 'douyin-output-meta'),
+    );
+    if (output.artifacts?.preview?.fileUrl) {
+      const video = document.createElement('video');
+      video.className = 'douyin-output-preview';
+      video.controls = true;
+      video.preload = 'metadata';
+      video.src = output.artifacts.preview.fileUrl;
+      card.appendChild(video);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'result-actions';
+    [
+      ['打开目录', 'outputDirectory'],
+      ['定位预览', 'preview'],
+      ['定位 FCPXML', 'fcpxml'],
+      ['验证报告', 'validation'],
+    ].forEach(([label, target]) => {
+      const button = createTextElement('button', label, 'button secondary');
+      button.type = 'button';
+      button.addEventListener('click', () => withBusy(button, () =>
+        window.plannerApi.runDouyinArtifactAction({
+          projectPath: result.project.path,
+          variantId: variant.variantId,
+          videoId: output.videoId,
+          target,
+        }), '正在打开…'));
+      actions.appendChild(button);
+    });
+    const fcpButton = createTextElement('button', '使用 Final Cut Pro 打开', 'button primary');
+    fcpButton.type = 'button';
+    fcpButton.addEventListener('click', () => withBusy(fcpButton, () =>
+      window.plannerApi.openDouyinFcpxmlInFinalCut({
+        projectPath: result.project.path,
+        variantId: variant.variantId,
+        videoId: output.videoId,
+      }), '正在打开…'));
+    actions.appendChild(fcpButton);
+    card.appendChild(actions);
+    grid.appendChild(card);
+  });
+  container.appendChild(grid);
+}
+
+function renderDouyinVariantEditor(section, result, variant) {
+  const body = document.createElement('div');
+  body.className = 'douyin-editor';
+  section.appendChild(body);
+  let draftPlan = cloneDouyinPlan(variant.plan);
+  const approvedWarnings = new Set(variant.approval?.approvedWarningIds || []);
+  const assetsById = new Map(variant.assets.map((item) => [item.assetId, item]));
+
+  const renderEditor = () => {
+    body.replaceChildren();
+    const selectionById = new Map(draftPlan.selection.map((item) => [item.assetId, item]));
+    const summary = createDefinitionGrid([
+      ['变体', `${variant.variantId} · revision ${variant.revision}`],
+      ['状态', variant.status],
+      ['平台档案', `${variant.profile.displayName} · ${variant.profile.format.width}×${variant.profile.format.height} · ${variant.profile.format.dynamicRange} / ${variant.profile.format.colorSpace}`],
+      ['帧率策略', '按现有项目与主要素材确定，并按实际 frameDuration 对齐'],
+      ['计划成片', `${draftPlan.videos.length} 条`],
+      ['默认主成片', '独立保留，不受本页修改影响'],
+    ], 'douyin-summary-grid');
+    body.appendChild(summary);
+
+    const selectionBlock = document.createElement('div');
+    selectionBlock.className = 'douyin-block';
+    selectionBlock.appendChild(createTextElement('h4', '选材结论'));
+    draftPlan.selection.forEach((selection) => {
+      const asset = assetsById.get(selection.assetId);
+      const row = document.createElement('article');
+      row.className = 'douyin-selection-row';
+      const identity = document.createElement('div');
+      identity.className = 'douyin-selection-identity';
+      identity.append(
+        createTextElement('strong', asset?.filename || selection.assetId),
+        createTextElement('small', `${asset?.type || '未知'} · ${selection.assetId}`),
+      );
+      const decision = createDouyinSelect(
+        '结论',
+        selection.decision,
+        DOUYIN_DECISION_LABELS,
+        (value) => {
+          if (selection.decision === value) return;
+          if (value === 'selected') {
+            const target = draftPlan.videos[0];
+            if (!target) {
+              showToast('请先保留至少一条成片计划。', true);
+              return;
+            }
+            const duration = asset?.type === 'video'
+              ? Number(asset.metadata?.durationSec) || 2
+              : 2;
+            target.shots.push({
+              shotId: nextDouyinId('douyin-shot', draftPlan),
+              assetId: selection.assetId,
+              inSec: 0,
+              outSec: duration,
+              purpose: '人工确认选入抖音成片',
+              audioMode: 'keep',
+              muteReason: null,
+              layout: douyinDefaultLayout(asset),
+            });
+            updateDouyinOpening(target);
+          } else {
+            draftPlan.videos.forEach((video) => {
+              const removed = new Set(video.shots
+                .filter((shot) => shot.assetId === selection.assetId)
+                .map((shot) => shot.shotId));
+              video.shots = video.shots.filter((shot) => shot.assetId !== selection.assetId);
+              video.lightCaptions = video.lightCaptions.filter(
+                (caption) => !removed.has(caption.shotId),
+              );
+              updateDouyinOpening(video);
+            });
+            draftPlan.videos = draftPlan.videos.filter((video) => video.shots.length > 0);
+            if (!draftPlan.videos.length) {
+              showToast('至少保留一个选用素材和一条成片计划。', true);
+              draftPlan = cloneDouyinPlan(variant.plan);
+              renderEditor();
+              return;
+            }
+          }
+          selection.decision = value;
+          renderEditor();
+        },
+      );
+      const reason = createDouyinControl('明确原因', selection.reason, (value) => {
+        selection.reason = value;
+      }, { multiline: true });
+      row.append(identity, decision, reason);
+      selectionBlock.appendChild(row);
+    });
+    body.appendChild(selectionBlock);
+
+    const planHeader = document.createElement('div');
+    planHeader.className = 'douyin-block-heading';
+    planHeader.appendChild(createTextElement('h4', '多成片规划与镜头顺序'));
+    const splitSource = [...draftPlan.videos]
+      .sort((left, right) => right.shots.length - left.shots.length)[0];
+    const newButton = createTextElement('button', '新建成片计划', 'button secondary');
+    newButton.type = 'button';
+    newButton.disabled = !splitSource || splitSource.shots.length < 2;
+    newButton.title = newButton.disabled ? '先选入更多素材，再从现有计划拆出新成片。' : '';
+    newButton.addEventListener('click', () => {
+      const shot = splitSource.shots.pop();
+      const videoId = nextDouyinId('douyin', draftPlan);
+      const captions = splitSource.lightCaptions.filter((item) => item.shotId === shot.shotId);
+      splitSource.lightCaptions = splitSource.lightCaptions.filter((item) => item.shotId !== shot.shotId);
+      updateDouyinOpening(splitSource);
+      draftPlan.videos.push({
+        videoId,
+        theme: `新抖音主题 ${draftPlan.videos.length + 1}`,
+        rationale: '由人工从现有计划拆分，按独立主题继续调整。',
+        openingAssetId: shot.assetId,
+        naturalEnding: '在当前素材的信息点完成处自然结束。',
+        shots: [shot],
+        lightCaptions: captions,
+        warnings: [],
+      });
+      renderEditor();
+    });
+    planHeader.appendChild(newButton);
+    body.appendChild(planHeader);
+
+    draftPlan.videos.forEach((video, videoIndex) => {
+      const card = document.createElement('article');
+      card.className = 'douyin-video-card';
+      const heading = document.createElement('div');
+      heading.className = 'douyin-video-heading';
+      heading.appendChild(createTextElement('strong', `成片 ${videoIndex + 1} · ${video.videoId}`));
+      const cardActions = document.createElement('div');
+      cardActions.className = 'result-actions';
+      const mergeButton = createTextElement('button', '合并到另一条', 'button ghost');
+      mergeButton.type = 'button';
+      mergeButton.disabled = draftPlan.videos.length < 2;
+      mergeButton.addEventListener('click', () => {
+        const target = draftPlan.videos.find((item) => item.videoId !== video.videoId);
+        if (!target) return;
+        target.shots.push(...video.shots);
+        target.lightCaptions.push(...video.lightCaptions);
+        target.warnings.push(...video.warnings);
+        updateDouyinOpening(target);
+        draftPlan.videos = draftPlan.videos.filter((item) => item.videoId !== video.videoId);
+        renderEditor();
+      });
+      const deleteButton = createTextElement('button', '删除计划', 'button ghost danger-button');
+      deleteButton.type = 'button';
+      deleteButton.disabled = draftPlan.videos.length < 2;
+      deleteButton.addEventListener('click', () => {
+        const removedAssetIds = new Set(video.shots.map((shot) => shot.assetId));
+        draftPlan.videos = draftPlan.videos.filter((item) => item.videoId !== video.videoId);
+        const remaining = new Set(draftPlan.videos.flatMap((item) => item.shots.map((shot) => shot.assetId)));
+        removedAssetIds.forEach((assetId) => {
+          if (!remaining.has(assetId)) {
+            const item = selectionById.get(assetId);
+            item.decision = 'separate';
+            item.reason = item.reason || '人工删除该成片计划，建议另拆一条。';
+          }
+        });
+        renderEditor();
+      });
+      cardActions.append(mergeButton, deleteButton);
+      heading.appendChild(cardActions);
+      card.append(
+        heading,
+        createDouyinControl('主题', video.theme, (value) => { video.theme = value; }),
+        createDouyinControl('主题依据', video.rationale, (value) => { video.rationale = value; }, { multiline: true }),
+        createDouyinControl('自然结束点', video.naturalEnding, (value) => { video.naturalEnding = value; }, { multiline: true }),
+      );
+
+      const shots = document.createElement('div');
+      shots.className = 'douyin-shot-list';
+      video.shots.forEach((shot, shotIndex) => {
+        const asset = assetsById.get(shot.assetId);
+        const shotRow = document.createElement('article');
+        shotRow.className = 'douyin-shot-row';
+        const shotHeading = document.createElement('div');
+        shotHeading.className = 'douyin-shot-heading';
+        shotHeading.append(
+          createTextElement('strong', `${shotIndex + 1}. ${asset?.filename || shot.assetId}`),
+          createTextElement('small', shotIndex === 0 ? '开场素材' : shot.shotId),
+        );
+        const shotActions = document.createElement('div');
+        shotActions.className = 'result-actions';
+        const up = createTextElement('button', '上移', 'button ghost');
+        up.type = 'button';
+        up.disabled = shotIndex === 0;
+        up.addEventListener('click', () => {
+          [video.shots[shotIndex - 1], video.shots[shotIndex]] = [
+            video.shots[shotIndex],
+            video.shots[shotIndex - 1],
+          ];
+          updateDouyinOpening(video);
+          renderEditor();
+        });
+        const down = createTextElement('button', '下移', 'button ghost');
+        down.type = 'button';
+        down.disabled = shotIndex === video.shots.length - 1;
+        down.addEventListener('click', () => {
+          [video.shots[shotIndex + 1], video.shots[shotIndex]] = [
+            video.shots[shotIndex],
+            video.shots[shotIndex + 1],
+          ];
+          updateDouyinOpening(video);
+          renderEditor();
+        });
+        const opening = createTextElement('button', '设为开场', 'button ghost');
+        opening.type = 'button';
+        opening.disabled = shotIndex === 0;
+        opening.addEventListener('click', () => {
+          video.shots.splice(shotIndex, 1);
+          video.shots.unshift(shot);
+          updateDouyinOpening(video);
+          renderEditor();
+        });
+        const preview = createTextElement('button', '竖屏预览', 'button secondary');
+        preview.type = 'button';
+        preview.addEventListener('click', () => {
+          state.douyinPreview = {
+            variantId: variant.variantId,
+            videoId: video.videoId,
+            shotId: shot.shotId,
+            beforeCrop: false,
+          };
+          renderEditor();
+          body.querySelector('.douyin-preview-block')?.scrollIntoView({ block: 'nearest' });
+        });
+        shotActions.append(up, down, opening, preview);
+        shotHeading.appendChild(shotActions);
+        shotRow.appendChild(shotHeading);
+
+        if (draftPlan.videos.length > 1) {
+          const targets = Object.fromEntries(draftPlan.videos.map((item) => [
+            item.videoId,
+            item.theme,
+          ]));
+          shotRow.appendChild(createDouyinSelect(
+            '移动到成片',
+            video.videoId,
+            targets,
+            (destinationId) => {
+              if (destinationId === video.videoId) return;
+              const destination = draftPlan.videos.find((item) => item.videoId === destinationId);
+              video.shots = video.shots.filter((item) => item.shotId !== shot.shotId);
+              const captions = video.lightCaptions.filter((item) => item.shotId === shot.shotId);
+              video.lightCaptions = video.lightCaptions.filter((item) => item.shotId !== shot.shotId);
+              destination.shots.push(shot);
+              destination.lightCaptions.push(...captions);
+              updateDouyinOpening(video);
+              updateDouyinOpening(destination);
+              if (!video.shots.length) {
+                draftPlan.videos = draftPlan.videos.filter((item) => item.videoId !== video.videoId);
+              }
+              renderEditor();
+            },
+          ));
+        }
+        const layoutGrid = document.createElement('div');
+        layoutGrid.className = 'douyin-layout-grid';
+        layoutGrid.append(
+          createDouyinSelect('竖屏布局', shot.layout.mode, DOUYIN_LAYOUT_LABELS, (value) => {
+            shot.layout.mode = value;
+            renderEditor();
+          }),
+          createDouyinControl('缩放', shot.layout.scale, (value) => { shot.layout.scale = value; }, {
+            type: 'number', min: 0.1, max: 8, step: 0.05,
+          }),
+          createDouyinControl('位置 X', shot.layout.position.x, (value) => { shot.layout.position.x = value; }, {
+            type: 'number', min: -1, max: 1, step: 0.01,
+          }),
+          createDouyinControl('位置 Y', shot.layout.position.y, (value) => { shot.layout.position.y = value; }, {
+            type: 'number', min: -1, max: 1, step: 0.01,
+          }),
+          ...['left', 'top', 'right', 'bottom'].map((side) => createDouyinControl(
+            `裁切 ${side}`,
+            shot.layout.crop[side],
+            (value) => { shot.layout.crop[side] = value; },
+            { type: 'number', min: 0, max: 0.99, step: 0.01 },
+          )),
+          createDouyinSelect('视频原声', shot.audioMode, { keep: '保留原声', mute: '静音' }, (value) => {
+            shot.audioMode = value;
+            if (value === 'keep') shot.muteReason = null;
+            renderEditor();
+          }),
+        );
+        if (shot.audioMode === 'mute') {
+          layoutGrid.appendChild(createDouyinControl('静音原因', shot.muteReason, (value) => {
+            shot.muteReason = value;
+          }));
+        }
+        shotRow.append(layoutGrid);
+        shots.appendChild(shotRow);
+      });
+      card.appendChild(shots);
+
+      const captions = document.createElement('div');
+      captions.className = 'douyin-caption-list';
+      captions.appendChild(createTextElement('h5', `轻字幕 · ${video.lightCaptions.length}`));
+      if (!video.lightCaptions.length) {
+        captions.appendChild(createTextElement('p', '本条成片不需要轻字幕。', 'empty-inline'));
+      }
+      video.lightCaptions.forEach((caption) => {
+        const captionRow = document.createElement('article');
+        captionRow.className = 'douyin-caption-row';
+        captionRow.append(
+          createDouyinControl(
+            caption.sourceLocked ? '人工审核字幕（锁定原文）' : '轻字幕内容',
+            caption.text,
+            (value) => { caption.text = value; },
+            { disabled: caption.sourceLocked },
+          ),
+          createDouyinSelect(
+            '安全区位置',
+            caption.position,
+            Object.fromEntries(Object.keys(variant.profile.subtitlePlacements).map((key) => [key, key])),
+            (value) => { caption.position = value; },
+          ),
+          createTextElement('small', `依据：${caption.basedOn} · FCP 原生可编辑 Title`),
+        );
+        captions.appendChild(captionRow);
+      });
+      card.appendChild(captions);
+
+      if (video.warnings.length) {
+        const warnings = document.createElement('div');
+        warnings.className = 'douyin-warning-list';
+        warnings.appendChild(createTextElement('h5', '人工确认警告'));
+        video.warnings.forEach((warning) => {
+          const label = document.createElement('label');
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = approvedWarnings.has(warning.warningId);
+          checkbox.addEventListener('change', () => {
+            if (checkbox.checked) approvedWarnings.add(warning.warningId);
+            else approvedWarnings.delete(warning.warningId);
+          });
+          label.append(checkbox, createTextElement('span', `${warning.type} · ${warning.message}`));
+          warnings.appendChild(label);
+        });
+        card.appendChild(warnings);
+      }
+      body.appendChild(card);
+    });
+
+    const previewBlock = document.createElement('div');
+    previewBlock.className = 'douyin-block douyin-preview-block';
+    previewBlock.appendChild(createTextElement('h4', '1080×1920 竖屏预览'));
+    renderDouyinVerticalPreview(previewBlock, variant, draftPlan, selectionById);
+    body.appendChild(previewBlock);
+
+    const actions = document.createElement('div');
+    actions.className = 'result-actions douyin-editor-actions';
+    const saveButton = createTextElement('button', '保存规划调整', 'button secondary');
+    saveButton.type = 'button';
+    saveButton.addEventListener('click', () => withBusy(saveButton, async () => {
+      await window.plannerApi.saveDouyinVariant({
+        projectPath: result.project.path,
+        variantId: variant.variantId,
+        plan: draftPlan,
+        expectedRevision: variant.revision,
+      });
+      showToast('抖音规划已保存；默认主成片未修改。');
+      await loadCatalogProject(result.project.path);
+    }, '正在保存…'));
+    const buildButton = createTextElement('button', '批准后生成', 'button primary');
+    buildButton.type = 'button';
+    buildButton.addEventListener('click', () => withBusy(buildButton, async () => {
+      const saved = await window.plannerApi.saveDouyinVariant({
+        projectPath: result.project.path,
+        variantId: variant.variantId,
+        plan: draftPlan,
+        expectedRevision: variant.revision,
+      });
+      await window.plannerApi.approveDouyinVariant({
+        projectPath: result.project.path,
+        variantId: variant.variantId,
+        approvedWarningIds: [...approvedWarnings],
+      });
+      showToast(`revision ${saved.revision} 已批准，正在生成独立竖屏产物。`);
+      await window.plannerApi.buildDouyinVariant({
+        projectPath: result.project.path,
+        variantId: variant.variantId,
+      });
+      await loadCatalogProject(result.project.path);
+      showToast('抖音成片已生成并完成验证。');
+    }, '生成中…'));
+    const verifyButton = createTextElement('button', '验证抖音产物', 'button ghost');
+    verifyButton.type = 'button';
+    verifyButton.disabled = !(variant.outputs?.length);
+    verifyButton.addEventListener('click', () => withBusy(verifyButton, async () => {
+      const report = await window.plannerApi.verifyDouyinVariant({
+        projectPath: result.project.path,
+        variantId: variant.variantId,
+      });
+      showToast(report.ok ? '抖音独立产物验证通过。' : `验证失败：${report.reports?.[0]?.errors?.[0] || '未知错误'}`, !report.ok);
+    }, '验证中…'));
+    actions.append(saveButton, buildButton, verifyButton);
+    body.appendChild(actions);
+
+    const outputBlock = document.createElement('div');
+    outputBlock.className = 'douyin-block';
+    outputBlock.appendChild(createTextElement('h4', '抖音结果'));
+    renderDouyinOutputs(outputBlock, result, variant);
+    body.appendChild(outputBlock);
+  };
+  renderEditor();
+}
+
+function renderPlatformVariants(result) {
+  const section = createResultSection(
+    '平台成片',
+    '默认主成片继续使用原有完整素材规则；抖音变体共享源素材和基础分析，但计划与输出完全独立。',
+  );
+  section.appendChild(createDefinitionGrid([
+    ['默认主成片', '原有结果 · 素材完整性验证保持不变'],
+    ['平台变体', `${result.platformVariants?.variants?.length || 0} 个`],
+  ], 'douyin-summary-grid'));
+  const douyin = result.platformVariants?.variants?.find((item) => item.platform === 'douyin');
+  if (!douyin) {
+    const empty = createTextElement(
+      'p',
+      '尚未创建抖音变体。创建时会复用现有基础分析并生成一份独立可调整的抖音规划。',
+      'empty-inline',
+    );
+    const button = createTextElement('button', '创建抖音变体', 'button primary');
+    button.type = 'button';
+    button.addEventListener('click', () => withBusy(button, async () => {
+      await window.plannerApi.createDouyinVariant({
+        projectPath: result.project.path,
+        variantId: 'douyin',
+      });
+      await loadCatalogProject(result.project.path);
+      showToast('已创建独立抖音变体。');
+    }, '正在创建…'));
+    const actions = document.createElement('div');
+    actions.className = 'result-actions douyin-editor-actions';
+    actions.appendChild(button);
+    section.append(empty, actions);
+    return section;
+  }
+  const loading = createTextElement('p', '正在加载抖音规划确认页…', 'empty-inline');
+  section.appendChild(loading);
+  window.plannerApi.readDouyinVariant({
+    projectPath: result.project.path,
+    variantId: douyin.variantId,
+  }).then((variant) => {
+    if (state.selectedCatalogProjectPath !== result.project.path || !loading.isConnected) return;
+    state.douyinVariant = variant;
+    loading.remove();
+    renderDouyinVariantEditor(section, result, variant);
+  }).catch((error) => {
+    loading.textContent = getUserErrorMessage(error);
+    loading.classList.add('error');
+  });
+  return section;
+}
+
 function renderCodexProjectResult(result) {
   state.selectedProjectResult = result;
   state.resultPlayback = null;
@@ -1358,6 +2082,7 @@ function renderCodexProjectResult(result) {
     ['验证时间', formatDateTime(result.project.verifiedAt)],
   ]));
   elements.resultDetail.appendChild(summary);
+  elements.resultDetail.appendChild(renderPlatformVariants(result));
 
   const decisions = createResultSection('素材取舍', '只展示结构化 Codex 分析，不反向解析 Markdown 报告。');
   renderDecisionGroup(decisions, '采用', result.decisions.adopt);
@@ -1578,6 +2303,8 @@ async function loadCatalogProject(projectPath) {
   state.explanationReviewDrafts = {};
   state.explanationReviewSelectedAssetId = null;
   state.captionExportPreview = null;
+  state.douyinVariant = null;
+  state.douyinPreview = null;
   state.selectedCatalogProjectPath = projectPath;
   renderProjectCatalog();
   elements.resultDetailEmpty.classList.add('hidden');

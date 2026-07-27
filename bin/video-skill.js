@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const {
@@ -18,6 +19,13 @@ const {
   updateHandoffTask,
 } = require('../src/services/handoff-task-service');
 const { openReturnUrl } = require('../src/protocol-service');
+const {
+  approveDouyinVariant,
+  buildDouyinVariant,
+  createDouyinVariant,
+  saveDouyinVariantDraft,
+  verifyDouyinVariant,
+} = require('../src/services/platform-variant-service');
 
 const BOOLEAN_OPTIONS = new Set(['json', 'open-fcpxml', 'hyperframes', 'help']);
 const NON_FATAL_HANDOFF_COMMAND_ERRORS = new Set([
@@ -127,6 +135,11 @@ function helpText() {
   video-skill hyperframes-doctor [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--json]
   video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--preview-width <像素>] [--preview-height <像素>] [--preview-fps <帧率>] [--hyperframes] [--hyperframes-flow <流程 JSON>] [--reuse-hyperframes-project <已验收项目>] [--hyperframes-duration <秒>] [--hyperframes-quality draft|standard|high] [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--open-fcpxml] [--json]
   video-skill verify --project <v3 正式项目目录> [--json]
+  video-skill douyin-create --project <v3 正式项目目录> [--variant-id <ID>] [--plan <edit-plan.json>] [--json]
+  video-skill douyin-update --project <v3 正式项目目录> --plan <edit-plan.json> [--variant-id <ID>] [--expected-revision <数字>] [--json]
+  video-skill douyin-approve --project <v3 正式项目目录> [--variant-id <ID>] [--approved-warnings <JSON 数组>] [--json]
+  video-skill douyin-build --project <v3 正式项目目录> [--variant-id <ID>] [--json]
+  video-skill douyin-verify --project <v3 正式项目目录> [--variant-id <ID>] [--json]
   video-skill handoff-update --handoff-task <task.json> --stage <状态> [--message <说明>] [--hyperframes-decision <enabled|disabled|attempted-rejected>] [--hyperframes-reason <理由>] [--hyperframes-gap <表达缺口>] [--hyperframes-quality-review <复核结果>] [--json]
   video-skill handoff-complete --handoff-task <task.json> --project <v3 正式项目目录> [--json]
   video-skill handoff-return --handoff-task <task.json> [--json]
@@ -184,6 +197,18 @@ function humanOutput(command, result) {
   }
   if (command === 'verify') {
     return `项目完整性验证通过：${result.projectPath}\nFCPXML 独立镜头：${result.fcpxml.clipCount}\n`;
+  }
+  if (command === 'douyin-create' || command === 'douyin-update') {
+    return `抖音规划已保存：${result.variantId}｜revision ${result.revision}｜${result.plan.videos.length} 条成片\n`;
+  }
+  if (command === 'douyin-approve') {
+    return `抖音规划已批准：${result.variantId}｜revision ${result.revision}\n`;
+  }
+  if (command === 'douyin-build') {
+    return `抖音独立产物已生成：${result.variantId}｜${result.outputs.length} 条成片｜${result.status}\n`;
+  }
+  if (command === 'douyin-verify') {
+    return `抖音独立产物验证${result.ok ? '通过' : '失败'}：${result.variantId}｜${result.reports.length} 条成片\n`;
   }
   if (command === 'handoff-update') {
     return `交接任务已更新：${result.taskId}｜${result.stageMessage}\n`;
@@ -333,6 +358,62 @@ async function execute(argv) {
     const report = handoffReporter(options);
     await report('verifying', '正在重新执行正式项目只读完整验证。');
     const result = await verifyCodexVideoProject(required(options, 'project'));
+    return { command, options, result };
+  }
+  if (command === 'douyin-create') {
+    const planPath = options.plan ? path.resolve(options.plan) : null;
+    const plan = planPath ? JSON.parse(await fs.readFile(planPath, 'utf8')) : null;
+    const result = await createDouyinVariant(required(options, 'project'), {
+      variantId: options['variant-id'] || 'douyin',
+      plan,
+    });
+    return { command, options, result };
+  }
+  if (command === 'douyin-update') {
+    const planPath = path.resolve(required(options, 'plan'));
+    const plan = JSON.parse(await fs.readFile(planPath, 'utf8'));
+    const expectedRevision = options['expected-revision'] == null
+      ? undefined
+      : Number(options['expected-revision']);
+    if (expectedRevision != null && !Number.isInteger(expectedRevision)) {
+      throw Object.assign(new Error('--expected-revision 必须是整数。'), {
+        code: 'INVALID_ARGUMENT',
+      });
+    }
+    const result = await saveDouyinVariantDraft(
+      required(options, 'project'),
+      options['variant-id'] || 'douyin',
+      plan,
+      { expectedRevision },
+    );
+    return { command, options, result };
+  }
+  if (command === 'douyin-approve') {
+    const result = await approveDouyinVariant(
+      required(options, 'project'),
+      options['variant-id'] || 'douyin',
+      {
+        approvedWarningIds: optionalJson(
+          options['approved-warnings'] || '[]',
+          '--approved-warnings',
+        ),
+        approvedBy: 'video-skill-cli',
+      },
+    );
+    return { command, options, result };
+  }
+  if (command === 'douyin-build') {
+    const result = await buildDouyinVariant(
+      required(options, 'project'),
+      options['variant-id'] || 'douyin',
+    );
+    return { command, options, result };
+  }
+  if (command === 'douyin-verify') {
+    const result = await verifyDouyinVariant(
+      required(options, 'project'),
+      options['variant-id'] || 'douyin',
+    );
     return { command, options, result };
   }
   if (command === 'handoff-update') {

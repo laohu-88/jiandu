@@ -27,6 +27,13 @@
       "items": { "$ref": "#/$defs/lightCaption" }
     },
     "visualExplanationSummary": { "$ref": "#/$defs/visualExplanationSummary" },
+    "platformVariants": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "douyin": { "$ref": "douyin-platform-variant.schema.json" }
+      }
+    },
     "theme": {
       "type": "object",
       "additionalProperties": false,

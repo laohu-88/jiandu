@@ -16,6 +16,7 @@ const { readJsonFile } = require('./project-json-service');
 const { verifyCodexVideoProject } = require('./codex-video-service');
 const { createMarkerViewModel } = require('./marker-view-model');
 const { buildEditorialReviewModel } = require('./editorial-review-service');
+const { readPlatformVariants } = require('./platform-variant-service');
 
 const PROJECT_RESULT_STATUS = Object.freeze({
   VERIFIED: 'verified',
@@ -215,6 +216,44 @@ async function readCodexProjectResult(projectPath) {
     status,
     fcpxml: fcpxmlText,
   });
+  const platformRegistry = await readPlatformVariants(resolved).catch((error) => ({
+    ...defaultPlatformRegistry(resolved),
+    error: error.message,
+  }));
+  const platformVariants = [];
+  for (const variant of asArray(platformRegistry.variants)) {
+    const outputs = [];
+    for (const output of asArray(variant.outputs)) {
+      outputs.push({
+        ...output,
+        outputDirectory: await makeArtifact(
+          resolved,
+          output.relativeOutputDirectory || null,
+          'directory',
+        ),
+        artifacts: {
+          fcpxml: await makeArtifact(resolved, output.artifacts?.fcpxml || null),
+          preview: await makeArtifact(resolved, output.artifacts?.preview || null),
+          editPlan: await makeArtifact(resolved, output.artifacts?.editPlan || null),
+          analysis: await makeArtifact(resolved, output.artifacts?.analysis || null),
+          validation: await makeArtifact(resolved, output.artifacts?.validation || null),
+        },
+      });
+    }
+    platformVariants.push({
+      variantId: variant.variantId,
+      platform: variant.platform,
+      profileId: variant.profileId,
+      revision: variant.revision,
+      status: variant.status,
+      createdAt: variant.createdAt,
+      updatedAt: variant.updatedAt,
+      generatedAt: variant.generatedAt || null,
+      approval: variant.approval || null,
+      plan: variant.plan || null,
+      outputs,
+    });
+  }
 
   return {
     project: {
@@ -268,6 +307,11 @@ async function readCodexProjectResult(projectPath) {
     },
     subtitles,
     artifacts,
+    platformVariants: {
+      defaultMain: platformRegistry.defaultMain || defaultPlatformRegistry(resolved).defaultMain,
+      variants: platformVariants,
+      error: platformRegistry.error || null,
+    },
     verification: {
       ok: status?.verification?.ok ?? (classification === PROJECT_RESULT_STATUS.VERIFIED),
       status: classification,
@@ -347,6 +391,19 @@ async function readCodexProjectResult(projectPath) {
       assetsCount: asArray(assetsIndex?.assets).length,
       manifestCount: asArray(manifest?.items).length,
     },
+  };
+}
+
+function defaultPlatformRegistry(projectPath) {
+  return {
+    defaultMain: {
+      storage: 'legacy-main',
+      analysis: CODEX_VIDEO_ANALYSIS_FILE,
+      status: CODEX_VIDEO_STATUS_FILE,
+      untouchedByPlatformVariants: true,
+    },
+    projectPath,
+    variants: [],
   };
 }
 

@@ -120,6 +120,17 @@ test('package 脚本禁止证书自动发现且 launch 不回退 npm start', asy
   assert.doesNotMatch(launchScript, /npm start|electron \./);
   assert.match(installScript, /\/usr\/bin\/ditto/);
   assert.match(installScript, /install-backups/);
-  assert.match(installScript, /verifyImpl\(backupPath, \{ skipRuntimeEntitlements: true \}\)/);
+  assert.match(installScript, /skipRuntimeFileRequirements: true/);
+  assert.match(installScript, /skipVersionCheck: true/);
+  assert.match(installScript, /backupVerification\.appAsarSha256 !== installedVerification\.appAsarSha256/);
+  assert.match(
+    installScript,
+    /const verification = await verifyImpl\(target\);\s+targetRemoved = false;/,
+  );
   assert.doesNotMatch(installScript, /pkill|sudo|shell:\s*true/);
+});
+
+test('包校验每次读取前清除 ASAR 路径缓存，避免原位更新后误判旧文件列表', async () => {
+  const verifyScript = await fs.readFile(path.join(__dirname, '../scripts/verify-package.js'), 'utf8');
+  assert.match(verifyScript, /asar\.uncache\(appAsarPath\);\s+const packagedFiles/);
 });
