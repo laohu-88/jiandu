@@ -105,5 +105,25 @@
       "conform": "fit",
       "background": "same-frame-blur"
     }
+  },
+  "advancedLayouts": {
+    "screen_focus": {
+      "label": "录屏局部放大",
+      "conform": "fill",
+      "background": "solid",
+      "requiresManualCropReview": true
+    },
+    "screen_split": {
+      "label": "上下双层录屏",
+      "conform": "layered",
+      "background": "solid",
+      "singleAudioSource": true
+    },
+    "segmented_focus": {
+      "label": "分段局部放大",
+      "conform": "fill",
+      "background": "solid",
+      "preserveSourceTimecode": true
+    }
   }
 }

@@ -676,7 +676,11 @@ test('人工调整批准后生成多条独立 FCPXML、预览与验证报告，�
       };
     },
   });
-  assert.equal(generated.status, 'generated');
+  assert.equal(
+    generated.status,
+    'generated',
+    JSON.stringify(generated.outputs.flatMap((output) => output.validation?.warnings || [])),
+  );
   assert.equal(generated.outputs.length, 2);
   for (const output of generated.outputs) {
     assert.equal(output.validationStatus, 'verified');

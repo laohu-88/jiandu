@@ -107,7 +107,10 @@
             "native_vertical",
             "center_crop",
             "landscape_card",
-            "landscape_card_blur"
+            "landscape_card_blur",
+            "screen_focus",
+            "screen_split",
+            "segmented_focus"
           ]
         },
         "scale": { "type": "number", "minimum": 0.1, "maximum": 8 },
@@ -131,6 +134,10 @@
             "bottom": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 }
           }
         },
+        "secondaryCrop": {
+          "$ref": "#/$defs/crop"
+        },
+        "splitRatio": { "type": "number", "minimum": 0.25, "maximum": 0.75 },
         "subjectBounds": {
           "type": ["object", "null"],
           "additionalProperties": false,
@@ -141,7 +148,39 @@
             "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
             "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
           }
-        }
+        },
+        "sourceTextBounds": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rect" }
+        },
+        "minReadableTextHeightPx": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        },
+        "agentNote": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "crop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "top", "right", "bottom"],
+      "properties": {
+        "left": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        "top": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        "right": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 },
+        "bottom": { "type": "number", "minimum": 0, "exclusiveMaximum": 1 }
+      }
+    },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
       }
     },
     "shot": {
@@ -165,7 +204,8 @@
         "purpose": { "type": "string", "minLength": 1, "maxLength": 500 },
         "audioMode": { "enum": ["keep", "mute"] },
         "muteReason": { "type": ["string", "null"], "maxLength": 500 },
-        "layout": { "$ref": "#/$defs/layout" }
+        "layout": { "$ref": "#/$defs/layout" },
+        "agentLayout": { "$ref": "#/$defs/layout" }
       }
     },
     "lightCaption": {
@@ -193,6 +233,7 @@
         "durationSec": { "type": "number", "exclusiveMinimum": 0 },
         "position": { "enum": ["bottom-safe", "top-safe", "center"] },
         "purpose": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "kind": { "enum": ["content", "context", "chapter_conclusion"] },
         "basedOn": { "type": "string", "minLength": 1, "maxLength": 500 },
         "required": { "type": "boolean" },
         "sourceLocked": { "type": "boolean" }
@@ -209,6 +250,9 @@
             "watermark",
             "qr_code",
             "sensitive_content",
+            "readability",
+            "safe_zone",
+            "critical_crop",
             "manual_review",
             "other"
           ]

@@ -44,13 +44,24 @@ const DOUYIN_LAYOUT_MODES = new Set([
   'center_crop',
   'landscape_card',
   'landscape_card_blur',
+  'screen_focus',
+  'screen_split',
+  'segmented_focus',
 ]);
 const DOUYIN_WARNING_TYPES = new Set([
   'watermark',
   'qr_code',
   'sensitive_content',
+  'readability',
+  'safe_zone',
+  'critical_crop',
   'manual_review',
   'other',
+]);
+const DOUYIN_CAPTION_KINDS = new Set([
+  'content',
+  'context',
+  'chapter_conclusion',
 ]);
 const FORBIDDEN_DURATION_KEYS = new Set([
   'targetduration',
@@ -178,7 +189,9 @@ function validateProfile(profile) {
     }
   }
   for (const mode of DOUYIN_LAYOUT_MODES) {
-    if (!profile?.layouts?.[mode]) errors.push(`平台档案缺少布局：${mode}`);
+    if (!profile?.layouts?.[mode] && !profile?.advancedLayouts?.[mode]) {
+      errors.push(`平台档案缺少布局：${mode}`);
+    }
   }
   if (errors.length) {
     throw variantError('INVALID_DOUYIN_PROFILE', errors[0], errors);
@@ -323,10 +336,28 @@ function rectInside(inner, outer) {
     && inner.y + inner.height <= outer.y + outer.height;
 }
 
+function normalizeCrop(crop) {
+  const source = isObject(crop) ? crop : {};
+  return {
+    left: Number.isFinite(Number(source.left)) ? Number(source.left) : 0,
+    top: Number.isFinite(Number(source.top)) ? Number(source.top) : 0,
+    right: Number.isFinite(Number(source.right)) ? Number(source.right) : 0,
+    bottom: Number.isFinite(Number(source.bottom)) ? Number(source.bottom) : 0,
+  };
+}
+
+function normalizeRect(rect) {
+  return validRect(rect) ? {
+    x: Number(rect.x),
+    y: Number(rect.y),
+    width: Number(rect.width),
+    height: Number(rect.height),
+  } : null;
+}
+
 function normalizeLayout(layout, mode = 'native_vertical') {
   const source = isObject(layout) ? layout : {};
   const position = isObject(source.position) ? source.position : {};
-  const crop = isObject(source.crop) ? source.crop : {};
   return {
     mode: DOUYIN_LAYOUT_MODES.has(source.mode) ? source.mode : mode,
     scale: Number.isFinite(Number(source.scale)) ? Number(source.scale) : 1,
@@ -334,18 +365,18 @@ function normalizeLayout(layout, mode = 'native_vertical') {
       x: Number.isFinite(Number(position.x)) ? Number(position.x) : 0,
       y: Number.isFinite(Number(position.y)) ? Number(position.y) : 0,
     },
-    crop: {
-      left: Number.isFinite(Number(crop.left)) ? Number(crop.left) : 0,
-      top: Number.isFinite(Number(crop.top)) ? Number(crop.top) : 0,
-      right: Number.isFinite(Number(crop.right)) ? Number(crop.right) : 0,
-      bottom: Number.isFinite(Number(crop.bottom)) ? Number(crop.bottom) : 0,
-    },
-    subjectBounds: validRect(source.subjectBounds) ? {
-      x: Number(source.subjectBounds.x),
-      y: Number(source.subjectBounds.y),
-      width: Number(source.subjectBounds.width),
-      height: Number(source.subjectBounds.height),
-    } : null,
+    crop: normalizeCrop(source.crop),
+    secondaryCrop: normalizeCrop(source.secondaryCrop),
+    splitRatio: Number.isFinite(Number(source.splitRatio))
+      ? Number(source.splitRatio)
+      : 0.5,
+    subjectBounds: normalizeRect(source.subjectBounds),
+    sourceTextBounds: asArray(source.sourceTextBounds).map(normalizeRect).filter(Boolean),
+    minReadableTextHeightPx: source.minReadableTextHeightPx != null
+      && Number.isFinite(Number(source.minReadableTextHeightPx))
+      ? Number(source.minReadableTextHeightPx)
+      : null,
+    agentNote: String(source.agentNote || '').trim(),
   };
 }
 
@@ -395,6 +426,7 @@ function normalizeDouyinPlan(rawPlan) {
         ? String(shot?.muteReason || '').trim()
         : null,
       layout: normalizeLayout(shot?.layout),
+      agentLayout: normalizeLayout(shot?.agentLayout || shot?.layout),
     })),
     lightCaptions: asArray(video?.lightCaptions).map((caption, captionIndex) => ({
       captionId: recordId(caption?.captionId || `${video?.videoId || `douyin-${videoIndex + 1}`}-caption-${captionIndex + 1}`),
@@ -405,6 +437,13 @@ function normalizeDouyinPlan(rawPlan) {
       durationSec: Number(caption?.durationSec),
       position: String(caption?.position || 'bottom-safe'),
       purpose: String(caption?.purpose || 'clarify'),
+      kind: DOUYIN_CAPTION_KINDS.has(caption?.kind)
+        ? caption.kind
+        : (/章节|结论|收束/.test(String(caption?.purpose || ''))
+          ? 'chapter_conclusion'
+          : (/背景|上下文|解释|翻译/.test(String(caption?.purpose || ''))
+            ? 'context'
+            : 'content')),
       basedOn: String(caption?.basedOn || '基础分析').trim(),
       required: caption?.required !== false,
       sourceLocked: caption?.sourceLocked === true,
@@ -423,6 +462,7 @@ function normalizeDouyinPlan(rawPlan) {
 
 function validateDouyinPlan(rawPlan, context = {}) {
   const plan = normalizeDouyinPlan(rawPlan);
+  synchronizeAutomaticWarnings(plan, context);
   const errors = [];
   const manifest = context.manifest || { items: [] };
   const analysis = context.analysis || { assets: [] };
@@ -536,9 +576,37 @@ function validateDouyinPlan(rawPlan, context = {}) {
         || crop.top + crop.bottom >= 1) {
         errors.push(`${shotField}.layout.crop 是无效裁切。`);
       }
+      const secondaryCrop = shot.layout.secondaryCrop;
+      if (Object.values(secondaryCrop).some((value) => !Number.isFinite(value) || value < 0 || value >= 1)
+        || secondaryCrop.left + secondaryCrop.right >= 1
+        || secondaryCrop.top + secondaryCrop.bottom >= 1) {
+        errors.push(`${shotField}.layout.secondaryCrop 是无效裁切。`);
+      }
+      if (!Number.isFinite(shot.layout.splitRatio)
+        || shot.layout.splitRatio < 0.25
+        || shot.layout.splitRatio > 0.75) {
+        errors.push(`${shotField}.layout.splitRatio 必须在 0.25–0.75。`);
+      }
+      if (shot.layout.minReadableTextHeightPx != null
+        && (!Number.isFinite(shot.layout.minReadableTextHeightPx)
+          || shot.layout.minReadableTextHeightPx <= 0
+          || shot.layout.minReadableTextHeightPx > 1000)) {
+        errors.push(`${shotField}.layout.minReadableTextHeightPx 无效。`);
+      }
       if (source?.type === 'video' && source.metadata?.hasAudio && shot.audioMode === 'mute'
         && !nonEmpty(shot.muteReason, 500)) {
         errors.push(`${shotField} 静音必须记录明确原因。`);
+      }
+    }
+    for (let shotIndex = 1; shotIndex < video.shots.length; shotIndex += 1) {
+      const previous = video.shots[shotIndex - 1];
+      const shot = video.shots[shotIndex];
+      if (previous.assetId === shot.assetId
+        && (previous.layout.mode === 'segmented_focus' || shot.layout.mode === 'segmented_focus')
+        && Math.abs(previous.outSec - shot.inSec) > 0.001) {
+        errors.push(
+          `${field}.shots[${shotIndex - 1}] 与 shots[${shotIndex}] 是同源分段局部放大，源时间码必须连续。`,
+        );
       }
     }
     const captionAssetIds = new Set();
@@ -561,6 +629,9 @@ function validateDouyinPlan(rawPlan, context = {}) {
       }
       if (!profile?.subtitlePlacements?.[caption.position]) {
         errors.push(`${captionField}.position 不在平台档案中。`);
+      }
+      if (!DOUYIN_CAPTION_KINDS.has(caption.kind)) {
+        errors.push(`${captionField}.kind 无效。`);
       }
       captionAssetIds.add(caption.assetId);
     }
@@ -613,6 +684,104 @@ function validateDouyinPlan(rawPlan, context = {}) {
   return plan;
 }
 
+function isAdvancedScreenLayout(mode) {
+  return mode === 'screen_focus' || mode === 'screen_split' || mode === 'segmented_focus';
+}
+
+function effectiveSourceTextHeightPx(layout, profile) {
+  if (!Number.isFinite(layout.minReadableTextHeightPx)) return null;
+  const cropHeight = Math.max(0.01, 1 - layout.crop.top - layout.crop.bottom);
+  const displayRatio = layout.mode === 'screen_split'
+    ? layout.splitRatio
+    : 1;
+  return layout.minReadableTextHeightPx * layout.scale * displayRatio / cropHeight;
+}
+
+function warningRecord(video, shot, type, suffix, message) {
+  return {
+    warningId: `${video.videoId}-${shot.shotId}-${suffix}`.slice(0, 100),
+    type,
+    assetId: shot.assetId,
+    message,
+  };
+}
+
+function automaticWarningsForVideo(video, context = {}) {
+  const profile = context.profile || {};
+  const analysisById = new Map(asArray(context.analysis?.assets)
+    .map((item) => [item.assetId, item]));
+  const warnings = [];
+  for (const shot of video.shots) {
+    const layout = shot.layout;
+    if (isAdvancedScreenLayout(layout.mode) && !layout.subjectBounds) {
+      warnings.push(warningRecord(
+        video,
+        shot,
+        'critical_crop',
+        'critical-crop',
+        `镜头 ${shot.shotId} 使用高级录屏布局，但尚未标记关键区域；需人工确认关键文字和操作没有被裁切。`,
+      ));
+    }
+    const readableHeight = effectiveSourceTextHeightPx(layout, profile);
+    if (readableHeight != null && readableHeight < 24) {
+      warnings.push(warningRecord(
+        video,
+        shot,
+        'readability',
+        'small-text',
+        `镜头 ${shot.shotId} 的界面小字预计仅约 ${readableHeight.toFixed(1)}px，手机上可能不可读。`,
+      ));
+    } else if (isAdvancedScreenLayout(layout.mode) && readableHeight == null) {
+      warnings.push(warningRecord(
+        video,
+        shot,
+        'readability',
+        'unknown-text-size',
+        `镜头 ${shot.shotId} 的界面文字尺寸无法可靠判断，需在手机尺寸预览中人工确认。`,
+      ));
+    }
+    if ((layout.mode === 'landscape_card' || layout.mode === 'landscape_card_blur')
+      && layout.scale < 0.85) {
+      warnings.push(warningRecord(
+        video,
+        shot,
+        'readability',
+        'small-card',
+        `镜头 ${shot.shotId} 的横屏卡片有效显示面积偏小，需人工确认界面文字可读。`,
+      ));
+    }
+    const base = analysisById.get(shot.assetId);
+    const text = [
+      base?.contentSummary,
+      ...asArray(base?.warnings),
+      ...asArray(base?.visualTextAnalysis?.warnings),
+    ].filter(Boolean).join(' ');
+    if (/(?:\/Users\/|\/home\/|[A-Z]:\\|账号|邮箱|email|token|api.?key|密钥|手机号|身份证|密码|credential)/i.test(text)) {
+      warnings.push(warningRecord(
+        video,
+        shot,
+        'sensitive_content',
+        'sensitive-screen',
+        `镜头 ${shot.shotId} 的开发录屏可能暴露路径、账号或凭据；不得自动删除，需人工查看原画确认。`,
+      ));
+    }
+  }
+  return warnings;
+}
+
+function synchronizeAutomaticWarnings(plan, context = {}) {
+  for (const video of plan.videos) {
+    const manual = video.warnings.filter((warning) => (
+      !/-(?:critical-crop|small-text|unknown-text-size|small-card|sensitive-screen)$/
+        .test(warning.warningId)
+    ));
+    const automatic = automaticWarningsForVideo(video, context);
+    const byId = new Map([...manual, ...automatic].map((warning) => [warning.warningId, warning]));
+    video.warnings = [...byId.values()];
+  }
+  return plan;
+}
+
 function orientationOf(item) {
   const width = Number(item?.metadata?.displayWidth || item?.metadata?.width);
   const height = Number(item?.metadata?.displayHeight || item?.metadata?.height);
@@ -622,11 +791,32 @@ function orientationOf(item) {
   return 'square';
 }
 
-function defaultLayoutForItem(item) {
+function looksLikeScreenRecording(item, baseAsset) {
+  return item?.type === 'video' && /录屏|屏幕录制|screen.?record|cursor|ide|终端|terminal/i.test([
+    item?.filename,
+    baseAsset?.contentSummary,
+    ...asArray(baseAsset?.semanticLabels),
+    ...asArray(baseAsset?.suggestedUse),
+  ].filter(Boolean).join(' '));
+}
+
+function defaultLayoutForItem(item, baseAsset) {
   const orientation = orientationOf(item);
   if (orientation === 'vertical') return normalizeLayout({ mode: 'native_vertical' });
+  if (orientation === 'horizontal' && looksLikeScreenRecording(item, baseAsset)) {
+    const layout = normalizeLayout({
+      mode: 'screen_focus',
+      crop: { left: 0.08, top: 0.08, right: 0.08, bottom: 0.08 },
+      subjectBounds: null,
+      agentNote: '检测为横屏录屏；建议在规划确认页把裁切框对准本镜头的关键操作区域。',
+    });
+    return layout;
+  }
   if (orientation === 'horizontal') return normalizeLayout({ mode: 'landscape_card_blur' });
-  return normalizeLayout({ mode: 'center_crop' });
+  return normalizeLayout({
+    mode: 'landscape_card_blur',
+    agentNote: '素材方向不确定，先完整显示并保留人工确认，不自动假设中央裁切安全。',
+  });
 }
 
 function defaultSelectionFactors(item, baseAsset) {
@@ -720,6 +910,22 @@ function buildRequiredCaptions(bundle, selectedIds, confirmedCaptions = []) {
   return captions;
 }
 
+function captionKindForPurpose(purpose) {
+  return /章节|结论|收束/.test(String(purpose || ''))
+    ? 'chapter_conclusion'
+    : (/背景|上下文|解释|翻译/.test(String(purpose || ''))
+      ? 'context'
+      : 'content');
+}
+
+function recommendedCaptionPosition(profile, shot, kind) {
+  if (kind === 'chapter_conclusion') return 'center';
+  if (kind === 'context' || shot.layout.mode === 'screen_split') return 'top-safe';
+  const bottom = profile.subtitlePlacements['bottom-safe'];
+  if (shot.layout.sourceTextBounds.some((rect) => rectsIntersect(rect, bottom))) return 'top-safe';
+  return 'bottom-safe';
+}
+
 async function createAutomaticDouyinPlan(bundle) {
   const editorialModel = await buildEditorialReviewModel(bundle.projectPath, {
     analysis: bundle.analysis,
@@ -787,7 +993,7 @@ async function createAutomaticDouyinPlan(bundle) {
           muteReason: shot.audioMode === 'mute'
             ? source?.audioAnalysis?.muteReason || '基础分析明确要求静音'
             : null,
-          layout: defaultLayoutForItem(item),
+          layout: defaultLayoutForItem(item, source),
         };
       });
     if (!shots.length) {
@@ -801,7 +1007,7 @@ async function createAutomaticDouyinPlan(bundle) {
             purpose: sourceShot.purpose || '展示画面',
             audioMode: item.type === 'video' && item.metadata?.hasAudio ? 'keep' : 'keep',
             muteReason: null,
-            layout: defaultLayoutForItem(item),
+            layout: defaultLayoutForItem(item, baseById.get(item.assetId)),
           });
         }
       }
@@ -823,6 +1029,7 @@ async function createAutomaticDouyinPlan(bundle) {
       const requestedDuration = Number(caption.endTime) > Number(caption.startTime)
         ? Number(caption.endTime) - Number(caption.startTime)
         : 2;
+      const kind = captionKindForPurpose(caption.purpose);
       lightCaptions.push({
         captionId: recordId(caption.captionId),
         assetId: caption.assetId,
@@ -830,8 +1037,9 @@ async function createAutomaticDouyinPlan(bundle) {
         text: String(caption.text || '').slice(0, 40),
         offsetSec,
         durationSec: Math.min(requestedDuration, maxDuration),
-        position: 'bottom-safe',
+        position: recommendedCaptionPosition(bundle.profile, shot, kind),
         purpose: caption.purpose || 'clarify',
+        kind,
         basedOn: caption.basedOn || '基础分析',
         required: true,
         sourceLocked: caption.sourceLocked === true,
@@ -1133,6 +1341,11 @@ function managedTitlesForCut(profile, video, analysis) {
   }
   return video.lightCaptions.map((caption) => {
     const placement = profile.subtitlePlacements[caption.position];
+    const fontSize = caption.kind === 'chapter_conclusion'
+      ? 68
+      : caption.kind === 'context'
+        ? 50
+        : 58;
     return {
       titleKey: `douyin:${video.videoId}:${caption.captionId}`,
       captionId: caption.captionId,
@@ -1142,14 +1355,16 @@ function managedTitlesForCut(profile, video, analysis) {
       durationSec: caption.durationSec,
       text: caption.text,
       position: caption.position,
+      captionKind: caption.kind,
+      fontSize,
       transform: placement.fcpTransform,
       note: `vcp-managed-caption:douyin:${video.videoId}:${caption.captionId}`,
     };
   });
 }
 
-function cropFilter(layout) {
-  const crop = layout.crop;
+function cropFilter(layoutOrCrop) {
+  const crop = layoutOrCrop?.crop || layoutOrCrop;
   if (![crop.left, crop.top, crop.right, crop.bottom].some((value) => value > 0)) return '';
   const width = Number((1 - crop.left - crop.right).toFixed(6));
   const height = Number((1 - crop.top - crop.bottom).toFixed(6));
@@ -1169,11 +1384,31 @@ function douyinVideoFilters(shot, width, height, fps, inputIndex) {
   const layout = shot.layout;
   const duration = Number((shot.outSec - shot.inSec).toFixed(6));
   const crop = cropFilter(layout);
-  if (layout.mode === 'center_crop') {
+  if (layout.mode === 'screen_split') {
+    const topHeight = Math.max(2, Math.round(height * layout.splitRatio / 2) * 2);
+    const bottomHeight = height - topHeight;
+    const topCrop = cropFilter(layout.crop);
+    const bottomCrop = cropFilter(layout.secondaryCrop);
     return [
-      `[${inputIndex}:v]${crop}scale=${width}:${height}:force_original_aspect_ratio=increase,`
-      + `crop=${width}:${height},setsar=1,fps=${fps},trim=duration=${duration},`
+      `[${inputIndex}:v]split=2[topraw${inputIndex}][bottomraw${inputIndex}]`,
+      `[topraw${inputIndex}]${topCrop}scale=${width}:${topHeight}:force_original_aspect_ratio=increase,`
+      + `crop=${width}:${topHeight},setsar=1[top${inputIndex}]`,
+      `[bottomraw${inputIndex}]${bottomCrop}scale=${width}:${bottomHeight}:force_original_aspect_ratio=increase,`
+      + `crop=${width}:${bottomHeight},setsar=1[bottom${inputIndex}]`,
+      `[top${inputIndex}][bottom${inputIndex}]vstack=inputs=2,fps=${fps},trim=duration=${duration},`
       + `setpts=PTS-STARTPTS[v${inputIndex}]`,
+    ];
+  }
+  if (layout.mode === 'center_crop'
+    || layout.mode === 'screen_focus'
+    || layout.mode === 'segmented_focus') {
+    const overlay = overlayExpression(layout, width, height);
+    return [
+      `color=c=black:s=${width}x${height}:r=${fps}:d=${duration}[bg${inputIndex}]`,
+      `[${inputIndex}:v]${crop}scale=${width}:${height}:force_original_aspect_ratio=increase,`
+      + `crop=${width}:${height},scale=iw*${layout.scale}:ih*${layout.scale}[fg${inputIndex}]`,
+      `[bg${inputIndex}][fg${inputIndex}]overlay=x='${overlay.x}':y='${overlay.y}',`
+      + `setsar=1,fps=${fps},trim=duration=${duration},setpts=PTS-STARTPTS[v${inputIndex}]`,
     ];
   }
   const overlay = overlayExpression(layout, width, height);
@@ -1325,21 +1560,47 @@ function safeZoneIssues(profile, video) {
     }
     const occlusion = profile.uiOcclusionZones.find((zone) => rectsIntersect(placement, zone));
     if (occlusion) errors.push(`字幕 ${caption.captionId} 与抖音界面遮挡区「${occlusion.label}」重叠。`);
+    const shot = video.shots.find((item) => item.shotId === caption.shotId);
+    if (shot?.layout?.sourceTextBounds?.some((rect) => rectsIntersect(placement, rect))) {
+      warnings.push(`字幕 ${caption.captionId} 可能与原画界面文字重叠，需人工确认。`);
+    }
+    if (shot?.layout?.subjectBounds
+      && isAdvancedScreenLayout(shot.layout.mode)
+      && rectsIntersect(placement, shot.layout.subjectBounds)) {
+      warnings.push(`字幕 ${caption.captionId} 可能与关键主体重叠，需人工确认。`);
+    }
   }
   for (const shot of video.shots) {
+    const cropBounds = {
+      x: shot.layout.crop.left,
+      y: shot.layout.crop.top,
+      width: 1 - shot.layout.crop.left - shot.layout.crop.right,
+      height: 1 - shot.layout.crop.top - shot.layout.crop.bottom,
+    };
     if (!shot.layout.subjectBounds) {
-      if (shot.layout.mode === 'center_crop') {
+      if (shot.layout.mode === 'center_crop' || isAdvancedScreenLayout(shot.layout.mode)) {
         warnings.push(`镜头 ${shot.shotId} 使用中央裁切但未记录主体边界，需人工确认主体安全区。`);
       }
-      continue;
+    } else {
+      if (!rectInside(shot.layout.subjectBounds, cropBounds)) {
+        warnings.push(`镜头 ${shot.shotId} 的关键区域可能被当前裁切框裁掉。`);
+      }
+      if (!rectInside(shot.layout.subjectBounds, profile.safeZones.subject)) {
+        warnings.push(`镜头 ${shot.shotId} 的关键主体可能超出主体安全区。`);
+      }
+      const occlusion = profile.uiOcclusionZones.find(
+        (zone) => rectsIntersect(shot.layout.subjectBounds, zone),
+      );
+      if (occlusion) warnings.push(`镜头 ${shot.shotId} 的关键主体可能被「${occlusion.label}」遮挡。`);
     }
-    if (!rectInside(shot.layout.subjectBounds, profile.safeZones.subject)) {
-      warnings.push(`镜头 ${shot.shotId} 的关键主体可能超出主体安全区。`);
+    const readableHeight = effectiveSourceTextHeightPx(shot.layout, profile);
+    if (readableHeight != null && readableHeight < 24) {
+      warnings.push(`镜头 ${shot.shotId} 的界面文字预计小于手机可读阈值。`);
     }
-    const occlusion = profile.uiOcclusionZones.find(
-      (zone) => rectsIntersect(shot.layout.subjectBounds, zone),
-    );
-    if (occlusion) warnings.push(`镜头 ${shot.shotId} 的关键主体可能被「${occlusion.label}」遮挡。`);
+    if ((shot.layout.mode === 'landscape_card' || shot.layout.mode === 'landscape_card_blur')
+      && shot.layout.scale < 0.85) {
+      warnings.push(`镜头 ${shot.shotId} 的横屏卡片有效显示面积过小。`);
+    }
   }
   return { errors, warnings };
 }
@@ -1447,6 +1708,11 @@ async function validateGeneratedCut({
       errors.push(`镜头 ${shot.shotId} 静音状态不符合计划。`);
     }
   }
+  const layeredAudioShots = selectedWithAudio.filter((shot) => shot.layout.mode === 'screen_split');
+  const mutedLayerCount = (xml.match(/上下双层录屏 · 关键区域[\s\S]*?<adjust-volume amount="-96dB"\/>/g) || []).length;
+  if (mutedLayerCount < layeredAudioShots.length) {
+    errors.push('上下双层录屏的重复画面层没有全部静音，可能造成两路原声叠加。');
+  }
   if (video.lightCaptions.length > 0
     && fcpxmlReport.titleCount < video.lightCaptions.filter((item) => item.required).length) {
     errors.push('应有轻字幕没有全部生成 FCP 原生 Title。');
@@ -1504,6 +1770,9 @@ async function validateGeneratedCut({
         (shot) => shot.audioMode === 'mute' && Boolean(shot.muteReason),
       ).length,
       matchesPlan: true,
+      layeredShotCount: layeredAudioShots.length,
+      mutedDuplicateLayerCount: mutedLayerCount,
+      duplicateAudioPrevented: mutedLayerCount >= layeredAudioShots.length,
     },
     captions: {
       requiredCount: video.lightCaptions.filter((item) => item.required).length,
@@ -1727,6 +1996,7 @@ async function verifyDouyinVariant(projectPath, variantId = 'douyin', options = 
 
 module.exports = {
   DOUYIN_DECISIONS,
+  DOUYIN_CAPTION_KINDS,
   DOUYIN_LAYOUT_MODES,
   DOUYIN_PLAN_SCHEMA_VERSION,
   DOUYIN_WARNING_TYPES,
@@ -1739,6 +2009,7 @@ module.exports = {
   generateDouyinPreview,
   loadDouyinProfile,
   normalizeDouyinPlan,
+  safeZoneIssues,
   readDouyinVariant,
   readPlatformVariants,
   saveDouyinVariantDraft,

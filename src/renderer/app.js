@@ -1324,6 +1324,15 @@ const DOUYIN_LAYOUT_LABELS = {
   center_crop: '中央裁切',
   landscape_card: '完整横屏卡片',
   landscape_card_blur: '横屏卡片 + 同画面模糊背景',
+  screen_focus: '录屏局部放大',
+  screen_split: '上下双层录屏',
+  segmented_focus: '分段局部放大',
+};
+
+const DOUYIN_CAPTION_KIND_LABELS = {
+  content: '内容字幕',
+  context: '上下文字幕',
+  chapter_conclusion: '章节 / 结论字幕',
 };
 
 function cloneDouyinPlan(plan) {
@@ -1345,8 +1354,45 @@ function douyinDefaultLayout(asset) {
     scale: 1,
     position: { x: 0, y: 0 },
     crop: { left: 0, top: 0, right: 0, bottom: 0 },
+    secondaryCrop: { left: 0, top: 0, right: 0, bottom: 0 },
+    splitRatio: 0.5,
     subjectBounds: null,
+    sourceTextBounds: [],
+    minReadableTextHeightPx: null,
+    agentNote: '',
   };
+}
+
+function cloneDouyinLayout(layout) {
+  return JSON.parse(JSON.stringify(layout || {}));
+}
+
+function ensureDouyinLayout(layout) {
+  const base = douyinDefaultLayout(null);
+  return {
+    ...base,
+    ...layout,
+    position: { ...base.position, ...(layout?.position || {}) },
+    crop: { ...base.crop, ...(layout?.crop || {}) },
+    secondaryCrop: { ...base.secondaryCrop, ...(layout?.secondaryCrop || {}) },
+    sourceTextBounds: Array.isArray(layout?.sourceTextBounds) ? layout.sourceTextBounds : [],
+  };
+}
+
+function cropToRect(crop) {
+  return {
+    x: crop.left,
+    y: crop.top,
+    width: Math.max(0.01, 1 - crop.left - crop.right),
+    height: Math.max(0.01, 1 - crop.top - crop.bottom),
+  };
+}
+
+function setCropFromRect(crop, rect) {
+  crop.left = Number(rect.x.toFixed(4));
+  crop.top = Number(rect.y.toFixed(4));
+  crop.right = Number((1 - rect.x - rect.width).toFixed(4));
+  crop.bottom = Number((1 - rect.y - rect.height).toFixed(4));
 }
 
 function updateDouyinOpening(video) {
@@ -1413,12 +1459,146 @@ function createDouyinMedia(asset, className, layout, beforeCrop) {
     media.preload = 'metadata';
   }
   const mode = beforeCrop ? 'native_vertical' : layout.mode;
-  media.style.objectFit = mode === 'center_crop' ? 'cover' : 'contain';
+  media.style.objectFit = ['center_crop', 'screen_focus', 'segmented_focus'].includes(mode)
+    ? 'cover'
+    : 'contain';
   if (!beforeCrop) {
     media.style.transform = `translate(${layout.position.x * 50}%, ${layout.position.y * 50}%) scale(${layout.scale})`;
     media.style.clipPath = `inset(${layout.crop.top * 100}% ${layout.crop.right * 100}% ${layout.crop.bottom * 100}% ${layout.crop.left * 100}%)`;
   }
   return media;
+}
+
+function bindDouyinCropBox(canvas, box, crop, onCommit, resize = false) {
+  box.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    box.setPointerCapture(event.pointerId);
+    const start = { x: event.clientX, y: event.clientY, rect: cropToRect(crop) };
+    const bounds = canvas.getBoundingClientRect();
+    const move = (moveEvent) => {
+      const dx = (moveEvent.clientX - start.x) / bounds.width;
+      const dy = (moveEvent.clientY - start.y) / bounds.height;
+      const rect = { ...start.rect };
+      if (resize) {
+        rect.width = Math.max(0.08, Math.min(1 - rect.x, start.rect.width + dx));
+        rect.height = Math.max(0.08, Math.min(1 - rect.y, start.rect.height + dy));
+      } else {
+        rect.x = Math.max(0, Math.min(1 - rect.width, start.rect.x + dx));
+        rect.y = Math.max(0, Math.min(1 - rect.height, start.rect.y + dy));
+      }
+      setCropFromRect(crop, rect);
+      box.style.left = `${rect.x * 100}%`;
+      box.style.top = `${rect.y * 100}%`;
+      box.style.width = `${rect.width * 100}%`;
+      box.style.height = `${rect.height * 100}%`;
+    };
+    const up = () => {
+      box.removeEventListener('pointermove', move);
+      box.removeEventListener('pointerup', up);
+      box.removeEventListener('pointercancel', up);
+      onCommit();
+    };
+    box.addEventListener('pointermove', move);
+    box.addEventListener('pointerup', up);
+    box.addEventListener('pointercancel', up);
+  });
+}
+
+function appendInteractiveCropBox(canvas, crop, label, className, onCommit) {
+  const rect = cropToRect(crop);
+  const box = document.createElement('div');
+  box.className = `douyin-crop-box ${className}`;
+  box.style.left = `${rect.x * 100}%`;
+  box.style.top = `${rect.y * 100}%`;
+  box.style.width = `${rect.width * 100}%`;
+  box.style.height = `${rect.height * 100}%`;
+  box.append(
+    createTextElement('span', label),
+    createTextElement('i', '', 'douyin-crop-resize'),
+  );
+  bindDouyinCropBox(canvas, box, crop, onCommit, false);
+  bindDouyinCropBox(canvas, box.querySelector('i'), crop, onCommit, true);
+  canvas.appendChild(box);
+}
+
+function createDouyinCropEditor(asset, shot, onCommit) {
+  const editor = document.createElement('div');
+  editor.className = 'douyin-crop-editor';
+  editor.appendChild(createTextElement(
+    'small',
+    '在原画上拖动裁切框，拖右下角调整大小；数值会按镜头独立保存。',
+  ));
+  const canvas = document.createElement('div');
+  canvas.className = 'douyin-crop-source';
+  const width = Number(asset?.metadata?.displayWidth || asset?.metadata?.width) || 16;
+  const height = Number(asset?.metadata?.displayHeight || asset?.metadata?.height) || 9;
+  canvas.style.aspectRatio = `${width} / ${height}`;
+  const media = document.createElement(asset?.type === 'video' ? 'video' : 'img');
+  media.src = asset?.fileUrl || '';
+  media.muted = true;
+  media.preload = 'metadata';
+  media.currentTime = Number(shot.inSec) || 0;
+  canvas.appendChild(media);
+  appendInteractiveCropBox(canvas, shot.layout.crop, shot.layout.mode === 'screen_split'
+    ? '上层完整界面 / 裁切'
+    : '当前裁切区域', 'primary', onCommit);
+  if (shot.layout.mode === 'screen_split') {
+    appendInteractiveCropBox(
+      canvas,
+      shot.layout.secondaryCrop,
+      '下层关键区域放大',
+      'secondary',
+      onCommit,
+    );
+  }
+  for (const bounds of shot.layout.sourceTextBounds || []) {
+    appendDouyinRect(canvas, bounds, 'douyin-source-text-bounds', '原画文字');
+  }
+  if (shot.layout.subjectBounds) {
+    appendDouyinRect(canvas, shot.layout.subjectBounds, 'douyin-subject-bounds', '关键区域');
+  }
+  editor.appendChild(canvas);
+  return editor;
+}
+
+function douyinReadabilityFindings(shot) {
+  const findings = [];
+  const layout = shot.layout;
+  if (layout.minReadableTextHeightPx == null) {
+    if (['screen_focus', 'screen_split', 'segmented_focus'].includes(layout.mode)) {
+      findings.push('界面小字尺寸未知，需要在手机尺寸下人工确认。');
+    }
+  } else {
+    const cropHeight = Math.max(0.01, 1 - layout.crop.top - layout.crop.bottom);
+    const splitScale = layout.mode === 'screen_split' ? layout.splitRatio : 1;
+    const estimated = layout.minReadableTextHeightPx * layout.scale * splitScale / cropHeight;
+    if (estimated < 24) findings.push(`界面小字预计约 ${estimated.toFixed(1)}px，可能不可读。`);
+    else findings.push(`界面小字预计约 ${estimated.toFixed(1)}px，仍应以手机预览人工确认。`);
+  }
+  if ((layout.mode === 'landscape_card' || layout.mode === 'landscape_card_blur')
+    && layout.scale < 0.85) {
+    findings.push('横屏卡片有效显示面积偏小。');
+  }
+  if (layout.agentNote) findings.push(layout.agentNote);
+  return findings;
+}
+
+function recommendDouyinCaptionPosition(video, caption, profile) {
+  if (caption.kind === 'chapter_conclusion') return 'center';
+  const shot = video.shots.find((item) => item.shotId === caption.shotId);
+  if (!shot) return caption.kind === 'context' ? 'top-safe' : 'bottom-safe';
+  const bottom = profile.subtitlePlacements['bottom-safe'];
+  const overlapsBottomText = (shot.layout.sourceTextBounds || []).some((rect) => (
+    rect.x < bottom.x + bottom.width
+    && rect.x + rect.width > bottom.x
+    && rect.y < bottom.y + bottom.height
+    && rect.y + rect.height > bottom.y
+  ));
+  if (overlapsBottomText || shot.layout.mode === 'screen_split' || caption.kind === 'context') {
+    return 'top-safe';
+  }
+  return 'bottom-safe';
 }
 
 function renderDouyinVerticalPreview(container, variant, plan, selection) {
@@ -1464,7 +1644,7 @@ function renderDouyinVerticalPreview(container, variant, plan, selection) {
   );
   const toggle = createTextElement(
     'button',
-    beforeCrop ? '查看裁切后' : '查看裁切前',
+    beforeCrop ? '切换成片结果（裁切后）' : '切换原画（裁切前）',
     'button secondary',
   );
   toggle.type = 'button';
@@ -1475,18 +1655,56 @@ function renderDouyinVerticalPreview(container, variant, plan, selection) {
   controls.append(shotSelect, toggle);
 
   const canvas = document.createElement('div');
-  canvas.className = 'douyin-preview-canvas';
+  canvas.className = 'douyin-preview-canvas phone-size';
   const layout = current.shot.layout;
-  if (!beforeCrop && layout.mode === 'landscape_card_blur') {
+  if (!beforeCrop && layout.mode === 'screen_split') {
+    const top = document.createElement('div');
+    top.className = 'douyin-preview-layer top';
+    top.style.height = `${layout.splitRatio * 100}%`;
+    const topMedia = createDouyinMedia(asset, 'douyin-preview-media foreground split', {
+      ...layout,
+      mode: 'screen_focus',
+      crop: layout.crop,
+    }, false);
+    top.appendChild(topMedia);
+    const bottom = document.createElement('div');
+    bottom.className = 'douyin-preview-layer bottom';
+    bottom.style.top = `${layout.splitRatio * 100}%`;
+    bottom.style.height = `${(1 - layout.splitRatio) * 100}%`;
+    const bottomMedia = createDouyinMedia(asset, 'douyin-preview-media foreground split', {
+      ...layout,
+      mode: 'screen_focus',
+      crop: layout.secondaryCrop,
+    }, false);
+    bottom.appendChild(bottomMedia);
+    canvas.append(top, bottom);
+    const divider = document.createElement('span');
+    divider.className = 'douyin-split-divider';
+    divider.style.top = `${layout.splitRatio * 100}%`;
+    canvas.appendChild(divider);
+  } else if (!beforeCrop && layout.mode === 'landscape_card_blur') {
     canvas.appendChild(createDouyinMedia(asset, 'douyin-preview-media background', layout, false));
+    canvas.appendChild(createDouyinMedia(asset, 'douyin-preview-media foreground', layout, false));
+  } else {
+    canvas.appendChild(createDouyinMedia(asset, 'douyin-preview-media foreground', layout, beforeCrop));
   }
-  canvas.appendChild(createDouyinMedia(asset, 'douyin-preview-media foreground', layout, beforeCrop));
   const width = Number(asset?.metadata?.displayWidth || asset?.metadata?.width);
   const height = Number(asset?.metadata?.displayHeight || asset?.metadata?.height);
   const boundary = document.createElement('div');
   boundary.className = `douyin-original-boundary ${width > height ? 'horizontal' : 'vertical'}`;
   boundary.appendChild(createTextElement('span', '原始画面边界'));
   canvas.appendChild(boundary);
+  if (beforeCrop) {
+    appendDouyinRect(canvas, cropToRect(layout.crop), 'douyin-current-crop', '当前裁切区域');
+    if (layout.mode === 'screen_split') {
+      appendDouyinRect(
+        canvas,
+        cropToRect(layout.secondaryCrop),
+        'douyin-current-crop secondary',
+        '下层裁切区域',
+      );
+    }
+  }
   appendDouyinRect(canvas, variant.profile.safeZones.subject, 'douyin-safe-zone subject', '主体安全区');
   appendDouyinRect(canvas, variant.profile.safeZones.subtitle, 'douyin-safe-zone subtitle', '字幕安全区');
   variant.profile.uiOcclusionZones.forEach((zone) => {
@@ -1504,10 +1722,17 @@ function renderDouyinVerticalPreview(container, variant, plan, selection) {
   }
   const info = createDefinitionGrid([
     ['当前布局', DOUYIN_LAYOUT_LABELS[layout.mode] || layout.mode],
-    ['当前模式', beforeCrop ? '裁切前 / 原始适配' : '裁切后 / 正式布局'],
+    ['当前模式', beforeCrop ? '原画 / 当前裁切框' : '手机尺寸 / 成片结果'],
     ['原声', current.shot.audioMode === 'keep' ? '保留' : `静音：${current.shot.muteReason || '未说明'}`],
     ['选材结论', DOUYIN_DECISION_LABELS[selection.get(current.shot.assetId)?.decision] || '—'],
   ], 'douyin-preview-info');
+  const findings = douyinReadabilityFindings(current.shot);
+  if (findings.length) {
+    const notice = createTextElement('ul', '', 'douyin-readability-notice');
+    findings.forEach((finding) => notice.appendChild(createTextElement('li', finding)));
+    container.append(controls, canvas, info, notice);
+    return;
+  }
   container.append(controls, canvas, info);
 }
 
@@ -1805,7 +2030,61 @@ function renderDouyinVariantEditor(section, result, variant) {
           renderEditor();
           body.querySelector('.douyin-preview-block')?.scrollIntoView({ block: 'nearest' });
         });
-        shotActions.append(up, down, opening, preview);
+        const copyPrevious = createTextElement('button', '复制上一镜头布局', 'button ghost');
+        copyPrevious.type = 'button';
+        copyPrevious.disabled = shotIndex === 0;
+        copyPrevious.addEventListener('click', () => {
+          shot.layout = cloneDouyinLayout(video.shots[shotIndex - 1].layout);
+          renderEditor();
+        });
+        const restoreAgent = createTextElement('button', '恢复 Agent 建议值', 'button ghost');
+        restoreAgent.type = 'button';
+        restoreAgent.addEventListener('click', () => {
+          shot.layout = cloneDouyinLayout(shot.agentLayout || douyinDefaultLayout(asset));
+          renderEditor();
+        });
+        const split = createTextElement('button', '从中点连续拆分', 'button secondary');
+        split.type = 'button';
+        split.disabled = shot.outSec - shot.inSec < 0.2;
+        split.addEventListener('click', () => {
+          const midpoint = Number(((shot.inSec + shot.outSec) / 2).toFixed(6));
+          const firstDuration = midpoint - shot.inSec;
+          const nextShot = {
+            ...JSON.parse(JSON.stringify(shot)),
+            shotId: nextDouyinId('douyin-shot', draftPlan),
+            inSec: midpoint,
+            purpose: '同源连续片段：展示下一操作区域或最终结果',
+            layout: {
+              ...cloneDouyinLayout(shot.layout),
+              mode: 'segmented_focus',
+            },
+          };
+          shot.outSec = midpoint;
+          shot.purpose = '同源连续片段：展示完整界面或当前操作区域';
+          video.lightCaptions.forEach((caption) => {
+            if (caption.shotId !== shot.shotId) return;
+            if (caption.offsetSec >= firstDuration) {
+              caption.shotId = nextShot.shotId;
+              caption.offsetSec = Number((caption.offsetSec - firstDuration).toFixed(6));
+            } else {
+              caption.durationSec = Math.min(
+                caption.durationSec,
+                Math.max(0.05, firstDuration - caption.offsetSec),
+              );
+            }
+          });
+          video.shots.splice(shotIndex + 1, 0, nextShot);
+          renderEditor();
+        });
+        shotActions.append(
+          up,
+          down,
+          opening,
+          preview,
+          copyPrevious,
+          restoreAgent,
+          split,
+        );
         shotHeading.appendChild(shotActions);
         shotRow.appendChild(shotHeading);
 
@@ -1837,7 +2116,15 @@ function renderDouyinVariantEditor(section, result, variant) {
         }
         const layoutGrid = document.createElement('div');
         layoutGrid.className = 'douyin-layout-grid';
+        shot.layout = ensureDouyinLayout(shot.layout);
         layoutGrid.append(
+          createDouyinControl('源入点（秒）', shot.inSec, (value) => { shot.inSec = value; }, {
+            type: 'number', min: 0, step: 0.001,
+          }),
+          createDouyinControl('源出点（秒）', shot.outSec, (value) => { shot.outSec = value; }, {
+            type: 'number', min: 0.001, step: 0.001,
+          }),
+          createDouyinControl('镜头用途', shot.purpose, (value) => { shot.purpose = value; }),
           createDouyinSelect('竖屏布局', shot.layout.mode, DOUYIN_LAYOUT_LABELS, (value) => {
             shot.layout.mode = value;
             renderEditor();
@@ -1852,23 +2139,48 @@ function renderDouyinVariantEditor(section, result, variant) {
             type: 'number', min: -1, max: 1, step: 0.01,
           }),
           ...['left', 'top', 'right', 'bottom'].map((side) => createDouyinControl(
-            `裁切 ${side}`,
+            `主裁切 ${side}`,
             shot.layout.crop[side],
             (value) => { shot.layout.crop[side] = value; },
             { type: 'number', min: 0, max: 0.99, step: 0.01 },
           )),
+          createDouyinControl('原画小字高度(px)', shot.layout.minReadableTextHeightPx, (value) => {
+            shot.layout.minReadableTextHeightPx = Number.isFinite(value) && value > 0 ? value : null;
+          }, {
+            type: 'number', min: 1, max: 1000, step: 1,
+          }),
           createDouyinSelect('视频原声', shot.audioMode, { keep: '保留原声', mute: '静音' }, (value) => {
             shot.audioMode = value;
             if (value === 'keep') shot.muteReason = null;
             renderEditor();
           }),
         );
+        if (shot.layout.mode === 'screen_split') {
+          layoutGrid.append(
+            createDouyinControl('上下区域比例', shot.layout.splitRatio, (value) => {
+              shot.layout.splitRatio = value;
+            }, { type: 'number', min: 0.25, max: 0.75, step: 0.01 }),
+            ...['left', 'top', 'right', 'bottom'].map((side) => createDouyinControl(
+              `下层裁切 ${side}`,
+              shot.layout.secondaryCrop[side],
+              (value) => { shot.layout.secondaryCrop[side] = value; },
+              { type: 'number', min: 0, max: 0.99, step: 0.01 },
+            )),
+          );
+        }
         if (shot.audioMode === 'mute') {
           layoutGrid.appendChild(createDouyinControl('静音原因', shot.muteReason, (value) => {
             shot.muteReason = value;
           }));
         }
         shotRow.append(layoutGrid);
+        shotRow.appendChild(createDouyinCropEditor(asset, shot, renderEditor));
+        const readability = douyinReadabilityFindings(shot);
+        if (readability.length) {
+          const notice = createTextElement('ul', '', 'douyin-readability-notice');
+          readability.forEach((finding) => notice.appendChild(createTextElement('li', finding)));
+          shotRow.appendChild(notice);
+        }
         shots.appendChild(shotRow);
       });
       card.appendChild(shots);
@@ -1890,12 +2202,25 @@ function renderDouyinVariantEditor(section, result, variant) {
             { disabled: caption.sourceLocked },
           ),
           createDouyinSelect(
+            '字幕类型',
+            caption.kind || 'content',
+            DOUYIN_CAPTION_KIND_LABELS,
+            (value) => {
+              caption.kind = value;
+              caption.position = recommendDouyinCaptionPosition(video, caption, variant.profile);
+              renderEditor();
+            },
+          ),
+          createDouyinSelect(
             '安全区位置',
             caption.position,
             Object.fromEntries(Object.keys(variant.profile.subtitlePlacements).map((key) => [key, key])),
             (value) => { caption.position = value; },
           ),
-          createTextElement('small', `依据：${caption.basedOn} · FCP 原生可编辑 Title`),
+          createTextElement(
+            'small',
+            `依据：${caption.basedOn} · ${DOUYIN_CAPTION_KIND_LABELS[caption.kind] || '内容字幕'} · 实际位置 ${caption.position} · FCP 原生可编辑 Title`,
+          ),
         );
         captions.appendChild(captionRow);
       });
@@ -1951,6 +2276,15 @@ function renderDouyinVariantEditor(section, result, variant) {
         plan: draftPlan,
         expectedRevision: variant.revision,
       });
+      const missingWarningIds = saved.plan.videos
+        .flatMap((video) => video.warnings)
+        .map((warning) => warning.warningId)
+        .filter((warningId) => !approvedWarnings.has(warningId));
+      if (missingWarningIds.length) {
+        await loadCatalogProject(result.project.path);
+        showToast('规划已保存并生成新的可读性 / 安全警告；请逐项人工确认后再批准生成。', true);
+        return;
+      }
       await window.plannerApi.approveDouyinVariant({
         projectPath: result.project.path,
         variantId: variant.variantId,
@@ -1995,8 +2329,9 @@ function renderPlatformVariants(result) {
     ['默认主成片', '原有结果 · 素材完整性验证保持不变'],
     ['平台变体', `${result.platformVariants?.variants?.length || 0} 个`],
   ], 'douyin-summary-grid'));
-  const douyin = result.platformVariants?.variants?.find((item) => item.platform === 'douyin');
-  if (!douyin) {
+  const douyinVariants = (result.platformVariants?.variants || [])
+    .filter((item) => item.platform === 'douyin');
+  if (!douyinVariants.length) {
     const empty = createTextElement(
       'p',
       '尚未创建抖音变体。创建时会复用现有基础分析并生成一份独立可调整的抖音规划。',
@@ -2018,19 +2353,44 @@ function renderPlatformVariants(result) {
     section.append(empty, actions);
     return section;
   }
-  const loading = createTextElement('p', '正在加载抖音规划确认页…', 'empty-inline');
-  section.appendChild(loading);
-  window.plannerApi.readDouyinVariant({
-    projectPath: result.project.path,
-    variantId: douyin.variantId,
-  }).then((variant) => {
-    if (state.selectedCatalogProjectPath !== result.project.path || !loading.isConnected) return;
-    state.douyinVariant = variant;
-    loading.remove();
-    renderDouyinVariantEditor(section, result, variant);
-  }).catch((error) => {
-    loading.textContent = getUserErrorMessage(error);
-    loading.classList.add('error');
+  const createAnother = createTextElement('button', '新建抖音变体', 'button secondary');
+  createAnother.type = 'button';
+  createAnother.addEventListener('click', () => withBusy(createAnother, async () => {
+    const nextIndex = douyinVariants.length + 1;
+    let variantId = `douyin-${nextIndex}`;
+    while (douyinVariants.some((item) => item.variantId === variantId)) {
+      variantId = `douyin-${Number(variantId.split('-').at(-1) || nextIndex) + 1}`;
+    }
+    await window.plannerApi.createDouyinVariant({
+      projectPath: result.project.path,
+      variantId,
+    });
+    await loadCatalogProject(result.project.path);
+    showToast(`已创建独立抖音变体 ${variantId}。`);
+  }, '正在创建…'));
+  const groupActions = document.createElement('div');
+  groupActions.className = 'result-actions';
+  groupActions.appendChild(createAnother);
+  section.appendChild(groupActions);
+  douyinVariants.forEach((douyin) => {
+    const group = document.createElement('article');
+    group.className = 'douyin-variant-group';
+    group.appendChild(createTextElement('h3', `抖音 · ${douyin.variantId}`));
+    const loading = createTextElement('p', '正在加载规划确认页…', 'empty-inline');
+    group.appendChild(loading);
+    section.appendChild(group);
+    window.plannerApi.readDouyinVariant({
+      projectPath: result.project.path,
+      variantId: douyin.variantId,
+    }).then((variant) => {
+      if (state.selectedCatalogProjectPath !== result.project.path || !loading.isConnected) return;
+      state.douyinVariant = variant;
+      loading.remove();
+      renderDouyinVariantEditor(group, result, variant);
+    }).catch((error) => {
+      loading.textContent = getUserErrorMessage(error);
+      loading.classList.add('error');
+    });
   });
   return section;
 }

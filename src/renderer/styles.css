@@ -648,6 +648,16 @@ p {
   margin-top: 16px;
 }
 
+.douyin-variant-group {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e1e6ee;
+}
+
+.douyin-variant-group > h3 {
+  margin: 0 0 10px;
+}
+
 .douyin-summary-grid {
   margin-bottom: 4px;
 }
@@ -793,7 +803,7 @@ p {
 
 .douyin-caption-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) minmax(140px, 0.6fr);
+  grid-template-columns: minmax(220px, 1.4fr) minmax(130px, 0.55fr) minmax(140px, 0.6fr);
   gap: 10px;
   align-items: end;
 }
@@ -849,6 +859,11 @@ p {
   box-shadow: 0 10px 30px rgba(19, 24, 34, 0.18);
 }
 
+.douyin-preview-canvas.phone-size {
+  border: 7px solid #151920;
+  outline: 1px solid rgba(255, 255, 255, 0.22);
+}
+
 .douyin-preview-media {
   position: absolute;
   inset: 0;
@@ -867,13 +882,49 @@ p {
   transform-origin: center;
 }
 
+.douyin-preview-layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.douyin-preview-layer.top {
+  top: 0;
+}
+
+.douyin-preview-media.split {
+  object-fit: cover !important;
+}
+
+.douyin-split-divider {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.42);
+}
+
 .douyin-original-boundary,
 .douyin-safe-zone,
 .douyin-ui-mask,
-.douyin-caption-preview {
+.douyin-caption-preview,
+.douyin-current-crop {
   position: absolute;
   z-index: 3;
   pointer-events: none;
+}
+
+.douyin-current-crop {
+  border: 2px solid #51b8ff;
+  background: rgba(38, 155, 255, 0.1);
+}
+
+.douyin-current-crop.secondary {
+  border-color: #e77cff;
 }
 
 .douyin-original-boundary {
@@ -925,6 +976,95 @@ p {
 .douyin-preview-info,
 .douyin-output-meta {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.douyin-crop-editor {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #dfe4ec;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.douyin-crop-source {
+  position: relative;
+  width: min(100%, 760px);
+  max-height: 430px;
+  overflow: hidden;
+  background: #10131a;
+  touch-action: none;
+}
+
+.douyin-crop-source > img,
+.douyin-crop-source > video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.douyin-crop-box,
+.douyin-source-text-bounds,
+.douyin-subject-bounds {
+  position: absolute;
+  z-index: 4;
+  border: 2px solid #2da4ff;
+  background: rgba(45, 164, 255, 0.12);
+  cursor: move;
+}
+
+.douyin-crop-box.secondary {
+  border-color: #cc55e8;
+  background: rgba(204, 85, 232, 0.12);
+}
+
+.douyin-crop-box span,
+.douyin-source-text-bounds span,
+.douyin-subject-bounds span,
+.douyin-current-crop span {
+  padding: 2px 4px;
+  color: #fff;
+  background: rgba(8, 10, 15, 0.7);
+  font-size: 10px;
+}
+
+.douyin-crop-resize {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 13px;
+  height: 13px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: currentColor;
+  cursor: nwse-resize;
+}
+
+.douyin-source-text-bounds {
+  z-index: 3;
+  border-color: #ffcb45;
+  background: rgba(255, 203, 69, 0.12);
+  pointer-events: none;
+}
+
+.douyin-subject-bounds {
+  z-index: 3;
+  border-color: #5ee0a1;
+  background: rgba(94, 224, 161, 0.12);
+  pointer-events: none;
+}
+
+.douyin-readability-notice {
+  margin: 10px 0 0;
+  padding: 9px 12px 9px 30px;
+  border: 1px solid #f0d587;
+  border-radius: 9px;
+  color: #765717;
+  background: #fff9e8;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .douyin-editor-actions {

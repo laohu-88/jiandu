@@ -645,6 +645,8 @@ function normalizeManagedCaptionTitles(managedCaptionTitles = []) {
         durationFcpTime: typeof item.durationFcpTime === 'string' ? item.durationFcpTime : null,
         frameAlignment: item.frameAlignment || null,
         position: typeof item.position === 'string' ? item.position : null,
+        captionKind: typeof item.captionKind === 'string' ? item.captionKind : 'content',
+        fontSize: Number.isFinite(Number(item.fontSize)) ? Number(item.fontSize) : 63,
         transform: item.transform && Number.isFinite(Number(item.transform.x))
           && Number.isFinite(Number(item.transform.y))
           ? { x: Number(item.transform.x), y: Number(item.transform.y) }
@@ -663,16 +665,20 @@ function normalizeShotLayout(shot = {}) {
       scale: 1,
       position: { x: 0, y: 0 },
       crop: { left: 0, top: 0, right: 0, bottom: 0 },
+      secondaryCrop: { left: 0, top: 0, right: 0, bottom: 0 },
+      splitRatio: 0.5,
       blurredBackground: false,
+      layeredScreen: false,
       explicit: false,
     };
   }
   const mode = String(layout.mode || 'native_vertical');
   const position = layout.position || {};
   const crop = layout.crop || {};
+  const secondaryCrop = layout.secondaryCrop || {};
   return {
     mode,
-    conform: mode === 'center_crop' ? 'fill' : 'fit',
+    conform: ['center_crop', 'screen_focus', 'segmented_focus'].includes(mode) ? 'fill' : 'fit',
     scale: Number.isFinite(Number(layout.scale)) ? Number(layout.scale) : 1,
     position: {
       x: Number.isFinite(Number(position.x)) ? Number(position.x) : 0,
@@ -684,8 +690,49 @@ function normalizeShotLayout(shot = {}) {
       right: Number.isFinite(Number(crop.right)) ? Number(crop.right) : 0,
       bottom: Number.isFinite(Number(crop.bottom)) ? Number(crop.bottom) : 0,
     },
+    secondaryCrop: {
+      left: Number.isFinite(Number(secondaryCrop.left)) ? Number(secondaryCrop.left) : 0,
+      top: Number.isFinite(Number(secondaryCrop.top)) ? Number(secondaryCrop.top) : 0,
+      right: Number.isFinite(Number(secondaryCrop.right)) ? Number(secondaryCrop.right) : 0,
+      bottom: Number.isFinite(Number(secondaryCrop.bottom)) ? Number(secondaryCrop.bottom) : 0,
+    },
+    splitRatio: Number.isFinite(Number(layout.splitRatio)) ? Number(layout.splitRatio) : 0.5,
     blurredBackground: mode === 'landscape_card_blur',
+    layeredScreen: mode === 'screen_split',
     explicit: true,
+  };
+}
+
+function splitScreenLayouts(layout) {
+  const topRatio = Math.max(0.25, Math.min(0.75, layout.splitRatio));
+  const bottomRatio = 1 - topRatio;
+  return {
+    top: {
+      ...layout,
+      mode: 'screen_focus',
+      conform: 'fill',
+      crop: layout.crop,
+      scale: Math.max(0.1, layout.scale * topRatio),
+      position: {
+        x: layout.position.x,
+        y: -(1 - topRatio),
+      },
+      blurredBackground: false,
+      layeredScreen: false,
+    },
+    bottom: {
+      ...layout,
+      mode: 'screen_focus',
+      conform: 'fill',
+      crop: layout.secondaryCrop,
+      scale: Math.max(0.1, layout.scale * bottomRatio),
+      position: {
+        x: layout.position.x,
+        y: topRatio,
+      },
+      blurredBackground: false,
+      layeredScreen: false,
+    },
   };
 }
 
@@ -949,9 +996,12 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     const anchorItems = [];
     const markerItems = [];
     const videoFilterItems = [];
+    const screenLayers = layout.layeredScreen ? splitScreenLayouts(layout) : null;
     if (layout.blurredBackground) {
       intrinsicItems.push('          <adjust-conform type="fill"/>');
       videoFilterItems.push(`          <filter-video ref="${blurEffectId}"/>`);
+    } else if (screenLayers) {
+      intrinsicItems.push(...shotLayoutAdjustments(screenLayers.top));
     } else {
       intrinsicItems.push(...shotLayoutAdjustments(layout));
     }
@@ -1027,7 +1077,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
         + `              <text-style ref="ts-title-${title.index + 1}">${escapeXml(title.text)}</text-style>\n`
         + '            </text>\n'
         + `            <text-style-def id="ts-title-${title.index + 1}">\n`
-        + '              <text-style font="Helvetica" fontSize="63" fontFace="Regular" fontColor="1 1 1 1" alignment="center"/>\n'
+        + `              <text-style font="Helvetica" fontSize="${title.fontSize}" fontFace="Regular" fontColor="1 1 1 1" alignment="center"/>\n`
         + '            </text-style-def>\n'
         + noteChild
         + '          </title>',
@@ -1064,6 +1114,17 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
         + `${shotLayoutAdjustments({ ...layout, conform: 'fit', blurredBackground: false }, '            ').join('\n')}\n`
         + (mapping.metadata?.hasAudio ? '            <adjust-volume amount="-96dB"/>\n' : '')
         + `          </${foregroundTag}>`,
+      );
+    }
+    if (screenLayers) {
+      const secondaryTag = mapping.type === 'image' ? 'video' : 'asset-clip';
+      anchorItems.push(
+        `          <${secondaryTag} name="${escapeXml(`${mapping.projectFilename} · 上下双层录屏 · 关键区域`)}"`
+        + ` ref="${resourceId}" lane="1" offset="${startTime}" start="${startTime}"`
+        + ` duration="${planned.durationTime}">\n`
+        + `${shotLayoutAdjustments(screenLayers.bottom, '            ').join('\n')}\n`
+        + (mapping.metadata?.hasAudio ? '            <adjust-volume amount="-96dB"/>\n' : '')
+        + `          </${secondaryTag}>`,
       );
     }
     // FCPXML 1.14 DTD container order is intrinsic params, anchored items,
