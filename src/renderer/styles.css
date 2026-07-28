@@ -1056,6 +1056,66 @@ p {
   pointer-events: none;
 }
 
+.douyin-tracking-point {
+  position: absolute;
+  z-index: 7;
+  border: 2px solid #22a9bd;
+  background: rgba(34, 169, 189, 0.12);
+  pointer-events: none;
+}
+
+.douyin-tracking-point.manual {
+  border-color: #d8a800;
+}
+
+.douyin-tracking-trajectory {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 6;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.douyin-tracking-trajectory polyline {
+  fill: none;
+  stroke: rgba(34, 169, 189, 0.9);
+  stroke-width: 0.65;
+  stroke-dasharray: 1.8 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.douyin-tracking-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid rgba(34, 169, 189, 0.35);
+  border-radius: 10px;
+  background: rgba(34, 169, 189, 0.06);
+}
+
+.douyin-tracking-points {
+  display: grid;
+  gap: 8px;
+}
+
+.douyin-tracking-point-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  align-items: end;
+  padding: 8px;
+  border: 1px solid rgba(90, 102, 119, 0.22);
+  border-radius: 8px;
+}
+
+.douyin-tracking-summary {
+  margin: 0;
+  color: #137c8c;
+}
+
 .douyin-readability-notice {
   margin: 10px 0 0;
   padding: 9px 12px 9px 30px;

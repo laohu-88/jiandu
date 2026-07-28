@@ -23,7 +23,7 @@ const SHARED_DOUYIN_RULES_LINES = Object.freeze([
   '3. 每项可用视觉素材必须记录 selected、separate 或 excluded 之一，并写明确原因；选材依据须覆盖画面吸引力、独立成立程度、主题一致性、手机适配、竖屏表现、上下文成本、视觉变化、原声价值和重复程度。',
   '4. 不得写入或使用固定目标时长、建议时长区间、固定镜头数量或固定成片数量；不得据此反推删除素材。',
   '5. 较长视频允许选择精彩片段，但必须记录 selectedRanges 的实际时间范围和原因；所选有声视频默认 keep，静音必须写 muteReason。',
-  '6. 每条成片必须独立记录 theme、rationale、openingAssetId、naturalEnding、shots、逐镜头 layout、lightCaptions 和 warnings；布局仅可使用 native_vertical、center_crop、landscape_card、landscape_card_blur。',
+  '6. 每条成片必须独立记录 theme、rationale、openingAssetId、naturalEnding、shots、逐镜头 layout、lightCaptions 和 warnings；布局可使用现有静态/高级模式及可人工确认、安全降级的 subject_track 动态主体跟踪。',
   '7. 人工审核字幕、HotIngest 翻译、外文解释和受管字幕规则继续生效；人工文字不得改写；应有轻字幕缺失时抖音变体不得标为完全成功。',
   '8. 水印、二维码、敏感内容和其他人工确认项必须进入 warnings，并在生成前由用户确认。',
 ]);

@@ -151,6 +151,7 @@ const {
 } = require('./services/in-app-edit-workflow-service');
 const {
   approveDouyinVariant,
+  analyzeDouyinShotTracking,
   buildDouyinVariant,
   createDouyinVariant,
   readDouyinVariant,
@@ -1015,6 +1016,22 @@ function registerIpc() {
       args?.variantId || 'douyin',
       args?.plan,
       { expectedRevision: args?.expectedRevision },
+    );
+  });
+
+  ipcMain.handle('platform-variant:douyin-analyze-tracking', async (_event, args) => {
+    const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, args?.projectPath);
+    authorizeProject(validated);
+    return analyzeDouyinShotTracking(
+      validated,
+      args?.variantId || 'douyin',
+      args?.videoId,
+      args?.shotId,
+      {
+        subjectType: args?.subjectType,
+        safeMargin: args?.safeMargin,
+        fallbackMode: args?.fallbackMode,
+      },
     );
   });
 

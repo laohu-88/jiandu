@@ -1327,6 +1327,15 @@ const DOUYIN_LAYOUT_LABELS = {
   screen_focus: '录屏局部放大',
   screen_split: '上下双层录屏',
   segmented_focus: '分段局部放大',
+  subject_track: '动态主体跟踪',
+};
+
+const DOUYIN_SUBJECT_TYPE_LABELS = {
+  person: '人物',
+  animal: '动物',
+  vehicle: '车辆',
+  moving_object: '明显运动物体',
+  user_region: '用户人工指定区域',
 };
 
 const DOUYIN_CAPTION_KIND_LABELS = {
@@ -1360,6 +1369,7 @@ function douyinDefaultLayout(asset) {
     sourceTextBounds: [],
     minReadableTextHeightPx: null,
     agentNote: '',
+    tracking: null,
   };
 }
 
@@ -1376,7 +1386,37 @@ function ensureDouyinLayout(layout) {
     crop: { ...base.crop, ...(layout?.crop || {}) },
     secondaryCrop: { ...base.secondaryCrop, ...(layout?.secondaryCrop || {}) },
     sourceTextBounds: Array.isArray(layout?.sourceTextBounds) ? layout.sourceTextBounds : [],
+    tracking: layout?.tracking ? cloneDouyinLayout(layout.tracking) : null,
   };
+}
+
+function rebuildDouyinTrackingKeyframes(shot) {
+  const tracking = shot.layout.tracking;
+  if (!tracking) return;
+  tracking.points.sort((left, right) => left.sourceTimeSec - right.sourceTimeSec);
+  const existingByPoint = new Map(
+    (tracking.keyframes || []).map((keyframe) => [keyframe.pointId, keyframe]),
+  );
+  tracking.keyframes = tracking.points.map((point, index) => {
+    const existing = existingByPoint.get(point.pointId);
+    const centerX = point.bounds.x + point.bounds.width / 2;
+    const centerY = point.bounds.y + point.bounds.height / 2;
+    return {
+      keyframeId: existing?.keyframeId || `manual-keyframe-${index + 1}`,
+      pointId: point.pointId,
+      sourceTimeSec: point.sourceTimeSec,
+      sourceTime: point.sourceTime || `${Math.round(point.sourceTimeSec * 30)}/30s`,
+      position: existing?.position || {
+        x: Number(((0.5 - centerX) * 2).toFixed(4)),
+        y: Number(((0.5 - centerY) * 2).toFixed(4)),
+      },
+      scale: existing?.scale || shot.layout.scale,
+      crop: cloneDouyinLayout(existing?.crop || shot.layout.crop),
+      interpolation: existing?.interpolation || 'smooth',
+    };
+  });
+  tracking.status = tracking.status === 'fallback' ? 'fallback' : 'tracked';
+  tracking.manualConfirmation = 'corrected';
 }
 
 function cropToRect(crop) {
@@ -1459,7 +1499,7 @@ function createDouyinMedia(asset, className, layout, beforeCrop) {
     media.preload = 'metadata';
   }
   const mode = beforeCrop ? 'native_vertical' : layout.mode;
-  media.style.objectFit = ['center_crop', 'screen_focus', 'segmented_focus'].includes(mode)
+  media.style.objectFit = ['center_crop', 'screen_focus', 'segmented_focus', 'subject_track'].includes(mode)
     ? 'cover'
     : 'contain';
   if (!beforeCrop) {
@@ -1557,6 +1597,28 @@ function createDouyinCropEditor(asset, shot, onCommit) {
   }
   if (shot.layout.subjectBounds) {
     appendDouyinRect(canvas, shot.layout.subjectBounds, 'douyin-subject-bounds', '关键区域');
+  }
+  if (shot.layout.tracking?.enabled) {
+    const trajectory = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    trajectory.classList.add('douyin-tracking-trajectory');
+    trajectory.setAttribute('viewBox', '0 0 100 100');
+    trajectory.setAttribute('preserveAspectRatio', 'none');
+    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    polyline.setAttribute('points', shot.layout.tracking.points.map((point) => {
+      const x = (point.bounds.x + point.bounds.width / 2) * 100;
+      const y = (point.bounds.y + point.bounds.height / 2) * 100;
+      return `${x.toFixed(4)},${y.toFixed(4)}`;
+    }).join(' '));
+    trajectory.appendChild(polyline);
+    canvas.appendChild(trajectory);
+    shot.layout.tracking.points.forEach((point, index) => {
+      appendDouyinRect(
+        canvas,
+        point.bounds,
+        `douyin-tracking-point ${point.origin === 'manual' ? 'manual' : ''}`,
+        `${index + 1} · ${Number(point.sourceTimeSec).toFixed(2)}s`,
+      );
+    });
   }
   editor.appendChild(canvas);
   return editor;
@@ -1707,6 +1769,14 @@ function renderDouyinVerticalPreview(container, variant, plan, selection) {
   }
   appendDouyinRect(canvas, variant.profile.safeZones.subject, 'douyin-safe-zone subject', '主体安全区');
   appendDouyinRect(canvas, variant.profile.safeZones.subtitle, 'douyin-safe-zone subtitle', '字幕安全区');
+  if (layout.tracking?.enabled) {
+    layout.tracking.points.forEach((point, index) => appendDouyinRect(
+      canvas,
+      point.bounds,
+      `douyin-tracking-point ${point.origin === 'manual' ? 'manual' : ''}`,
+      `主体 ${index + 1}`,
+    ));
+  }
   variant.profile.uiOcclusionZones.forEach((zone) => {
     appendDouyinRect(canvas, zone, 'douyin-ui-mask', zone.label);
   });
@@ -2167,6 +2237,183 @@ function renderDouyinVariantEditor(section, result, variant) {
               { type: 'number', min: 0, max: 0.99, step: 0.01 },
             )),
           );
+        }
+        if (asset?.type === 'video'
+          && (shot.layout.mode === 'subject_track' || shot.layout.tracking)) {
+          const trackingBlock = document.createElement('section');
+          trackingBlock.className = 'douyin-tracking-editor';
+          trackingBlock.appendChild(createTextElement('h5', '动态主体跟踪'));
+          const subjectType = shot.layout.tracking?.subjectType || 'moving_object';
+          const analyze = createTextElement('button', '自动分析主体轨迹', 'button secondary');
+          analyze.type = 'button';
+          analyze.addEventListener('click', () => withBusy(analyze, async () => {
+            const analyzed = await window.plannerApi.analyzeDouyinShotTracking({
+              projectPath: result.project.path,
+              variantId: variant.variantId,
+              videoId: video.videoId,
+              shotId: shot.shotId,
+              subjectType,
+              safeMargin: shot.layout.tracking?.safeMargin ?? 0.03,
+              fallbackMode: shot.layout.tracking?.fallback?.mode || 'landscape_card_blur',
+            });
+            draftPlan = analyzed.proposedPlan;
+            renderEditor();
+          }, '正在按源视频时间范围采样分析…'));
+          trackingBlock.append(
+            createDouyinSelect(
+              '主体类型',
+              subjectType,
+              DOUYIN_SUBJECT_TYPE_LABELS,
+              (value) => {
+                if (!shot.layout.tracking) {
+                  shot.layout.tracking = {
+                    enabled: true,
+                    subjectType: value,
+                    status: 'failed',
+                    confidence: 0,
+                    safeMargin: 0.03,
+                    sampleIntervalSec: null,
+                    points: [],
+                    keyframes: [],
+                    locks: [],
+                    manualConfirmation: 'pending',
+                    fallback: {
+                      mode: 'landscape_card_blur',
+                      reason: '等待自动分析或人工指定主体区域。',
+                      applied: false,
+                    },
+                    warnings: [],
+                  };
+                } else {
+                  shot.layout.tracking.subjectType = value;
+                }
+                shot.layout.mode = 'subject_track';
+                renderEditor();
+              },
+            ),
+            analyze,
+          );
+          const tracking = shot.layout.tracking;
+          if (tracking) {
+            trackingBlock.append(
+              createTextElement(
+                'p',
+                `状态：${tracking.status} · 置信度 ${Number(tracking.confidence).toFixed(2)} · ${tracking.keyframes.length} 个关键帧`,
+                'douyin-tracking-summary',
+              ),
+              createDouyinControl('主体安全边距', tracking.safeMargin, (value) => {
+                tracking.safeMargin = value;
+              }, { type: 'number', min: 0, max: 0.2, step: 0.01 }),
+              createDouyinSelect(
+                '人工确认',
+                tracking.manualConfirmation,
+                {
+                  pending: '待确认',
+                  approved_continue: '确认继续使用',
+                  corrected: '已人工修正',
+                  fallback: '已切换静态布局',
+                },
+                (value) => { tracking.manualConfirmation = value; },
+              ),
+            );
+            const points = document.createElement('div');
+            points.className = 'douyin-tracking-points';
+            tracking.points.forEach((point, pointIndex) => {
+              const row = document.createElement('div');
+              row.className = 'douyin-tracking-point-row';
+              const view = createTextElement('button', `逐点查看 ${pointIndex + 1}`, 'button ghost');
+              view.type = 'button';
+              view.addEventListener('click', () => {
+                const media = shotRow.querySelector('.douyin-crop-source video');
+                if (media) media.currentTime = point.sourceTimeSec;
+              });
+              row.append(
+                view,
+                createDouyinControl('时间', point.sourceTimeSec, (value) => {
+                  point.sourceTimeSec = Number((Math.round(value * 30) / 30).toFixed(6));
+                  point.sourceTime = `${Math.round(point.sourceTimeSec * 30)}/30s`;
+                  point.origin = 'manual';
+                  rebuildDouyinTrackingKeyframes(shot);
+                }, { type: 'number', min: shot.inSec, max: shot.outSec, step: 1 / 30, commit: true }),
+                ...['x', 'y', 'width', 'height'].map((field) => createDouyinControl(
+                  `主体框 ${field}`,
+                  point.bounds[field],
+                  (value) => {
+                    point.bounds[field] = value;
+                    point.origin = 'manual';
+                    rebuildDouyinTrackingKeyframes(shot);
+                  },
+                  { type: 'number', min: 0, max: 1, step: 0.01, commit: true },
+                )),
+              );
+              const lock = createTextElement('button', point.locked ? '解除位置锁定' : '锁定此段主体位置', 'button ghost');
+              lock.type = 'button';
+              lock.addEventListener('click', () => {
+                point.locked = !point.locked;
+                tracking.locks = tracking.locks.filter((item) => item.pointId !== point.pointId);
+                if (point.locked) {
+                  tracking.locks.push({
+                    lockId: `lock-${point.pointId}`,
+                    startSec: point.sourceTimeSec,
+                    endSec: tracking.points[pointIndex + 1]?.sourceTimeSec || shot.outSec,
+                    pointId: point.pointId,
+                  });
+                }
+                rebuildDouyinTrackingKeyframes(shot);
+                renderEditor();
+              });
+              const remove = createTextElement('button', '删除跟踪点', 'button ghost danger-button');
+              remove.type = 'button';
+              remove.disabled = tracking.points.length <= 2;
+              remove.addEventListener('click', () => {
+                tracking.points.splice(pointIndex, 1);
+                rebuildDouyinTrackingKeyframes(shot);
+                renderEditor();
+              });
+              row.append(lock, remove);
+              points.appendChild(row);
+            });
+            const add = createTextElement('button', '新增人工跟踪点', 'button secondary');
+            add.type = 'button';
+            add.addEventListener('click', () => {
+              const midpoint = Number((Math.round(((shot.inSec + shot.outSec) / 2) * 30) / 30).toFixed(6));
+              tracking.points.push({
+                pointId: nextDouyinId('manual-track', draftPlan),
+                sourceTimeSec: midpoint,
+                sourceTime: `${Math.round(midpoint * 30)}/30s`,
+                bounds: cloneDouyinLayout(shot.layout.subjectBounds || {
+                  x: 0.3, y: 0.2, width: 0.3, height: 0.45,
+                }),
+                confidence: 1,
+                origin: 'manual',
+                locked: false,
+              });
+              rebuildDouyinTrackingKeyframes(shot);
+              renderEditor();
+            });
+            const fallback = createTextElement('button', '切换至建议静态布局', 'button secondary');
+            fallback.type = 'button';
+            fallback.addEventListener('click', () => {
+              tracking.fallback.applied = true;
+              tracking.fallback.reason = tracking.fallback.reason
+                || '人工判断动态主体跟踪不稳定，切换现有静态布局。';
+              tracking.manualConfirmation = 'fallback';
+              tracking.status = 'fallback';
+              shot.layout.mode = tracking.fallback.mode;
+              renderEditor();
+            });
+            trackingBlock.append(points, add, fallback);
+          }
+          shotRow.appendChild(trackingBlock);
+        } else if (asset?.type === 'video') {
+          const enableTracking = createTextElement('button', '启用动态主体跟踪', 'button secondary');
+          enableTracking.type = 'button';
+          enableTracking.addEventListener('click', () => {
+            shot.layout.mode = 'subject_track';
+            shot.layout.tracking = null;
+            renderEditor();
+          });
+          shotRow.appendChild(enableTracking);
         }
         if (shot.audioMode === 'mute') {
           layoutGrid.appendChild(createDouyinControl('静音原因', shot.muteReason, (value) => {

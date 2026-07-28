@@ -110,7 +110,8 @@
             "landscape_card_blur",
             "screen_focus",
             "screen_split",
-            "segmented_focus"
+            "segmented_focus",
+            "subject_track"
           ]
         },
         "scale": { "type": "number", "minimum": 0.1, "maximum": 8 },
@@ -159,6 +160,160 @@
           "maximum": 1000
         },
         "agentNote": { "type": "string", "maxLength": 1000 }
+        ,
+        "tracking": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/tracking" }
+          ]
+        }
+      }
+    },
+    "tracking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "subjectType",
+        "status",
+        "confidence",
+        "sourceAspect",
+        "outputAspect",
+        "safeMargin",
+        "sampleIntervalSec",
+        "points",
+        "keyframes",
+        "locks",
+        "manualConfirmation",
+        "fallback",
+        "warnings"
+      ],
+      "properties": {
+        "enabled": { "const": true },
+        "subjectType": {
+          "enum": ["person", "animal", "vehicle", "moving_object", "user_region"]
+        },
+        "status": {
+          "enum": ["tracked", "low_confidence", "fallback", "failed"]
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sourceAspect": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "outputAspect": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "safeMargin": { "type": "number", "minimum": 0, "maximum": 0.2 },
+        "sampleIntervalSec": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "points": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/trackingPoint" }
+        },
+        "keyframes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/trackingKeyframe" }
+        },
+        "locks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/trackingLock" }
+        },
+        "manualConfirmation": {
+          "enum": ["pending", "approved_continue", "corrected", "fallback"]
+        },
+        "fallback": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "reason", "applied"],
+          "properties": {
+            "mode": {
+              "enum": [
+                "landscape_card",
+                "landscape_card_blur",
+                "native_vertical",
+                "center_crop",
+                "screen_focus",
+                "screen_split",
+                "segmented_focus"
+              ]
+            },
+            "reason": { "type": "string", "maxLength": 1000 },
+            "applied": { "type": "boolean" }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        }
+      }
+    },
+    "trackingPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pointId",
+        "sourceTimeSec",
+        "sourceTime",
+        "bounds",
+        "confidence",
+        "origin",
+        "locked"
+      ],
+      "properties": {
+        "pointId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "sourceTimeSec": { "type": "number", "minimum": 0 },
+        "sourceTime": { "type": "string", "minLength": 2 },
+        "bounds": { "$ref": "#/$defs/rect" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "origin": { "enum": ["agent", "manual"] },
+        "locked": { "type": "boolean" }
+      }
+    },
+    "trackingKeyframe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "keyframeId",
+        "pointId",
+        "sourceTimeSec",
+        "sourceTime",
+        "position",
+        "scale",
+        "crop",
+        "interpolation"
+      ],
+      "properties": {
+        "keyframeId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "pointId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "sourceTimeSec": { "type": "number", "minimum": 0 },
+        "sourceTime": { "type": "string", "minLength": 2 },
+        "position": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {
+            "x": { "type": "number", "minimum": -1, "maximum": 1 },
+            "y": { "type": "number", "minimum": -1, "maximum": 1 }
+          }
+        },
+        "scale": { "type": "number", "minimum": 0.1, "maximum": 8 },
+        "crop": { "$ref": "#/$defs/crop" },
+        "interpolation": { "enum": ["smooth", "linear"] }
+      }
+    },
+    "trackingLock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lockId", "startSec", "endSec", "pointId"],
+      "properties": {
+        "lockId": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "startSec": { "type": "number", "minimum": 0 },
+        "endSec": { "type": "number", "exclusiveMinimum": 0 },
+        "pointId": { "type": "string", "minLength": 1, "maxLength": 100 }
       }
     },
     "crop": {

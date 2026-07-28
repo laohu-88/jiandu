@@ -35,6 +35,11 @@ const {
   snapshotSource,
 } = require('./pending-media-service');
 const { inferFps } = require('./video-format-service');
+const {
+  analyzeMediaSubjectTracking,
+  normalizeTracking,
+  validateTracking,
+} = require('./subject-tracking-service');
 
 const PLATFORM_VARIANT_SCHEMA_VERSION = 1;
 const DOUYIN_PLAN_SCHEMA_VERSION = 1;
@@ -47,6 +52,7 @@ const DOUYIN_LAYOUT_MODES = new Set([
   'screen_focus',
   'screen_split',
   'segmented_focus',
+  'subject_track',
 ]);
 const DOUYIN_WARNING_TYPES = new Set([
   'watermark',
@@ -377,6 +383,7 @@ function normalizeLayout(layout, mode = 'native_vertical') {
       ? Number(source.minReadableTextHeightPx)
       : null,
     agentNote: String(source.agentNote || '').trim(),
+    tracking: normalizeTracking(source.tracking),
   };
 }
 
@@ -593,6 +600,18 @@ function validateDouyinPlan(rawPlan, context = {}) {
           || shot.layout.minReadableTextHeightPx > 1000)) {
         errors.push(`${shotField}.layout.minReadableTextHeightPx 无效。`);
       }
+      if (shot.layout.mode === 'subject_track') {
+        if (!shot.layout.tracking) {
+          errors.push(`${shotField}.layout.tracking 是动态主体跟踪布局的必填数据。`);
+        } else {
+          const trackingValidation = validateTracking(shot.layout.tracking, {
+            fps: Number(context.fps) || Number(context.analysis?.timeline?.fps) || 30,
+            inSec: shot.inSec,
+            outSec: shot.outSec,
+          });
+          errors.push(...trackingValidation.errors.map((message) => `${shotField}：${message}`));
+        }
+      }
       if (source?.type === 'video' && source.metadata?.hasAudio && shot.audioMode === 'mute'
         && !nonEmpty(shot.muteReason, 500)) {
         errors.push(`${shotField} 静音必须记录明确原因。`);
@@ -688,6 +707,10 @@ function isAdvancedScreenLayout(mode) {
   return mode === 'screen_focus' || mode === 'screen_split' || mode === 'segmented_focus';
 }
 
+function isDynamicTrackingLayout(mode) {
+  return mode === 'subject_track';
+}
+
 function effectiveSourceTextHeightPx(layout, profile) {
   if (!Number.isFinite(layout.minReadableTextHeightPx)) return null;
   const cropHeight = Math.max(0.01, 1 - layout.crop.top - layout.crop.bottom);
@@ -713,6 +736,36 @@ function automaticWarningsForVideo(video, context = {}) {
   const warnings = [];
   for (const shot of video.shots) {
     const layout = shot.layout;
+    if (isDynamicTrackingLayout(layout.mode) && layout.tracking) {
+      const tracking = layout.tracking;
+      if (tracking.status === 'low_confidence') {
+        warnings.push(warningRecord(
+          video,
+          shot,
+          'manual_review',
+          'tracking-low-confidence',
+          `镜头 ${shot.shotId} 的主体跟踪置信度为 ${tracking.confidence.toFixed(2)}；必须人工确认、修正或切换静态布局。`,
+        ));
+      }
+      if (tracking.status === 'failed') {
+        warnings.push(warningRecord(
+          video,
+          shot,
+          'manual_review',
+          'tracking-failed',
+          `镜头 ${shot.shotId} 主体跟踪失败：${tracking.fallback.reason || '没有可靠轨迹'}。`,
+        ));
+      }
+      if (tracking.status === 'fallback') {
+        warnings.push(warningRecord(
+          video,
+          shot,
+          'manual_review',
+          'tracking-fallback',
+          `镜头 ${shot.shotId} 已安全降级为 ${tracking.fallback.mode}：${tracking.fallback.reason}`,
+        ));
+      }
+    }
     if (isAdvancedScreenLayout(layout.mode) && !layout.subjectBounds) {
       warnings.push(warningRecord(
         video,
@@ -1380,6 +1433,56 @@ function overlayExpression(layout, width, height) {
   };
 }
 
+function interpolateTrackingExpression(keyframes, valueAt, fallback, sourceInSec) {
+  if (!keyframes.length) return String(fallback);
+  if (keyframes.length === 1) return String(valueAt(keyframes[0]));
+  const segments = [];
+  for (let index = 0; index < keyframes.length - 1; index += 1) {
+    const left = keyframes[index];
+    const right = keyframes[index + 1];
+    const start = Number((left.sourceTimeSec - sourceInSec).toFixed(6));
+    const end = Number((right.sourceTimeSec - sourceInSec).toFixed(6));
+    const leftValue = Number(valueAt(left).toFixed(6));
+    const rightValue = Number(valueAt(right).toFixed(6));
+    const duration = Math.max(0.000001, end - start);
+    segments.push({
+      end,
+      expression: `${leftValue}+(${rightValue}-${leftValue})*(t-${start})/${duration}`,
+    });
+  }
+  let expression = String(Number(valueAt(keyframes.at(-1)).toFixed(6)));
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    expression = `if(lt(t,${segments[index].end}),${segments[index].expression},${expression})`;
+  }
+  return expression;
+}
+
+function trackingExpressions(shot, width, height) {
+  const keyframes = asArray(shot.layout.tracking?.keyframes)
+    .filter((item) => Number.isFinite(item?.sourceTimeSec))
+    .sort((left, right) => left.sourceTimeSec - right.sourceTimeSec);
+  return {
+    x: interpolateTrackingExpression(
+      keyframes,
+      (item) => item.position.x * width * 0.5,
+      shot.layout.position.x * width * 0.5,
+      shot.inSec,
+    ),
+    y: interpolateTrackingExpression(
+      keyframes,
+      (item) => item.position.y * height * 0.5,
+      shot.layout.position.y * height * 0.5,
+      shot.inSec,
+    ),
+    scale: interpolateTrackingExpression(
+      keyframes,
+      (item) => item.scale,
+      shot.layout.scale,
+      shot.inSec,
+    ),
+  };
+}
+
 function douyinVideoFilters(shot, width, height, fps, inputIndex) {
   const layout = shot.layout;
   const duration = Number((shot.outSec - shot.inSec).toFixed(6));
@@ -1401,7 +1504,18 @@ function douyinVideoFilters(shot, width, height, fps, inputIndex) {
   }
   if (layout.mode === 'center_crop'
     || layout.mode === 'screen_focus'
-    || layout.mode === 'segmented_focus') {
+    || layout.mode === 'segmented_focus'
+    || layout.mode === 'subject_track') {
+    if (layout.mode === 'subject_track') {
+      const dynamic = trackingExpressions(shot, width, height);
+      return [
+        `color=c=black:s=${width}x${height}:r=${fps}:d=${duration}[bg${inputIndex}]`,
+        `[${inputIndex}:v]${crop}scale=${width}:${height}:force_original_aspect_ratio=increase,`
+        + `scale=w='iw*${dynamic.scale}':h='ih*${dynamic.scale}':eval=frame[fg${inputIndex}]`,
+        `[bg${inputIndex}][fg${inputIndex}]overlay=x='(W-w)/2+${dynamic.x}':y='(H-h)/2+${dynamic.y}':eval=frame,`
+        + `setsar=1,fps=${fps},trim=duration=${duration},setpts=PTS-STARTPTS[v${inputIndex}]`,
+      ];
+    }
     const overlay = overlayExpression(layout, width, height);
     return [
       `color=c=black:s=${width}x${height}:r=${fps}:d=${duration}[bg${inputIndex}]`,
@@ -1549,7 +1663,7 @@ async function resolveInstalledFcpxmlDtd(version = '1.14') {
   return null;
 }
 
-function safeZoneIssues(profile, video) {
+function safeZoneIssues(profile, video, fps = 30) {
   const warnings = [];
   const errors = [];
   for (const caption of video.lightCaptions) {
@@ -1571,6 +1685,8 @@ function safeZoneIssues(profile, video) {
     }
   }
   for (const shot of video.shots) {
+    const dynamicTracking = isDynamicTrackingLayout(shot.layout.mode)
+      && shot.layout.tracking;
     const cropBounds = {
       x: shot.layout.crop.left,
       y: shot.layout.crop.top,
@@ -1578,20 +1694,87 @@ function safeZoneIssues(profile, video) {
       height: 1 - shot.layout.crop.top - shot.layout.crop.bottom,
     };
     if (!shot.layout.subjectBounds) {
-      if (shot.layout.mode === 'center_crop' || isAdvancedScreenLayout(shot.layout.mode)) {
+      if (shot.layout.mode === 'center_crop'
+        || isAdvancedScreenLayout(shot.layout.mode)
+        || isDynamicTrackingLayout(shot.layout.mode)) {
         warnings.push(`镜头 ${shot.shotId} 使用中央裁切但未记录主体边界，需人工确认主体安全区。`);
       }
     } else {
       if (!rectInside(shot.layout.subjectBounds, cropBounds)) {
         warnings.push(`镜头 ${shot.shotId} 的关键区域可能被当前裁切框裁掉。`);
       }
-      if (!rectInside(shot.layout.subjectBounds, profile.safeZones.subject)) {
+      if (!dynamicTracking
+        && !rectInside(shot.layout.subjectBounds, profile.safeZones.subject)) {
         warnings.push(`镜头 ${shot.shotId} 的关键主体可能超出主体安全区。`);
       }
-      const occlusion = profile.uiOcclusionZones.find(
-        (zone) => rectsIntersect(shot.layout.subjectBounds, zone),
-      );
-      if (occlusion) warnings.push(`镜头 ${shot.shotId} 的关键主体可能被「${occlusion.label}」遮挡。`);
+      if (!dynamicTracking) {
+        const occlusion = profile.uiOcclusionZones.find(
+          (zone) => rectsIntersect(shot.layout.subjectBounds, zone),
+        );
+        if (occlusion) warnings.push(`镜头 ${shot.shotId} 的关键主体可能被「${occlusion.label}」遮挡。`);
+      }
+    }
+    if (dynamicTracking) {
+      const trackingValidation = validateTracking(shot.layout.tracking, {
+        fps: Number(fps) || 30,
+        inSec: shot.inSec,
+        outSec: shot.outSec,
+      });
+      errors.push(...trackingValidation.errors.map((message) => `镜头 ${shot.shotId}：${message}`));
+      warnings.push(...trackingValidation.warnings.map((message) => `镜头 ${shot.shotId}：${message}`));
+      const safe = profile.safeZones.subject;
+      const sourceAspect = Number(shot.layout.tracking.sourceAspect);
+      const outputAspect = Number(shot.layout.tracking.outputAspect);
+      const aspectFactors = sourceAspect > 0 && outputAspect > 0
+        ? (sourceAspect >= outputAspect
+          ? { x: sourceAspect / outputAspect, y: 1 }
+          : { x: 1, y: outputAspect / sourceAspect })
+        : { x: 1, y: 1 };
+      for (const point of shot.layout.tracking.points) {
+        if (!rectInside(point.bounds, {
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+        })) {
+          errors.push(`镜头 ${shot.shotId} 的跟踪点 ${point.pointId} 越过源画面边界。`);
+        }
+        const headRisk = shot.layout.tracking.subjectType === 'person'
+          && point.bounds.y <= 0.01;
+        if (headRisk) {
+          warnings.push(`镜头 ${shot.shotId} 的人物框贴近画面顶部，存在裁掉头部或面部风险。`);
+        }
+        if (point.bounds.width * aspectFactors.x > safe.width
+          || point.bounds.height * aspectFactors.y > safe.height) {
+          warnings.push(`镜头 ${shot.shotId} 的主体大于安全区，建议降低缩放或降级完整横屏卡片。`);
+        }
+        const keyframe = shot.layout.tracking.keyframes.find(
+          (item) => item.pointId === point.pointId,
+        );
+        if (keyframe) {
+          const sourceCenterX = point.bounds.x + point.bounds.width / 2;
+          const sourceCenterY = point.bounds.y + point.bounds.height / 2;
+          const transformed = {
+            x: 0.5 + (sourceCenterX - 0.5) * aspectFactors.x * keyframe.scale
+              + keyframe.position.x * 0.5
+              - point.bounds.width * aspectFactors.x * keyframe.scale / 2,
+            y: 0.5 + (sourceCenterY - 0.5) * aspectFactors.y * keyframe.scale
+              + keyframe.position.y * 0.5
+              - point.bounds.height * aspectFactors.y * keyframe.scale / 2,
+            width: point.bounds.width * aspectFactors.x * keyframe.scale,
+            height: point.bounds.height * aspectFactors.y * keyframe.scale,
+          };
+          const insetSafe = {
+            x: safe.x + shot.layout.tracking.safeMargin,
+            y: safe.y + shot.layout.tracking.safeMargin,
+            width: Math.max(0.01, safe.width - shot.layout.tracking.safeMargin * 2),
+            height: Math.max(0.01, safe.height - shot.layout.tracking.safeMargin * 2),
+          };
+          if (!rectInside(transformed, insetSafe)) {
+            warnings.push(`镜头 ${shot.shotId} 在 ${point.sourceTime} 的主体可能未完整位于安全区。`);
+          }
+        }
+      }
     }
     const readableHeight = effectiveSourceTextHeightPx(shot.layout, profile);
     if (readableHeight != null && readableHeight < 24) {
@@ -1603,6 +1786,57 @@ function safeZoneIssues(profile, video) {
     }
   }
   return { errors, warnings };
+}
+
+async function analyzeDouyinShotTracking(projectPath, variantId, videoId, shotId, options = {}) {
+  const bundle = await loadProjectBundle(projectPath, options);
+  const registry = await readPlatformVariants(bundle.projectPath);
+  const current = findVariant(registry, variantId);
+  const plan = normalizeDouyinPlan(current.plan);
+  const video = plan.videos.find((item) => item.videoId === videoId);
+  const shot = video?.shots.find((item) => item.shotId === shotId);
+  if (!shot) {
+    throw variantError('DOUYIN_SHOT_NOT_FOUND', `找不到抖音镜头：${videoId}/${shotId}`);
+  }
+  const mapping = bundle.mappings.find((item) => item.assetId === shot.assetId);
+  if (!mapping || mapping.type !== 'video') {
+    throw variantError('DOUYIN_TRACKING_VIDEO_REQUIRED', '动态主体跟踪只支持已登记的视频镜头。');
+  }
+  const fps = Number(bundle.status?.formats?.timeline?.fps)
+    || Number(bundle.analysis?.timeline?.fps)
+    || inferFps(bundle.manifest, bundle.analysis);
+  const tracking = await analyzeMediaSubjectTracking({
+    mediaPath: mapping.projectAbsolutePath,
+    inSec: shot.inSec,
+    outSec: shot.outSec,
+    fps,
+    subjectType: options.subjectType,
+    safeMargin: options.safeMargin,
+    safeZone: bundle.profile.safeZones.subject,
+    scale: shot.layout.scale,
+    crop: shot.layout.crop,
+    sourceAspect: (Number(mapping.metadata?.displayWidth) || Number(mapping.metadata?.width))
+      / (Number(mapping.metadata?.displayHeight) || Number(mapping.metadata?.height)),
+    outputAspect: bundle.profile.format.width / bundle.profile.format.height,
+    fallbackMode: options.fallbackMode,
+    initialRegion: options.subjectType === 'user_region'
+      ? shot.layout.subjectBounds
+      : null,
+  });
+  shot.layout.tracking = tracking;
+  shot.layout.mode = tracking.fallback.applied ? tracking.fallback.mode : 'subject_track';
+  shot.layout.subjectBounds = tracking.points[0]?.bounds || shot.layout.subjectBounds;
+  shot.agentLayout = structuredClone(shot.layout);
+  synchronizeAutomaticWarnings(plan, await planValidationContext(bundle));
+  return {
+    variantId: current.variantId,
+    revision: current.revision,
+    videoId,
+    shotId,
+    tracking,
+    proposedPlan: plan,
+    requiresSave: true,
+  };
 }
 
 async function validateGeneratedCut({
@@ -1713,6 +1947,20 @@ async function validateGeneratedCut({
   if (mutedLayerCount < layeredAudioShots.length) {
     errors.push('上下双层录屏的重复画面层没有全部静音，可能造成两路原声叠加。');
   }
+  const trackingShots = video.shots.filter((shot) => shot.layout.mode === 'subject_track');
+  const approvedTrackingKeyframes = trackingShots.flatMap(
+    (shot) => shot.layout.tracking?.keyframes || [],
+  );
+  if (fcpxmlReport.transformKeyframeCount !== approvedTrackingKeyframes.length * 2) {
+    errors.push('FCPXML transform 关键帧数量与批准计划不一致。');
+  }
+  for (const keyframe of approvedTrackingKeyframes) {
+    const escapedTime = keyframe.sourceTime.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const occurrences = (xml.match(new RegExp(`<keyframe time="${escapedTime}"`, 'g')) || []).length;
+    if (occurrences !== 2) {
+      errors.push(`FCPXML 缺少批准的 transform 关键帧：${keyframe.sourceTime}。`);
+    }
+  }
   if (video.lightCaptions.length > 0
     && fcpxmlReport.titleCount < video.lightCaptions.filter((item) => item.required).length) {
     errors.push('应有轻字幕没有全部生成 FCP 原生 Title。');
@@ -1720,7 +1968,7 @@ async function validateGeneratedCut({
   for (const selection of variant.plan.selection.filter((item) => item.decision !== 'selected')) {
     if (!selection.reason) errors.push(`未选素材 ${selection.assetId} 缺少明确原因。`);
   }
-  const safety = safeZoneIssues(bundle.profile, video);
+  const safety = safeZoneIssues(bundle.profile, video, analysis.timeline.fps);
   errors.push(...safety.errors);
   warnings.push(...safety.warnings);
   if (!sourceVerification.unchanged) errors.push(...sourceVerification.errors);
@@ -1773,6 +2021,7 @@ async function validateGeneratedCut({
       layeredShotCount: layeredAudioShots.length,
       mutedDuplicateLayerCount: mutedLayerCount,
       duplicateAudioPrevented: mutedLayerCount >= layeredAudioShots.length,
+      subjectTrackingUsesDuplicateMediaLayer: false,
     },
     captions: {
       requiredCount: video.lightCaptions.filter((item) => item.required).length,
@@ -1785,6 +2034,8 @@ async function validateGeneratedCut({
       subjectSafeZone: bundle.profile.safeZones.subject,
       uiOcclusionZones: bundle.profile.uiOcclusionZones,
       issues: [...safety.errors, ...safety.warnings],
+      trackingShotCount: trackingShots.length,
+      approvedTrackingKeyframeCount: approvedTrackingKeyframes.length,
     },
     sourceVerification,
     protectedFilesUnchanged,
@@ -2003,6 +2254,7 @@ module.exports = {
   PLATFORM_VARIANT_SCHEMA_VERSION,
   SELECTION_FACTOR_KEYS,
   approveDouyinVariant,
+  analyzeDouyinShotTracking,
   buildDouyinVariant,
   createAutomaticDouyinPlan,
   createDouyinVariant,

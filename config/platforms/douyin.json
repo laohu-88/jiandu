@@ -124,6 +124,18 @@
       "conform": "fill",
       "background": "solid",
       "preserveSourceTimecode": true
+    },
+    "subject_track": {
+      "label": "动态主体跟踪",
+      "conform": "fill",
+      "background": "solid",
+      "preserveSourceTimecode": true,
+      "requiresManualTrackingReview": true,
+      "safeFallbacks": [
+        "landscape_card",
+        "landscape_card_blur",
+        "center_crop"
+      ]
     }
   }
 }

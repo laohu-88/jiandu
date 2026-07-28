@@ -114,6 +114,8 @@ contextBridge.exposeInMainWorld('plannerApi', {
     ipcRenderer.invoke('platform-variant:douyin-read', args),
   saveDouyinVariant: (args) =>
     ipcRenderer.invoke('platform-variant:douyin-save', args),
+  analyzeDouyinShotTracking: (args) =>
+    ipcRenderer.invoke('platform-variant:douyin-analyze-tracking', args),
   approveDouyinVariant: (args) =>
     ipcRenderer.invoke('platform-variant:douyin-approve', args),
   buildDouyinVariant: (args) =>

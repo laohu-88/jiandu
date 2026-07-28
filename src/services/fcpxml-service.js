@@ -670,6 +670,7 @@ function normalizeShotLayout(shot = {}) {
       blurredBackground: false,
       layeredScreen: false,
       explicit: false,
+      tracking: null,
     };
   }
   const mode = String(layout.mode || 'native_vertical');
@@ -678,7 +679,9 @@ function normalizeShotLayout(shot = {}) {
   const secondaryCrop = layout.secondaryCrop || {};
   return {
     mode,
-    conform: ['center_crop', 'screen_focus', 'segmented_focus'].includes(mode) ? 'fill' : 'fit',
+    conform: ['center_crop', 'screen_focus', 'segmented_focus', 'subject_track'].includes(mode)
+      ? 'fill'
+      : 'fit',
     scale: Number.isFinite(Number(layout.scale)) ? Number(layout.scale) : 1,
     position: {
       x: Number.isFinite(Number(position.x)) ? Number(position.x) : 0,
@@ -700,6 +703,7 @@ function normalizeShotLayout(shot = {}) {
     blurredBackground: mode === 'landscape_card_blur',
     layeredScreen: mode === 'screen_split',
     explicit: true,
+    tracking: layout.tracking?.enabled === true ? layout.tracking : null,
   };
 }
 
@@ -751,7 +755,45 @@ function shotLayoutAdjustments(layout, indent = '          ') {
     );
   }
   lines.push(`${indent}<adjust-conform type="${layout.conform}"/>`);
-  if (Math.abs(layout.scale - 1) > 1e-9
+  const trackingKeyframes = Array.isArray(layout.tracking?.keyframes)
+    ? layout.tracking.keyframes
+      .filter((item) => item
+        && Number.isFinite(Number(item.position?.x))
+        && Number.isFinite(Number(item.position?.y))
+        && Number.isFinite(Number(item.scale))
+        && typeof item.sourceTime === 'string'
+        && item.sourceTime.endsWith('s'))
+      .sort((left, right) => Number(left.sourceTimeSec) - Number(right.sourceTimeSec))
+    : [];
+  if (trackingKeyframes.length) {
+    const first = trackingKeyframes[0];
+    const firstX = Number((first.position.x * 100).toFixed(4));
+    const firstY = Number((-first.position.y * 100).toFixed(4));
+    const firstScale = Number(first.scale.toFixed(6));
+    lines.push(
+      `${indent}<adjust-transform position="${firstX} ${firstY}" scale="${firstScale} ${firstScale}">`,
+      `${indent}  <param name="position" value="${firstX} ${firstY}">`,
+      `${indent}    <keyframeAnimation>`,
+      ...trackingKeyframes.map((keyframe) => {
+        const x = Number((keyframe.position.x * 100).toFixed(4));
+        const y = Number((-keyframe.position.y * 100).toFixed(4));
+        return `${indent}      <keyframe time="${escapeXml(keyframe.sourceTime)}"`
+          + ` value="${x} ${y}" curve="${keyframe.interpolation === 'linear' ? 'linear' : 'smooth'}"/>`;
+      }),
+      `${indent}    </keyframeAnimation>`,
+      `${indent}  </param>`,
+      `${indent}  <param name="scale" value="${firstScale} ${firstScale}">`,
+      `${indent}    <keyframeAnimation>`,
+      ...trackingKeyframes.map((keyframe) => {
+        const scale = Number(keyframe.scale.toFixed(6));
+        return `${indent}      <keyframe time="${escapeXml(keyframe.sourceTime)}"`
+          + ` value="${scale} ${scale}" curve="${keyframe.interpolation === 'linear' ? 'linear' : 'smooth'}"/>`;
+      }),
+      `${indent}    </keyframeAnimation>`,
+      `${indent}  </param>`,
+      `${indent}</adjust-transform>`,
+    );
+  } else if (Math.abs(layout.scale - 1) > 1e-9
     || Math.abs(layout.position.x) > 1e-9
     || Math.abs(layout.position.y) > 1e-9) {
     const x = Number((layout.position.x * 100).toFixed(4));
@@ -1144,7 +1186,13 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     return clip;
   }).join('\n');
 
-  const fcpxmlVersion = fcpTitles.length > 0 ? FCPXML_TITLE_VERSION : FCPXML_DEFAULT_VERSION;
+  const hasTransformKeyframes = analysis.timeline.shots.some((shot) => (
+    Array.isArray(shot.layout?.tracking?.keyframes)
+    && shot.layout.tracking.keyframes.length > 0
+  ));
+  const fcpxmlVersion = fcpTitles.length > 0 || hasTransformKeyframes
+    ? FCPXML_TITLE_VERSION
+    : FCPXML_DEFAULT_VERSION;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE fcpxml>
 <fcpxml version="${fcpxmlVersion}">
@@ -1330,6 +1378,13 @@ function validateFcpxmlStructure(xml, expected = {}) {
     .filter((clip) => clip.ref)
     .map((clip) => [null, clip.ref]);
   const markers = [...xml.matchAll(/<marker\s+/g)];
+  const transformKeyframeAnimations = [...xml.matchAll(
+    /<keyframeAnimation>([\s\S]*?)<\/keyframeAnimation>/g,
+  )].map((animation) => (
+    [...animation[1].matchAll(/<keyframe\s+time="([^"]+)"\s+value="([^"]+)"/g)]
+      .map((match) => ({ time: match[1], value: match[2] }))
+  ));
+  const transformKeyframes = transformKeyframeAnimations.flat();
   const effects = [...xml.matchAll(/<effect\s+([^>]+)\/>/g)].map((match) => ({
     id: match[1].match(/\bid="([^"]+)"/)?.[1] || null,
     uid: match[1].match(/\buid="([^"]+)"/)?.[1] || null,
@@ -1410,6 +1465,28 @@ function validateFcpxmlStructure(xml, expected = {}) {
       : (Number.isFinite(expected.fps) ? frameDurationRational(expected.fps) : null);
   } catch {
     sequenceFrameRational = null;
+  }
+  for (const animation of transformKeyframeAnimations) {
+    let previousTransformTime = null;
+    for (const keyframe of animation) {
+      try {
+        const time = parseFcpTimeRational(keyframe.time);
+        if (sequenceFrameRational && !isRationalMultiple(time, sequenceFrameRational)) {
+          errors.push(`transform 关键帧未对齐帧边界：${keyframe.time}。`);
+        }
+        const timeSec = rationalToSeconds(time);
+        if (previousTransformTime != null && timeSec < previousTransformTime - 1e-9) {
+          errors.push('transform 关键帧时间顺序不合法。');
+        }
+        previousTransformTime = timeSec;
+        const values = keyframe.value.trim().split(/\s+/).map(Number);
+        if (!values.length || values.some((value) => !Number.isFinite(value))) {
+          errors.push(`transform 关键帧数值无效：${keyframe.value}。`);
+        }
+      } catch (error) {
+        errors.push(`transform 关键帧时间无法解析：${error.message}`);
+      }
+    }
   }
 
   // Parent clip bounds for managed-title containment checks.
@@ -1705,6 +1782,7 @@ function validateFcpxmlStructure(xml, expected = {}) {
     clipCount: clips.length,
     markerCount: markers.length,
     titleCount: titles.length,
+    transformKeyframeCount: transformKeyframes.length,
     managedTitleCount: managedTitleKeys.length,
     effectCount: effects.length,
     version,
