@@ -1,10 +1,21 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('plannerApi', {
+// Domain-organized preload API, inlined for Electron sandbox compatibility.
+// Source modules: src/preload/*-api.js (kept for review / non-sandbox tooling).
+// Regenerate with: node scripts/build-preload.js
+const api = {
+  // --- app-api.js ---
+  ...({
   getConfig: () => ipcRenderer.invoke('app:get-config'),
+}),
+  // --- pending-api.js ---
+  ...({
   scanPendingMedia: () => ipcRenderer.invoke('pending:scan'),
   showPendingMediaInFinder: (sourceDirectory) =>
     ipcRenderer.invoke('pending:show-in-finder', sourceDirectory),
+}),
+  // --- handoff-api.js ---
+  ...({
   createHandoffTask: (args) => ipcRenderer.invoke('handoff:create', args),
   launchCodexHandoff: (taskPath) => ipcRenderer.invoke('handoff:launch-codex', taskPath),
   launchCursorHandoff: (taskPath) => ipcRenderer.invoke('handoff:launch-cursor', taskPath),
@@ -26,8 +37,14 @@ contextBridge.exposeInMainWorld('plannerApi', {
     ipcRenderer.on('handoff:terminal', listener);
     return () => ipcRenderer.removeListener('handoff:terminal', listener);
   },
+}),
+  // --- dialog-api.js ---
+  ...({
   selectRoot: () => ipcRenderer.invoke('dialog:select-root'),
   selectMaterialDirectory: () => ipcRenderer.invoke('dialog:select-material'),
+}),
+  // --- edit-api.js ---
+  ...({
   recognizeEditMaterial: (sourceDirectory) =>
     ipcRenderer.invoke('edit:recognize', sourceDirectory),
   buildEditPreflight: (sourceDirectory) =>
@@ -43,15 +60,24 @@ contextBridge.exposeInMainWorld('plannerApi', {
     ipcRenderer.invoke('edit:open-project', projectPath),
   showEditEditorialReview: (projectPath) =>
     ipcRenderer.invoke('edit:show-editorial-review', projectPath),
+}),
+  // --- project-api.js ---
+  ...({
   createProject: (args) => ipcRenderer.invoke('project:create', args),
   chooseAndOpenProject: () => ipcRenderer.invoke('project:choose-open'),
   openProjectPath: (projectPath) => ipcRenderer.invoke('project:open-path', projectPath),
   ensureProjectDirs: (projectPath) => ipcRenderer.invoke('project:ensure-dirs', projectPath),
+}),
+  // --- assets-api.js ---
+  ...({
   scanAssets: (projectPath) => ipcRenderer.invoke('assets:scan', projectPath),
   loadAssetIndex: (projectPath) => ipcRenderer.invoke('assets:load-index', projectPath),
   updateAssetReview: (args) => ipcRenderer.invoke('assets:update-review', args),
   getAssetPreview: (args) => ipcRenderer.invoke('assets:get-preview', args),
   readTextPreview: (args) => ipcRenderer.invoke('assets:read-text-preview', args),
+}),
+  // --- ai-api.js ---
+  ...({
   loadAiAnalysis: (projectPath) => ipcRenderer.invoke('ai:load-analysis', projectPath),
   updateAiAnalysis: (args) => ipcRenderer.invoke('ai:update-analysis', args),
   loadAiSettings: () => ipcRenderer.invoke('ai:load-settings'),
@@ -72,6 +98,9 @@ contextBridge.exposeInMainWorld('plannerApi', {
     ipcRenderer.invoke('ai:generate-material-report', projectPath),
   generateEditSuggestion: (projectPath) =>
     ipcRenderer.invoke('ai:generate-edit-suggestion', projectPath),
+}),
+  // --- stage-api.js ---
+  ...({
   loadStage2State: (projectPath) => ipcRenderer.invoke('stage2:load', projectPath),
   importVideoPlan: (args) => ipcRenderer.invoke('plan:import', args),
   scanVoiceFiles: (projectPath) => ipcRenderer.invoke('voice:scan', projectPath),
@@ -102,12 +131,28 @@ contextBridge.exposeInMainWorld('plannerApi', {
   validateCodexVideoAnalysis: (args) => ipcRenderer.invoke('codex-video:validate-analysis', args),
   buildCodexVideoProject: (args) => ipcRenderer.invoke('codex-video:build', args),
   verifyCodexVideoProject: (projectPath) => ipcRenderer.invoke('codex-video:verify', projectPath),
+}),
+  // --- catalog-api.js ---
+  ...({
   scanProjectCatalog: () => ipcRenderer.invoke('catalog:scan'),
   getCodexProjectResult: (projectPath) => ipcRenderer.invoke('catalog:get-result', projectPath),
   verifyCodexProjectReadOnly: (projectPath) => ipcRenderer.invoke('catalog:verify', projectPath),
   runProjectArtifactAction: (args) => ipcRenderer.invoke('catalog:artifact-action', args),
   openProjectFcpxmlInFinalCut: (projectPath) =>
     ipcRenderer.invoke('catalog:open-final-cut', projectPath),
+  loadEditorialReview: (projectPath) =>
+    ipcRenderer.invoke('catalog:load-editorial-review', projectPath),
+  saveEditorialReview: (args) =>
+    ipcRenderer.invoke('catalog:save-editorial-review', args),
+  getConfirmedCaptions: (projectPath) =>
+    ipcRenderer.invoke('catalog:get-confirmed-captions', projectPath),
+  previewCaptionFcpxmlExport: (projectPath) =>
+    ipcRenderer.invoke('catalog:preview-caption-fcpxml-export', projectPath),
+  exportCaptionFcpxml: (projectPath) =>
+    ipcRenderer.invoke('catalog:export-caption-fcpxml', projectPath),
+}),
+  // --- platform-variant-api.js ---
+  ...({
   createDouyinVariant: (args) =>
     ipcRenderer.invoke('platform-variant:douyin-create', args),
   readDouyinVariant: (args) =>
@@ -126,16 +171,12 @@ contextBridge.exposeInMainWorld('plannerApi', {
     ipcRenderer.invoke('platform-variant:douyin-artifact', args),
   openDouyinFcpxmlInFinalCut: (args) =>
     ipcRenderer.invoke('platform-variant:douyin-open-final-cut', args),
-  loadEditorialReview: (projectPath) =>
-    ipcRenderer.invoke('catalog:load-editorial-review', projectPath),
-  saveEditorialReview: (args) =>
-    ipcRenderer.invoke('catalog:save-editorial-review', args),
-  getConfirmedCaptions: (projectPath) =>
-    ipcRenderer.invoke('catalog:get-confirmed-captions', projectPath),
-  previewCaptionFcpxmlExport: (projectPath) =>
-    ipcRenderer.invoke('catalog:preview-caption-fcpxml-export', projectPath),
-  exportCaptionFcpxml: (projectPath) =>
-    ipcRenderer.invoke('catalog:export-caption-fcpxml', projectPath),
+}),
+  // --- shell-api.js ---
+  ...({
   showItemInFolder: (args) => ipcRenderer.invoke('shell:show-item', args),
   openFolder: (args) => ipcRenderer.invoke('shell:open-folder', args),
-});
+}),
+};
+
+contextBridge.exposeInMainWorld('plannerApi', api);

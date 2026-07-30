@@ -1,0 +1,8 @@
+.workspace-view .project-page:not(.hidden) {
+  animation: fade-in var(--motion);
+}
+
+@keyframes fade-in {
+  from { opacity: 0.72; }
+  to { opacity: 1; }
+}

@@ -338,7 +338,16 @@ test('Final Cut Pro 优先 Bundle ID 并使用参数数组，失败后回退实�
 });
 
 test('preload 不暴露文件系统、任意 shell 命令或任意绝对路径打开 API', async () => {
-  const preload = await fs.readFile(path.join(__dirname, '../src/preload.js'), 'utf8');
+  const preloadRoot = path.join(__dirname, '../src/preload');
+  const preloadFiles = await fs.readdir(preloadRoot);
+  const preload = [
+    await fs.readFile(path.join(__dirname, '../src/preload.js'), 'utf8'),
+    ...(await Promise.all(
+      preloadFiles
+        .filter((name) => name.endsWith('.js'))
+        .map((name) => fs.readFile(path.join(preloadRoot, name), 'utf8')),
+    )),
+  ].join('\n');
   assert.doesNotMatch(preload, /node:fs|child_process|execFile|spawn/);
   assert.doesNotMatch(preload, /openFolder:\s*\(folderPath\)/);
   assert.doesNotMatch(preload, /showItemInFolder:\s*\(itemPath\)/);
@@ -347,8 +356,14 @@ test('preload 不暴露文件系统、任意 shell 命令或任意绝对路径�
 });
 
 test('Electron 结果中心提供 Marker 列表、seek、高亮、字幕叠加与只读时间线且不暴露写项目操作', async () => {
-  const renderer = await fs.readFile(path.join(__dirname, '../src/renderer/app.js'), 'utf8');
-  const styles = await fs.readFile(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
+  const [playback, explanation, stylesIndex, stylesPlayback] = await Promise.all([
+    fs.readFile(path.join(__dirname, '../src/renderer/modules/workspace/result-playback.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '../src/renderer/explanation-review-ui.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '../src/renderer/styles/index.css'), 'utf8'),
+    fs.readFile(path.join(__dirname, '../src/renderer/styles/pages/results-playback.css'), 'utf8'),
+  ]);
+  const renderer = `${playback}\n${explanation}`;
+  const styles = `${stylesIndex}\n${stylesPlayback}`;
   assert.match(renderer, /轻字幕建议/);
   assert.match(renderer, /跳到此处/);
   assert.match(renderer, /预览字幕/);

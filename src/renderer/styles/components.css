@@ -1,0 +1,224 @@
+.page-toolbar,
+.toolbar-actions,
+.library-filters,
+.review-filters,
+.asset-filters,
+.result-actions,
+.workspace-header-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.page-toolbar {
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+
+.page-toolbar h2,
+.project-page > h2 {
+  margin: 0;
+  font-size: var(--text-xl);
+}
+
+.button {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  font-size: var(--text-sm);
+  transition: background var(--motion), border-color var(--motion);
+}
+
+.button:hover:not(:disabled) {
+  background: #f7f8fa;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.button.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.button.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.button.ghost:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.button.danger-button {
+  color: var(--danger);
+}
+
+input[type="search"],
+input[type="text"],
+input[type="number"],
+select,
+textarea {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  background: var(--panel);
+}
+
+.status-pill,
+.issue-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #f7f8fa;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.issue-chip.issue-blocking {
+  color: var(--blocking);
+  border-color: #f0c2c2;
+  background: #fdf2f2;
+}
+
+.issue-chip.issue-confirm {
+  color: var(--confirm);
+  border-color: #f0d9a8;
+  background: #fff8eb;
+}
+
+.issue-chip.issue-suggestion,
+.issue-chip.issue-info {
+  color: var(--info);
+  border-color: #c9daf8;
+  background: var(--accent-soft);
+}
+
+.issue-chips {
+  display: flex;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.empty-state,
+.empty-inline {
+  color: var(--text-secondary);
+  padding: var(--space-5);
+}
+
+.notice {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0;
+  background: var(--panel);
+}
+
+.notice.warning {
+  border-color: #f0d9a8;
+  background: #fff8eb;
+  color: var(--warning);
+}
+
+.notice.neutral {
+  background: #f7f8fa;
+}
+
+.notice-list {
+  margin: var(--space-3) 0;
+  padding-left: 1.2em;
+  color: var(--text-secondary);
+}
+
+.result-section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.result-section-heading h3 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-lg);
+}
+
+.result-section-heading p {
+  margin: 0 0 var(--space-3);
+  color: var(--text-secondary);
+}
+
+.result-definition-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.result-definition-grid > div {
+  min-width: 0;
+}
+
+.result-definition-grid dt {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.result-definition-grid dd {
+  margin: 2px 0 0;
+  word-break: break-word;
+}
+
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 50;
+  max-width: 420px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: #1d1d1f;
+  color: #fff;
+  box-shadow: var(--shadow);
+}
+
+.toast.error {
+  background: var(--danger);
+}
+
+.overlay-root .handoff-view {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(29, 29, 31, 0.28);
+  padding: var(--space-5);
+}
+
+.overlay-root .handoff-panel {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+}

@@ -1,0 +1,8 @@
+/* page-specific hooks kept thin; shared layout lives in layout.css */
+.library-detail-pane h3 {
+  margin-top: 0;
+}
+
+.pending-row .result-actions {
+  margin-top: var(--space-3);
+}

@@ -12,6 +12,7 @@
     "dev": "electron .",
     "test": "node --test test/*.test.js",
     "check": "node scripts/check-js.js",
+    "preload:build": "node scripts/build-preload.js",
     "video-skill": "node bin/video-skill.js",
     "hyperframes:doctor": "node bin/video-skill.js hyperframes-doctor",
     "icon:mac": "node scripts/generate-mac-icon.js",

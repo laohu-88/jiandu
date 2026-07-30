@@ -325,14 +325,14 @@ test('FCPXML clip 顺序必须与章节化 analysis 镜头顺序一致', () => {
 });
 
 test('交接确认页包含章节预览、说明文件、时长范围和交叉状态', async () => {
-  const [html, app] = await Promise.all([
+  const [html, pending] = await Promise.all([
     fs.readFile(path.join(__dirname, '../src/renderer/index.html'), 'utf8'),
-    fs.readFile(path.join(__dirname, '../src/renderer/app.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '../src/renderer/modules/pending/pending-page.js'), 'utf8'),
   ]);
   assert.match(html, /id="handoffNarrativePreview"/);
-  assert.match(app, /检测到的章节数/);
-  assert.match(app, /使用的本期说明文件/);
-  assert.match(app, /预计成片时长范围/);
-  assert.match(app, /不设默认成片时长上限/);
-  assert.match(app, /章节交叉/);
+  assert.match(pending, /检测到的章节数/);
+  assert.match(pending, /使用的本期说明文件/);
+  assert.match(pending, /预计成片时长范围/);
+  assert.match(pending, /不设默认成片时长上限/);
+  assert.match(pending, /章节交叉/);
 });

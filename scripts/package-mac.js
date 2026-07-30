@@ -13,6 +13,9 @@ async function packageMac() {
   if (process.platform !== 'darwin' || process.arch !== 'arm64') {
     throw new Error(`只允许在 Apple Silicon macOS 构建，当前为 ${process.platform}/${process.arch}。`);
   }
+  await run(process.execPath, [path.join(projectRoot, 'scripts', 'build-preload.js')], {
+    timeout: 30_000,
+  });
   if (!await fs.stat(outputPath).catch(() => null)) await generate();
   const distPath = path.join(projectRoot, 'dist');
   if (path.dirname(distPath) !== projectRoot || path.basename(distPath) !== 'dist') {

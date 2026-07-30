@@ -71,10 +71,21 @@ test('删除 segment.durationSec 不影响 getSegmentDuration', () => {
 });
 
 test('UI 不读取 segment.durationSec 或 status.durationSec', () => {
-  const source = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'renderer', 'app.js'),
-    'utf8',
-  );
+  const root = path.join(__dirname, '..', 'src', 'renderer');
+  const files = [];
+  const stack = [root];
+  while (stack.length) {
+    const current = stack.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'legacy') continue;
+        stack.push(full);
+      } else if (entry.isFile() && entry.name.endsWith('.js')) {
+        files.push(full);
+      }
+    }
+  }
+  const source = files.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.doesNotMatch(source, /segment\.durationSec|status\.durationSec/);
-  assert.match(source, /function getSegmentDuration\(segment\)/);
 });

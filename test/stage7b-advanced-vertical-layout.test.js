@@ -420,10 +420,15 @@ test('布局修改后批准哈希与旧生成状态失效，未重新批准不�
 });
 
 test('规划页提供手机预览、可视化裁切、复制/恢复、分段和多变体真实入口', async () => {
-  const [renderer, styles] = await Promise.all([
-    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'app.js'), 'utf8'),
-    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'styles.css'), 'utf8'),
+  const [douyinPage, editorCore, stylesIndex, stylesDouyin, stylesLegacy] = await Promise.all([
+    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'modules', 'douyin', 'douyin-page.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'modules', 'douyin', 'editor-core.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'styles', 'index.css'), 'utf8'),
+    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'styles', 'pages', 'douyin.css'), 'utf8'),
+    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'styles', 'pages', 'douyin-legacy.css'), 'utf8'),
   ]);
+  const renderer = `${douyinPage}\n${editorCore}`;
+  const styles = `${stylesIndex}\n${stylesDouyin}\n${stylesLegacy}`;
   for (const text of [
     '录屏局部放大',
     '上下双层录屏',

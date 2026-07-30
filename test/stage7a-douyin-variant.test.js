@@ -758,13 +758,22 @@ test('Cursor Agent、Codex、App 和 CLI 共用抖音规划合同与本地续建
   assert.match(contract, /不得写入或使用固定目标时长/);
   assert.doesNotMatch(contract, /\d+\s*[–—-]\s*\d+\s*秒/);
 
-  const [renderer, preload, cli, packageVerifier] = await Promise.all([
-    fs.readFile(path.join(__dirname, '../src/renderer/app.js'), 'utf8'),
+  const preloadRoot = path.join(__dirname, '../src/preload');
+  const preloadFiles = await fs.readdir(preloadRoot);
+  const [douyinPage, editorCore, workflowVm, preloadEntry, cli, packageVerifier, ...preloadModules] = await Promise.all([
+    fs.readFile(path.join(__dirname, '../src/renderer/modules/douyin/douyin-page.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '../src/renderer/modules/douyin/editor-core.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '../src/view-models/douyin-workflow-view-model.js'), 'utf8'),
     fs.readFile(path.join(__dirname, '../src/preload.js'), 'utf8'),
     fs.readFile(path.join(__dirname, '../bin/video-skill.js'), 'utf8'),
     fs.readFile(path.join(__dirname, '../scripts/verify-package.js'), 'utf8'),
+    ...preloadFiles
+      .filter((name) => name.endsWith('.js'))
+      .map((name) => fs.readFile(path.join(preloadRoot, name), 'utf8')),
   ]);
-  for (const text of ['创建抖音变体', '批准后生成', '裁切前', '主体安全区', '抖音结果']) {
+  const preload = [preloadEntry, ...preloadModules].join('\n');
+  const renderer = `${douyinPage}\n${editorCore}\n${workflowVm}`;
+  for (const text of ['创建抖音变体', '生成预览与 FCP 时间线', '裁切前', '主体安全区', '抖音结果']) {
     assert.match(renderer, new RegExp(text));
   }
   for (const method of [

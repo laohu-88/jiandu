@@ -1,0 +1,4 @@
+.review-group.level-blocking h3 { color: var(--blocking); }
+.review-group.level-confirm h3 { color: var(--confirm); }
+.review-group.level-suggestion h3 { color: var(--suggestion); }
+.review-group.level-info h3 { color: var(--status-info); }

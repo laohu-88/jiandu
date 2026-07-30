@@ -2,60 +2,49 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8">
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0"
-    >
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>视频剪辑编排器 v3</title>
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./styles/index.css">
   </head>
-  <body>
-    <main class="shell">
-      <header class="app-header">
-        <div>
-          <p id="viewEyebrow" class="eyebrow">STAGE 4D · 待处理素材</p>
-          <h1>视频剪辑编排器 v3</h1>
-        </div>
-        <div class="header-actions">
-          <nav class="view-switcher" aria-label="主视图">
-            <button id="showPendingMediaButton" class="view-tab active" type="button">
-              待处理素材
-            </button>
-            <button id="showResultsCenterButton" class="view-tab" type="button">
-              项目结果中心
-            </button>
-            <button id="showWorkspaceButton" class="view-tab" type="button">
-              素材筛选台
-            </button>
-          </nav>
-          <span id="version" class="version">正在读取版本…</span>
-        </div>
-      </header>
-
-      <section id="pendingMediaView" class="pending-media-view">
-        <div class="results-toolbar card">
+  <body class="app-body">
+    <div class="app-frame">
+      <aside id="navSidebar" class="nav-sidebar" aria-label="主导航"></aside>
+      <div class="app-main">
+        <header class="app-topbar">
           <div>
-            <h2>待处理素材</h2>
-            <p id="pendingCatalogSummary">正在扫描默认待处理目录…</p>
+            <p class="eyebrow">视频剪辑编排器</p>
+            <h1 class="app-title">工作台</h1>
           </div>
-          <div class="actions">
-            <label class="setting-toggle">
-              <input id="autoOpenFcpSetting" type="checkbox">
-              <span>验证全部通过后，自动打开 Final Cut Pro</span>
-            </label>
-            <button id="newEditJobButton" class="button primary" type="button">新建剪辑任务</button>
-            <button id="refreshPendingButton" class="button secondary" type="button">刷新素材</button>
-          </div>
-        </div>
-        <div id="pendingCatalogError" class="notice warning hidden"></div>
-        <div id="pendingMediaList" class="pending-media-grid"></div>
-        <div id="pendingMediaEmpty" class="card empty hidden">
-          <strong>尚未发现一期素材</strong>
-          <p>只读取待处理根目录下的直属子目录，不会把内部目录误识别为独立一期。</p>
-        </div>
-      </section>
+          <span id="version" class="version">正在读取版本…</span>
+        </header>
 
-      <section id="editPreflightView" class="handoff-view hidden">
+        <div id="pendingView" class="view-panel"></div>
+        <div id="libraryView" class="view-panel hidden"></div>
+        <div id="tasksView" class="view-panel hidden"></div>
+        <div id="settingsView" class="view-panel hidden"></div>
+
+        <div id="workspaceView" class="workspace-view hidden">
+          <header id="workspaceHeader" class="workspace-header sticky"></header>
+          <nav id="projectTabs" class="project-tabs" aria-label="项目页面"></nav>
+          <div id="pageOverview" class="project-page"></div>
+          <div id="pageMain" class="project-page hidden"></div>
+          <div id="pageDouyin" class="project-page hidden">
+            <div class="douyin-stage-rail" aria-label="抖音阶段"></div>
+            <div id="douyinStagePlan" class="douyin-stage"></div>
+            <div id="douyinStageIssues" class="douyin-stage hidden"></div>
+            <div id="douyinStagePreview" class="douyin-stage editor-workspace hidden"></div>
+            <div id="douyinStageDeliver" class="douyin-stage hidden"></div>
+            <footer class="sticky-action-bar" aria-label="抖音操作"></footer>
+          </div>
+          <div id="pageAssets" class="project-page hidden"></div>
+          <div id="pageReview" class="project-page hidden"></div>
+          <div id="pageOutputs" class="project-page hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="overlayRoot" class="overlay-root">
+<section id="editPreflightView" class="handoff-view hidden">
         <div class="card handoff-panel">
           <p class="eyebrow">STAGE 6B · 生成前检查</p>
           <h2 id="editPreflightTitle">新建剪辑任务</h2>
@@ -174,546 +163,36 @@
           </div>
         </div>
       </section>
-
-      <section id="resultsCenterView" class="results-center hidden">
-        <div class="results-toolbar card">
-          <div>
-            <h2>项目结果中心</h2>
-            <p id="catalogSummary">正在读取默认视频素材库…</p>
-          </div>
-          <button id="refreshCatalogButton" class="button primary" type="button">
-            刷新项目库
-          </button>
-        </div>
-        <div id="catalogError" class="notice warning hidden"></div>
-        <div class="results-layout">
-          <aside class="card catalog-panel">
-            <div id="projectCatalogList" class="catalog-list"></div>
-            <div id="projectCatalogEmpty" class="empty">
-              <strong>尚未发现正式项目</strong>
-              <p>Codex 创建的 v3 项目会自动出现在这里。</p>
-            </div>
-          </aside>
-          <section class="card result-detail-panel">
-            <div id="resultDetailEmpty" class="empty result-detail-empty">
-              <strong>选择一个项目查看结果</strong>
-              <p>这里会汇总 Codex 分析、粗剪、FCPXML、验证和 HyperFrames。</p>
-            </div>
-            <div id="resultDetailLoading" class="empty hidden">正在读取项目结果…</div>
-            <div id="resultDetailError" class="notice warning hidden"></div>
-            <div id="resultDetail" class="hidden"></div>
-          </section>
-        </div>
-      </section>
-
-      <div id="workspaceView" class="hidden">
-      <section class="card setup-card">
-        <div class="section-heading">
-          <div>
-            <h2>项目</h2>
-            <p>新建项目，或打开已有项目继续素材筛选。</p>
-          </div>
-          <button id="openProjectButton" class="button primary">打开已有项目</button>
-        </div>
-
-        <div class="setup-subsection new-project-section">
-          <div class="compact-heading">
-            <h3>新建项目</h3>
-            <p>新建后可扫描素材、人工筛选、AI 分析并生成素材报告。</p>
-          </div>
-          <div class="form-grid">
-            <label>
-              <span>项目名称</span>
-              <input id="projectName" type="text" placeholder="例如：产品制作记录">
-            </label>
-            <label>
-              <span>项目根目录</span>
-              <div class="path-input">
-                <input id="projectRoot" type="text">
-                <button id="selectRootButton" class="button ghost" type="button">选择目录</button>
-              </div>
-            </label>
-          </div>
-          <button id="createProjectButton" class="button primary">创建新项目</button>
-        </div>
-
-        <div class="setup-subsection">
-          <div class="section-heading compact-heading">
-            <div>
-              <h3>最近项目</h3>
-              <p>最多保留 10 个最近打开或创建的项目。</p>
-            </div>
-          </div>
-          <div id="recentProjectsList" class="recent-projects"></div>
-          <div id="emptyRecentProjects" class="empty small-empty">
-            暂无最近项目。
-          </div>
-        </div>
-
-        <div class="setup-subsection">
-          <div class="section-heading compact-heading">
-            <div>
-              <h3>环境检测</h3>
-              <p>检查 ffmpeg、ffprobe 和字幕命令是否可用。</p>
-            </div>
-            <button id="detectEnvironmentButton" class="button secondary">
-              检测运行环境
-            </button>
-          </div>
-          <div id="environmentResult" class="environment-result hidden"></div>
-        </div>
-      </section>
-
-      <section id="currentProjectCard" class="card hidden">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">当前项目</p>
-            <h2 id="currentProjectName"></h2>
-            <p id="currentProjectPath" class="project-path"></p>
-          </div>
-          <div class="actions">
-            <button id="scanButton" class="button primary">扫描精选素材</button>
-            <button id="briefButton" class="button secondary">生成素材报告</button>
-            <button id="editSuggestionButton" class="button secondary" disabled>生成剪辑建议</button>
-            <button id="openCurrentControlDirButton" class="button ghost">打开项目总控</button>
-          </div>
-        </div>
-
-        <div id="missingDirsBox" class="notice warning hidden">
-          <div>
-            <strong>项目目录不完整</strong>
-            <p id="missingDirsText"></p>
-          </div>
-          <button id="ensureDirsButton" class="button warning-button">补齐目录</button>
-        </div>
-
-        <div id="ffprobeWarning" class="notice warning hidden"></div>
-      </section>
-
-      <section id="videoPlanCard" class="card hidden">
-        <div class="section-heading">
-          <div>
-            <h2>视频方案</h2>
-            <p>粘贴大模型生成的完整方案，解析为后续阶段可继续使用的分段状态。</p>
-          </div>
-        </div>
-
-        <textarea
-          id="videoPlanText"
-          class="plan-textarea"
-          placeholder="在这里粘贴视频方案。支持“第1段：标题”“01｜标题”“1. 标题”等分段格式。"
-        ></textarea>
-
-        <div class="plan-actions">
-          <button id="importPlanButton" class="button primary">导入并解析方案</button>
-          <button id="scanVoiceButton" class="button secondary">扫描配音</button>
-          <span id="planImportSummary" class="inline-summary">状态：未导入方案</span>
-        </div>
-
-        <div id="stage2Warning" class="notice warning hidden"></div>
-        <div id="voiceIssues" class="notice neutral hidden"></div>
-      </section>
-
-      <section id="segmentsCard" class="card hidden">
-        <div class="section-heading">
-          <div>
-            <h2>分段列表</h2>
-            <p id="segmentSummary">尚未导入方案</p>
-          </div>
-          <div class="actions">
-            <button id="syncPackagesButton" class="button secondary">
-              同步分段素材包
-            </button>
-            <button id="generateAllRoughcutsButton" class="button primary">
-              生成全部分段粗剪
-            </button>
-          </div>
-        </div>
-        <div id="roughcutBatchSummary" class="notice neutral hidden"></div>
-        <p class="audio-explainer">
-          原素材会完整保留在分段素材包中；这里的原声设置只影响后续粗剪输出。
-        </p>
-        <div id="segmentsList" class="segments-list"></div>
-        <div id="emptySegments" class="empty segment-empty">
-          <strong>未导入方案</strong>
-          <p>粘贴方案并点击“导入并解析方案”后，这里会显示分段。</p>
-        </div>
-      </section>
-
-      <section id="finalRoughcutCard" class="card hidden">
-        <div class="section-heading">
-          <div>
-            <h2>总粗剪</h2>
-            <p>所有分段粗剪成功后，合并为一个便于预览和交接的总粗剪。</p>
-          </div>
-          <div class="actions">
-            <button id="generateFinalRoughcutButton" class="button primary">
-              生成总粗剪
-            </button>
-            <button id="generateFcpChecklistButton" class="button secondary">
-              生成 FCP 交接清单
-            </button>
-          </div>
-        </div>
-
-        <div class="final-grid">
-          <div>
-            <p class="meta-label">状态</p>
-            <p id="finalRoughcutStatusText" class="meta-value">待生成</p>
-          </div>
-          <div>
-            <p class="meta-label">输出路径</p>
-            <p id="finalRoughcutOutputPath" class="meta-value path-text">—</p>
-          </div>
-          <div>
-            <p class="meta-label">总时长</p>
-            <p id="finalRoughcutDuration" class="meta-value">—</p>
-          </div>
-          <div>
-            <p class="meta-label">分段数量</p>
-            <p id="finalRoughcutSegmentCount" class="meta-value">—</p>
-          </div>
-          <div>
-            <p class="meta-label">生成时间</p>
-            <p id="finalRoughcutGeneratedAt" class="meta-value">—</p>
-          </div>
-        </div>
-
-        <div id="finalRoughcutSummary" class="notice neutral hidden"></div>
-        <div id="fcpChecklistSummary" class="notice neutral hidden"></div>
-
-        <div class="final-actions">
-          <button id="showFinalRoughcutButton" class="button secondary" disabled>
-            在 Finder 中显示总粗剪
-          </button>
-          <button id="openControlDirButton" class="button ghost">
-            打开 00-项目总控
-          </button>
-          <button id="openRoughcutDirButton" class="button ghost">
-            打开 04-分段粗剪
-          </button>
-          <button id="openFinalRoughcutDirButton" class="button ghost">
-            打开 05-总粗剪
-          </button>
-        </div>
-      </section>
-
-      <section id="subtitleCard" class="card hidden">
-        <div class="section-heading">
-          <div>
-            <h2>整片字幕收口</h2>
-            <p>
-              请先在 FCP 中完成精剪并导出整片视频到 06-FCP导出，然后在这里生成整片字幕。
-              v3 不生成分段字幕，也不烧录字幕。
-            </p>
-          </div>
-          <div class="actions">
-            <button id="chooseSubtitleVideoButton" class="button secondary">
-              选择最终视频
-            </button>
-            <button id="generateSubtitleButton" class="button primary">
-              生成整片字幕
-            </button>
-            <button id="organizeSrtButton" class="button secondary">
-              整理已有 SRT
-            </button>
-          </div>
-        </div>
-
-        <div class="subtitle-command-row">
-          <label>
-            <span>字幕命令</span>
-            <input id="subtitleCommandInput" type="text" value="ww">
-          </label>
-          <button id="openSubtitleDirButton" class="button ghost">
-            打开 07-字幕
-          </button>
-        </div>
-
-        <div class="final-grid subtitle-grid">
-          <div>
-            <p class="meta-label">当前选择视频</p>
-            <p id="subtitleVideoPath" class="meta-value path-text">—</p>
-          </div>
-          <div>
-            <p class="meta-label">raw.srt</p>
-            <p id="rawSrtStatus" class="meta-value">—</p>
-          </div>
-          <div>
-            <p class="meta-label">final-cn.srt</p>
-            <p id="finalSrtStatus" class="meta-value">—</p>
-          </div>
-          <div>
-            <p class="meta-label">字幕状态</p>
-            <p id="subtitleStatusText" class="meta-value">待处理</p>
-          </div>
-          <div>
-            <p class="meta-label">原始条数</p>
-            <p id="subtitleRawCount" class="meta-value">—</p>
-          </div>
-          <div>
-            <p class="meta-label">整理后条数</p>
-            <p id="subtitleFinalCount" class="meta-value">—</p>
-          </div>
-          <div>
-            <p class="meta-label">拆分长字幕</p>
-            <p id="subtitleSplitCount" class="meta-value">—</p>
-          </div>
-        </div>
-
-        <div id="subtitleSummary" class="notice neutral hidden"></div>
-      </section>
-
-      <section id="assetsCard" class="card hidden">
-        <div class="assets-workspace">
-          <div class="asset-list-panel">
-            <div class="section-heading">
-              <div>
-                <h2>素材列表</h2>
-                <p id="assetSummary">共 0 个素材</p>
-              </div>
-            </div>
-
-            <div class="asset-toolbar">
-              <label class="asset-search-field">
-                <span>搜索素材</span>
-                <input
-                  id="assetSearchInput"
-                  type="search"
-                  placeholder="按文件名搜索"
-                  autocomplete="off"
-                >
-              </label>
-              <label>
-                <span>类型</span>
-                <select id="assetTypeFilter">
-                  <option value="all">全部</option>
-                  <option value="video">视频</option>
-                  <option value="image">图片</option>
-                  <option value="audio">音频</option>
-                  <option value="text">文本</option>
-                  <option value="other">其他</option>
-                </select>
-              </label>
-              <label>
-                <span>审核状态</span>
-                <select id="assetReviewFilter">
-                  <option value="all">全部</option>
-                  <option value="unreviewed">未筛选</option>
-                  <option value="keep">保留</option>
-                  <option value="maybe">待定</option>
-                  <option value="reject">淘汰</option>
-                  <option value="missing">缺失</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>编号</th>
-                    <th>文件名</th>
-                    <th>类型</th>
-                    <th>尺寸</th>
-                    <th>方向</th>
-                    <th>时长</th>
-                    <th>文件大小</th>
-                    <th>已用于</th>
-                  </tr>
-                </thead>
-                <tbody id="assetsTableBody"></tbody>
-              </table>
-              <div id="emptyAssets" class="empty">还没有扫描素材。</div>
-            </div>
-          </div>
-
-          <aside class="asset-preview-panel" aria-label="素材预览">
-            <div class="asset-preview-heading">
-              <h2>素材预览</h2>
-              <p id="assetPreviewPrompt">选择一个素材查看预览</p>
-            </div>
-
-            <div id="assetPreviewPlaceholder" class="asset-preview-placeholder">
-              <span>选择一个素材查看预览</span>
-            </div>
-
-            <section class="asset-preview-section">
-              <h3>元数据</h3>
-              <dl class="asset-preview-fields">
-                <div class="asset-preview-field-full">
-                  <dt>文件名</dt><dd id="assetPreviewFilename">—</dd>
-                </div>
-                <div><dt>类型</dt><dd id="assetPreviewType">—</dd></div>
-                <div><dt>时长</dt><dd id="assetPreviewDuration">—</dd></div>
-                <div><dt>尺寸</dt><dd id="assetPreviewDimensions">—</dd></div>
-                <div><dt>大小</dt><dd id="assetPreviewSize">—</dd></div>
-                <div><dt>可用状态</dt><dd id="assetPreviewAvailability">—</dd></div>
-              </dl>
-            </section>
-
-            <section class="asset-preview-section">
-              <div class="asset-ai-heading">
-                <h3>AI 分析</h3>
-                <span id="aiEnvironmentStatus" class="ai-environment-status">
-                  AI 环境：未检测
-                </span>
-              </div>
-              <div class="ai-environment-config">
-                <label>
-                  <span>MLX Python 路径</span>
-                  <input
-                    id="mlxPythonPathInput"
-                    type="text"
-                    placeholder="/Users/example/AI/mlx-env/venv/bin/python"
-                    autocomplete="off"
-                    spellcheck="false"
-                  >
-                </label>
-                <div class="ai-environment-controls">
-                  <button
-                    id="saveMlxPythonPathButton"
-                    class="button secondary ai-environment-button"
-                    type="button"
-                  >
-                    保存路径
-                  </button>
-                  <button
-                    id="checkAiEnvironmentButton"
-                    class="button ghost ai-environment-button"
-                    type="button"
-                  >
-                    检测 AI 环境
-                  </button>
-                </div>
-              </div>
-              <p id="aiEnvironmentDetails" class="ai-environment-details hidden"></p>
-              <div class="asset-ai-actions">
-                <button
-                  id="analyzeCurrentTextAssetButton"
-                  class="button secondary"
-                  type="button"
-                  disabled
-                >
-                  分析当前文本素材
-                </button>
-                <button
-                  id="analyzeCurrentImageAssetButton"
-                  class="button secondary"
-                  type="button"
-                  disabled
-                >
-                  分析当前图片素材
-                </button>
-                <span id="assetAiActionStatus" class="asset-ai-action-status" aria-live="polite"></span>
-              </div>
-              <div class="asset-ai-actions asset-ai-batch-actions">
-                <button
-                  id="analyzeUnanalyzedAssetsButton"
-                  class="button secondary"
-                  type="button"
-                  disabled
-                >
-                  分析未分析素材
-                </button>
-                <button
-                  id="analyzeKeptAssetsButton"
-                  class="button secondary"
-                  type="button"
-                  disabled
-                >
-                  分析保留素材
-                </button>
-                <span id="assetAiBatchStatus" class="asset-ai-action-status" aria-live="polite"></span>
-              </div>
-              <p id="assetAiEmpty" class="asset-ai-empty">选择素材后查看 AI 分析。</p>
-              <div id="assetAiContent" class="asset-ai-content hidden">
-                <p id="assetAiStale" class="asset-ai-stale hidden">
-                  素材已变化，建议重新分析
-                </p>
-                <dl class="asset-preview-fields asset-ai-fields">
-                  <div><dt>状态</dt><dd id="assetAiStatus">尚未分析</dd></div>
-                  <div><dt>模型</dt><dd id="assetAiModel">—</dd></div>
-                  <div class="asset-preview-field-full">
-                    <dt>摘要</dt><dd id="assetAiSummary">—</dd>
-                  </div>
-                  <div class="asset-preview-field-full">
-                    <dt>AI 标签</dt><dd id="assetAiTags">—</dd>
-                  </div>
-                  <div class="asset-preview-field-full">
-                    <dt>风险提示</dt><dd id="assetAiRisk">—</dd>
-                  </div>
-                  <div class="asset-preview-field-full">
-                    <dt>轻字幕建议</dt><dd id="assetAiCaptionIdeas">—</dd>
-                  </div>
-                  <div class="asset-preview-field-full">
-                    <dt>建议用途</dt><dd id="assetAiSuggestedUse">—</dd>
-                  </div>
-                  <div class="asset-preview-field-full">
-                    <dt>分析时间</dt><dd id="assetAiAnalyzedAt">—</dd>
-                  </div>
-                  <div class="asset-preview-field-full">
-                    <dt>错误信息</dt><dd id="assetAiError">—</dd>
-                  </div>
-                </dl>
-              </div>
-            </section>
-
-            <section class="asset-preview-section">
-              <h3>审核信息</h3>
-              <p id="assetReviewEmpty" class="asset-review-empty">选择素材后可编辑审核信息。</p>
-              <form id="assetReviewForm" class="asset-review-form hidden">
-                <div class="asset-review-grid">
-                  <label>
-                    <span>审核状态</span>
-                    <select id="assetReviewStatus">
-                      <option value="unreviewed">未筛选</option>
-                      <option value="keep">保留</option>
-                      <option value="maybe">待定</option>
-                      <option value="reject">淘汰</option>
-                    </select>
-                  </label>
-                  <label>
-                    <span>评分</span>
-                    <select id="assetReviewRating">
-                      <option value="0">0</option>
-                      <option value="1">1</option>
-                      <option value="2">2</option>
-                      <option value="3">3</option>
-                      <option value="4">4</option>
-                      <option value="5">5</option>
-                    </select>
-                  </label>
-                  <label class="asset-review-full">
-                    <span>标签</span>
-                    <input
-                      id="assetReviewTags"
-                      type="text"
-                      placeholder="例如：风景, 夜景, 旅行"
-                      autocomplete="off"
-                    >
-                  </label>
-                  <label class="asset-review-full">
-                    <span>备注</span>
-                    <textarea id="assetReviewNote" rows="4" placeholder="填写审核备注"></textarea>
-                  </label>
-                </div>
-                <div class="asset-review-actions">
-                  <button id="saveAssetReviewNoteButton" class="button secondary" type="submit">
-                    保存备注
-                  </button>
-                  <span id="assetReviewSaveStatus" class="asset-review-save-status" aria-live="polite"></span>
-                </div>
-              </form>
-            </section>
-          </aside>
-        </div>
-      </section>
-      </div>
-    </main>
+    </div>
 
     <div id="toast" class="toast hidden" role="status"></div>
+
+    <script src="../view-models/issue-center-view-model.js"></script>
+    <script src="../view-models/douyin-workflow-view-model.js"></script>
+    <script src="../view-models/workspace-view-model.js"></script>
+    <script src="../view-models/index.js"></script>
+    <script src="./modules/utils.js"></script>
+    <script src="./modules/state.js"></script>
+    <script src="./modules/router.js"></script>
+    <script src="./modules/ipc-client.js"></script>
+    <script src="./modules/components/dom.js"></script>
+    <script src="./modules/douyin/editor-core.js"></script>
+    <script src="./modules/app-data.js"></script>
+    <script src="./modules/catalog/library-page.js"></script>
+    <script src="./modules/workspace/result-playback.js"></script>
+    <script src="./modules/workspace/overview-page.js"></script>
+    <script src="./modules/workspace/main-film-page.js"></script>
+    <script src="./modules/douyin/douyin-page.js"></script>
+    <script src="./modules/review/review-page.js"></script>
+    <script src="./modules/assets/assets-page.js"></script>
+    <script src="./modules/outputs/outputs-page.js"></script>
+    <script src="./modules/pending/pending-page.js"></script>
+    <script src="./modules/workspace/settings-page.js"></script>
+    <script src="./modules/workspace/tasks-page.js"></script>
+    <script src="./modules/workspace/workspace-shell.js"></script>
+    <script src="./modules/shell.js"></script>
     <script src="./explanation-review-ui.js"></script>
+    <script src="./asset-view-model.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
