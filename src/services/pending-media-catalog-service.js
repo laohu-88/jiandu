@@ -134,6 +134,8 @@ function classifyEpisode(item) {
     if (item.latestTask.status === 'completed') return 'completed';
     if (item.latestTask.status === 'completed_with_warnings') return 'completed_with_warnings';
     if (item.latestTask.status === 'failed') return 'failed';
+    if (item.latestTask.status === 'agent_disconnected') return 'agent_disconnected';
+    if (item.latestTask.status === 'cancelled') return 'cancelled';
     if (item.latestTask.status === 'awaiting_user_send'
       || item.latestTask.status === 'ready'
       || item.latestTask.status === 'launching_codex'

@@ -78,7 +78,7 @@ Never mark failure as success.
 
 When the prompt contains a handoff task ID and an absolute task JSON path, this is a visible v3 → Codex production handoff:
 
-- Pass `--handoff-task "<task.json>"` to `prepare`, `validate-analysis`, `build`, and any later `verify` command.
+- Pass `--handoff-task "<task.json>"` and `--attempt-id "<attemptId>"` to `prepare`, `validate-analysis`, `build`, `handoff-update`, `handoff-complete`, and `handoff-return`. The attemptId comes from the compact prompt and task manifest; never reuse an old attempt after App 接管.
 - Use `handoff-update` at the real Codex-only stages `analyzing_media`, `planning_story`, `deciding_hyperframes`, and, when applicable, `designing_hyperframes` and `reviewing_hyperframes`. Record a short stage message and keep heartbeats current during long visual review.
 - Respect the task's `hyperframesMode`: `disabled` forbids generation; `auto` decides only after a truthful real-media first cut; `force-attempt` requires a serious design attempt but still rejects work that fails the quality gate.
 - Always record `hyperframesDecision`, `hyperframesReason`, the expression gap, whether ordinary editing/subtitles/transitions are sufficient, and the final quality review. Do not mark an enabled animation reviewed without viewing its rendered output.
@@ -88,8 +88,8 @@ When the prompt contains a handoff task ID and an absolute task JSON path, this 
 Example semantic updates:
 
 ```bash
-node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-update --handoff-task "<task.json>" --stage analyzing_media --message "正在查看全部图片预览和视频故事板" --json
-node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-update --handoff-task "<task.json>" --stage deciding_hyperframes --hyperframes-decision disabled --hyperframes-reason "真实素材与一条轻字幕已能清楚表达流程" --hyperframes-gap "无必须由动画补足的表达缺口" --json
+node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage analyzing_media --message "正在查看全部图片预览和视频故事板" --json
+node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage deciding_hyperframes --hyperframes-decision disabled --hyperframes-reason "真实素材与一条轻字幕已能清楚表达流程" --hyperframes-gap "无必须由动画补足的表达缺口" --json
 ```
 
 ## Workflow

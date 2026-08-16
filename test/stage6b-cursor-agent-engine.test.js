@@ -154,6 +154,8 @@ test('Cursor 交接包包含任务清单、路径、提示词、预期产物、�
   const plan = buildCursorLaunchPlan(task);
   assert.equal(plan.engine, 'cursor_agent');
   assert.ok(plan.openArgs.includes('--new-window'));
+  assert.ok(plan.openArgs.some((arg) => String(arg).includes('.cursor-package')));
+  assert.match(plan.windowTitleNeedle, /\.cursor-package$/);
   assert.match(plan.userInstruction, /提示词/);
 });
 

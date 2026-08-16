@@ -177,6 +177,8 @@ test('agent-first architecture keeps a single bridge and no local AI product sur
   for (const rel of [
     'src/services/agent-bridge-service.js',
     'src/services/agent-prompt-builder.js',
+    'src/services/agent-lifecycle-service.js',
+    'src/services/agent-runtime-service.js',
     'src/services/cursor-automation-service.js',
     'src/services/hotingest-adapter.js',
     'src/renderer/modules/workspace/edit-workspace.js',
@@ -194,6 +196,7 @@ test('agent-first architecture keeps a single bridge and no local AI product sur
   }
   const register = read('src/ipc/register.js');
   assert.doesNotMatch(register, /registerAiIpc|ai-ipc/);
+  assert.equal(fs.existsSync(path.join(ROOT, 'src/services/agent-lifecycle-service.js')), true);
   const promptBuilder = read('src/services/agent-prompt-builder.js');
   assert.match(promptBuilder, /buildCompactAgentPrompt/);
   assert.doesNotMatch(promptBuilder, /sharedEditingRulesText/);

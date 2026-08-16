@@ -4,10 +4,23 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
+const {
+  LIFECYCLE,
+  assertWriteAllowed,
+  canCancel,
+  createAttempt,
+  disconnectedCopy,
+  hydrateAttempts,
+  isTerminalStatus,
+  lifecycleOf,
+  reusableResultsFrom,
+} = require('./agent-lifecycle-service');
+
 const HANDOFF_SCHEMA_VERSION = 1;
 const HANDOFF_DIRNAME = 'handoffs';
 const SETTINGS_FILENAME = 'handoff-settings.json';
 const TERMINAL_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'cancelled']);
+const PARKED_STATUSES = new Set(['agent_disconnected']);
 const AGENT_ENGINES = Object.freeze({
   codex: Object.freeze({
     id: 'codex',
@@ -42,6 +55,7 @@ const HANDOFF_STATUSES = Object.freeze([
   'rendering_preview',
   'generating_fcpxml',
   'verifying',
+  'agent_disconnected',
   'completed',
   'completed_with_warnings',
   'failed',
@@ -68,6 +82,7 @@ const STAGE_LABELS = Object.freeze({
   rendering_preview: '正在生成粗剪',
   generating_fcpxml: '正在生成 FCPXML',
   verifying: '正在完整验证',
+  agent_disconnected: 'Agent 已停止，任务未完成',
   completed: '已完成',
   completed_with_warnings: '已完成但有警告',
   failed: '已失败',
@@ -174,7 +189,7 @@ async function readHandoffTask(taskPath) {
       code: 'HANDOFF_TASK_CORRUPT',
     });
   }
-  return validateTaskShape(parsed, resolved);
+  return hydrateAttempts(validateTaskShape(parsed, resolved));
 }
 
 async function appendEvent(taskPath, event) {
@@ -217,6 +232,7 @@ function buildCompactPromptFor(input) {
   const taskManifestPath = input.taskManifestPath || taskManifestPathFor(input.taskFilePath);
   return buildCompactAgentPrompt({
     taskId: input.taskId,
+    attemptId: input.attemptId || input.currentAttempt?.attemptId || null,
     skillPath,
     taskManifestPath,
     extraRequirements,
@@ -285,9 +301,17 @@ async function createHandoffTask(userDataPath, input) {
   const platformMode = input.platformMode === 'main' ? 'main' : 'douyin';
   const kind = input.kind === 'revise' ? 'revise' : 'edit';
   const taskManifestPath = taskManifestPathFor(filePath);
+  const attempt = createAttempt({
+    engine,
+    handoffRef: filePath,
+    generation: 1,
+    now,
+    status: LIFECYCLE.preparing,
+  });
   const prompt = buildAgentPrompt(engine, {
     sourceDirectory: source.sourceDirectoryRealPath,
     taskId,
+    attemptId: attempt.attemptId,
     taskFilePath: filePath,
     taskManifestPath,
     packageDir,
@@ -332,6 +356,12 @@ async function createHandoffTask(userDataPath, input) {
     skillPath: skillPathFor(input.appWorkspace),
     openedInFcpAt: null,
     cursorInject: null,
+    lifecycle: LIFECYCLE.preparing,
+    currentAttempt: attempt,
+    attempts: [attempt],
+    lastActiveStatus: null,
+    disconnectReason: null,
+    reusableResults: null,
     codexDeepLink: deepLink,
     cursorPackagePath: engine === 'cursor_agent' ? packageDir : null,
     resultProjectPath: null,
@@ -362,7 +392,7 @@ async function createHandoffTask(userDataPath, input) {
   return task;
 }
 
-function assertTransition(previous, next) {
+function assertTransition(previous, next, options = {}) {
   if (!STATUS_SET.has(next)) {
     throw Object.assign(new Error(`非法交接状态：${next}`), { code: 'INVALID_HANDOFF_STATUS' });
   }
@@ -373,6 +403,14 @@ function assertTransition(previous, next) {
     });
   }
   if (TERMINAL_STATUSES.has(next)) return;
+  if (next === 'agent_disconnected') return;
+  if (previous === 'agent_disconnected') {
+    if (options.revive === true || options.newAttempt === true) return;
+    throw Object.assign(new Error(`拒绝交接状态回退：${previous} → ${next}`), {
+      code: 'INVALID_HANDOFF_TRANSITION',
+    });
+  }
+  if (options.newAttempt === true && LAUNCH_STATUSES.has(next)) return;
   const previousIndex = HANDOFF_STATUSES.indexOf(previous);
   const nextIndex = HANDOFF_STATUSES.indexOf(next);
   if (nextIndex < previousIndex) {
@@ -385,14 +423,21 @@ function assertTransition(previous, next) {
 async function updateHandoffTask(taskPath, patch = {}) {
   const task = await readHandoffTask(taskPath);
   const nextStatus = patch.status || task.status;
-  assertTransition(task.status, nextStatus);
+  const hydrated = assertWriteAllowed(task, patch);
+  const newAttempt = patch.newAttempt === true;
+  const revive = hydrated.status === 'agent_disconnected'
+    && nextStatus !== 'agent_disconnected'
+    && !TERMINAL_STATUSES.has(nextStatus)
+    && !newAttempt;
+  assertTransition(hydrated.status, nextStatus, { newAttempt, revive });
   const now = new Date().toISOString();
-  const statusChanged = nextStatus !== task.status;
+  const statusChanged = nextStatus !== hydrated.status;
   const allowed = [
     'stageMessage', 'hyperframesDecision', 'hyperframesReason', 'hyperframesGap',
     'hyperframesQualityReview', 'resultProjectPath', 'resultProjectId', 'artifacts',
     'verification', 'warnings', 'errors', 'returnState', 'autoOpenFcp',
     'cursorInject', 'openedInFcpAt', 'extraRequirements',
+    'disconnectReason', 'lastActiveStatus', 'reusableResults',
   ];
   const cleanPatch = {};
   for (const key of allowed) {
@@ -402,30 +447,81 @@ async function updateHandoffTask(taskPath, patch = {}) {
     at: now,
     status: nextStatus,
     message: cleanPatch.stageMessage || STAGE_LABELS[nextStatus],
+    attemptId: hydrated.currentAttempt?.attemptId || null,
   };
+  const nextLifecycle = lifecycleOf(nextStatus);
+  const currentAttempt = hydrated.currentAttempt
+    ? {
+      ...hydrated.currentAttempt,
+      lastActivityAt: now,
+      status: nextLifecycle,
+      engine: hydrated.engine,
+      launchAttemptedAt: hydrated.currentAttempt.launchAttemptedAt || (
+        LAUNCH_STATUSES.has(nextStatus) ? now : hydrated.currentAttempt.launchAttemptedAt
+      ),
+      endedAt: (TERMINAL_STATUSES.has(nextStatus) || nextStatus === 'agent_disconnected')
+        ? (hydrated.currentAttempt.endedAt || now)
+        : null,
+      invalidatedAt: nextStatus === 'cancelled'
+        ? (hydrated.currentAttempt.invalidatedAt || now)
+        : hydrated.currentAttempt.invalidatedAt,
+      resultRef: {
+        ...(hydrated.currentAttempt.resultRef || {}),
+        analysisPath: cleanPatch.artifacts?.analysisPath
+          || hydrated.currentAttempt.resultRef?.analysisPath
+          || hydrated.artifacts?.analysisPath
+          || null,
+        manifestPath: cleanPatch.artifacts?.manifestPath
+          || hydrated.currentAttempt.resultRef?.manifestPath
+          || hydrated.artifacts?.manifestPath
+          || null,
+        projectPath: cleanPatch.resultProjectPath
+          || hydrated.currentAttempt.resultRef?.projectPath
+          || hydrated.resultProjectPath
+          || null,
+      },
+    }
+    : null;
+  const attempts = Array.isArray(hydrated.attempts) ? hydrated.attempts.map((item) => (
+    currentAttempt && item.attemptId === currentAttempt.attemptId ? currentAttempt : item
+  )) : (currentAttempt ? [currentAttempt] : []);
   const updated = {
-    ...task,
+    ...hydrated,
     ...cleanPatch,
     updatedAt: now,
     lastHeartbeatAt: now,
     status: nextStatus,
     stage: nextStatus,
     stageMessage: event.message,
-    stageStartedAt: statusChanged ? now : task.stageStartedAt,
-    startedAt: task.startedAt || (HANDOFF_STATUSES.indexOf(nextStatus)
+    stageStartedAt: statusChanged ? now : hydrated.stageStartedAt,
+    lifecycle: nextLifecycle,
+    currentAttempt,
+    attempts,
+    lastActiveStatus: nextStatus === 'agent_disconnected'
+      ? (cleanPatch.lastActiveStatus || hydrated.status)
+      : (nextStatus === 'cancelled' ? hydrated.lastActiveStatus : hydrated.lastActiveStatus),
+    startedAt: hydrated.startedAt || (HANDOFF_STATUSES.indexOf(nextStatus)
       >= HANDOFF_STATUSES.indexOf('scanning_media') ? now : null),
-    launchedAt: task.launchedAt || (
+    launchedAt: hydrated.launchedAt || (
       LAUNCH_STATUSES.has(nextStatus)
         || HANDOFF_STATUSES.indexOf(nextStatus) >= HANDOFF_STATUSES.indexOf('awaiting_user_send')
         ? now
         : null
     ),
-    completedAt: TERMINAL_STATUSES.has(nextStatus) ? (task.completedAt || now) : null,
-    eventHistory: [...task.eventHistory, event].slice(-200),
+    completedAt: TERMINAL_STATUSES.has(nextStatus) ? (hydrated.completedAt || now) : null,
+    eventHistory: [...hydrated.eventHistory, event].slice(-200),
   };
   validateTaskShape(updated, taskPath);
   await atomicWriteJson(taskPath, updated);
   await appendEvent(taskPath, event);
+  if (updated.taskManifestPath) {
+    try {
+      const { buildTaskManifest } = require('./agent-prompt-builder');
+      await atomicWriteJson(updated.taskManifestPath, buildTaskManifest(updated));
+    } catch {
+      // Manifest sync is best-effort; the task snapshot remains authoritative.
+    }
+  }
   if (updated.engine === 'cursor_agent' && updated.cursorPackagePath) {
     try {
       const { syncPackageStatusPointer } = require('./cursor-agent-handoff-service');
@@ -439,11 +535,157 @@ async function updateHandoffTask(taskPath, patch = {}) {
 
 async function heartbeatHandoffTask(taskPath, message = null) {
   const task = await readHandoffTask(taskPath);
-  if (TERMINAL_STATUSES.has(task.status)) return task;
+  if (TERMINAL_STATUSES.has(task.status) || PARKED_STATUSES.has(task.status)) return task;
   return updateHandoffTask(taskPath, {
     status: task.status,
     stageMessage: message || task.stageMessage,
+    attemptId: task.currentAttempt?.attemptId,
   });
+}
+
+async function cancelHandoffTask(taskPath) {
+  const task = await readHandoffTask(taskPath);
+  if (task.status === 'cancelled') return task;
+  if (!canCancel(task)) {
+    throw Object.assign(new Error('终态任务不能取消。'), { code: 'HANDOFF_TERMINAL_STATE' });
+  }
+  return updateHandoffTask(taskPath, {
+    status: 'cancelled',
+    stageMessage: '任务已取消。',
+    attemptId: task.currentAttempt?.attemptId,
+  });
+}
+
+async function markAgentDisconnected(taskPath, reason = 'process_missing') {
+  const task = await readHandoffTask(taskPath);
+  if (task.status === 'agent_disconnected') return task;
+  if (TERMINAL_STATUSES.has(task.status)) return task;
+  return updateHandoffTask(taskPath, {
+    status: 'agent_disconnected',
+    stageMessage: disconnectedCopy(task),
+    disconnectReason: reason,
+    lastActiveStatus: task.status,
+    attemptId: task.currentAttempt?.attemptId,
+  });
+}
+
+async function startAgentAttempt(taskPath, input = {}) {
+  const task = await readHandoffTask(taskPath);
+  if (TERMINAL_STATUSES.has(task.status)) {
+    throw Object.assign(new Error('终态任务不能再发起 Agent attempt。'), {
+      code: 'HANDOFF_TERMINAL_STATE',
+    });
+  }
+  const engine = normalizeEngine(input.engine || task.engine);
+  const now = new Date().toISOString();
+  const previous = task.currentAttempt || null;
+  const endedPrevious = previous ? {
+    ...previous,
+    endedAt: now,
+    invalidatedAt: now,
+    status: previous.status === 'canceled' ? 'canceled' : LIFECYCLE.agent_disconnected,
+  } : null;
+  const reusable = {
+    ...reusableResultsFrom(task),
+    ...(input.reusableResults || {}),
+  };
+  const attempt = createAttempt({
+    engine,
+    previousAttemptId: previous?.attemptId || null,
+    takeoverReason: input.reason || (
+      engine === task.engine ? 'resume_after_disconnect' : 'switch_engine'
+    ),
+    handoffRef: task.taskFilePath,
+    resultRef: {
+      analysisPath: reusable.analysisPath,
+      manifestPath: reusable.manifestPath,
+      projectPath: reusable.projectPath,
+    },
+    generation: (previous?.generation || 1) + 1,
+    now,
+    status: LIFECYCLE.handed_off,
+  });
+  const {
+    buildTaskManifest,
+    normalizeExtraRequirements,
+    skillPathFor,
+    taskManifestPathFor,
+  } = require('./agent-prompt-builder');
+  const extraRequirements = normalizeExtraRequirements(
+    input.extraRequirements == null ? task.extraRequirements : input.extraRequirements,
+  );
+  const taskManifestPath = task.taskManifestPath || taskManifestPathFor(task.taskFilePath);
+  const prompt = buildAgentPrompt(engine, {
+    sourceDirectory: task.sourceDirectoryRealPath || task.sourceDirectory,
+    taskId: task.taskId,
+    attemptId: attempt.attemptId,
+    taskFilePath: task.taskFilePath,
+    taskManifestPath,
+    packageDir: packageDirForTask(task.taskFilePath),
+    hyperframesMode: task.hyperframesMode,
+    extraRequirements,
+    appWorkspace: task.appWorkspace,
+  });
+  const launchStatus = AGENT_ENGINES[engine].launchStatus;
+  const attempts = [
+    ...(task.attempts || []).filter((item) => item.attemptId !== previous?.attemptId),
+    ...(endedPrevious ? [endedPrevious] : []),
+    attempt,
+  ];
+  const event = {
+    at: now,
+    status: launchStatus,
+    message: `${AGENT_ENGINES[engine].label} 接管开始`,
+    attemptId: attempt.attemptId,
+  };
+  const updated = {
+    ...task,
+    engine,
+    extraRequirements,
+    prompt,
+    taskManifestPath,
+    skillPath: skillPathFor(task.appWorkspace),
+    codexDeepLink: engine === 'codex' ? buildCodexDeepLink(prompt, task.appWorkspace) : null,
+    cursorPackagePath: engine === 'cursor_agent'
+      ? (task.cursorPackagePath || packageDirForTask(task.taskFilePath))
+      : task.cursorPackagePath,
+    cursorInject: null,
+    status: launchStatus,
+    stage: launchStatus,
+    stageMessage: event.message,
+    stageStartedAt: now,
+    updatedAt: now,
+    lastHeartbeatAt: now,
+    launchedAt: now,
+    completedAt: null,
+    lifecycle: LIFECYCLE.handed_off,
+    currentAttempt: { ...attempt, launchAttemptedAt: now },
+    attempts: attempts.map((item) => (
+      item.attemptId === attempt.attemptId ? { ...attempt, launchAttemptedAt: now } : item
+    )),
+    lastActiveStatus: task.lastActiveStatus || task.status,
+    disconnectReason: null,
+    reusableResults: reusable,
+    errors: [],
+    returnState: { requestedAt: null, acknowledgedAt: null },
+    eventHistory: [...(task.eventHistory || []), event].slice(-200),
+  };
+  validateTaskShape(updated, taskPath);
+  await atomicWriteJson(taskPath, updated);
+  await atomicWriteJson(taskManifestPath, buildTaskManifest(updated));
+  await appendEvent(taskPath, event);
+  if (engine === 'cursor_agent') {
+    const { writeCursorAgentPackage } = require('./cursor-agent-handoff-service');
+    const packageInfo = await writeCursorAgentPackage(updated);
+    updated.cursorPackagePath = packageInfo.packageDir;
+    updated.artifacts = {
+      ...(updated.artifacts || {}),
+      cursorPackagePath: packageInfo.packageDir,
+      analysisOutputPath: packageInfo.analysisOutputPath || updated.artifacts?.analysisOutputPath,
+    };
+    await atomicWriteJson(taskPath, updated);
+  }
+  return updated;
 }
 
 async function listHandoffTasks(userDataPath) {
@@ -506,6 +748,7 @@ module.exports = {
   HANDOFF_STATUSES,
   HYPERFRAMES_MODES,
   LAUNCH_STATUSES,
+  PARKED_STATUSES,
   STAGE_LABELS,
   TERMINAL_STATUSES,
   assertTransition,
@@ -515,16 +758,19 @@ module.exports = {
   buildCodexDeepLink,
   buildCodexPrompt,
   buildCursorAgentPrompt,
+  cancelHandoffTask,
   createHandoffTask,
   eventFilePath,
   heartbeatHandoffTask,
   listHandoffTasks,
   loadHandoffSettings,
+  markAgentDisconnected,
   normalizeEngine,
   packageDirForTask,
   readHandoffTask,
   readTaskEvents,
   saveHandoffSettings,
+  startAgentAttempt,
   taskFilePath,
   taskRoot,
   updateHandoffTask,

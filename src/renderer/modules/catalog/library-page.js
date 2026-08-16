@@ -73,7 +73,8 @@
           text('span', row.userStatusLabel || row.mainStatus, `status-pill status-${row.userStatus || 'waiting_ai'}`),
         );
         button.addEventListener('click', () => {
-          const phase = row.userStatus === 'processing' ? 'processing'
+          const phase = row.userStatus === 'processing' || row.userStatus === 'agent_disconnected'
+            ? 'processing'
             : row.userStatus === 'waiting_ai' ? 'brief'
               : 'results';
           data.openProject(row.projectPath);

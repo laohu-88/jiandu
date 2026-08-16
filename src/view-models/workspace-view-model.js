@@ -57,6 +57,7 @@ const USER_STATUS_LABELS = Object.freeze({
   results_ready: '结果已就绪',
   in_fcp: '已进入 FCP',
   blocked: '真正阻塞',
+  agent_disconnected: 'Agent 已停止',
 });
 
 function asArray(value) {
@@ -114,6 +115,9 @@ function deriveUserStatus({
     return 'blocked';
   }
   if (Number(issueSummary?.unresolvedBlocking || 0) > 0) return 'blocked';
+  if (task?.status === 'agent_disconnected' || task?.lifecycle === 'agent_disconnected') {
+    return 'agent_disconnected';
+  }
   if (task && ['completed', 'completed_with_warnings'].includes(task.status)) {
     return task.openedInFcpAt ? 'in_fcp' : 'results_ready';
   }
@@ -191,7 +195,16 @@ function deriveNextStep({
       actionId: 'resolveBlocker',
     };
   }
-  if (task && !['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(task.status)
+  if (task?.status === 'agent_disconnected' || task?.lifecycle === 'agent_disconnected') {
+    return {
+      label: '恢复 AI 任务',
+      page: 'processing',
+      reason: task.stageMessage || 'Agent 已停止，任务未完成。',
+      nav: 'library',
+      actionId: 'recoverAgent',
+    };
+  }
+  if (task && !['completed', 'completed_with_warnings', 'cancelled', 'failed', 'agent_disconnected'].includes(task.status)
     && !['draft', 'ready'].includes(task.status)) {
     return {
       label: '查看处理进度',

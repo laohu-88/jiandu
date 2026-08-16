@@ -31,6 +31,7 @@ const BOOLEAN_OPTIONS = new Set(['json', 'open-fcpxml', 'hyperframes', 'help']);
 const NON_FATAL_HANDOFF_COMMAND_ERRORS = new Set([
   'HANDOFF_TERMINAL_STATE',
   'INVALID_HANDOFF_TRANSITION',
+  'LATE_ATTEMPT_WRITE',
 ]);
 
 function shouldMarkHandoffFailed(error) {
@@ -81,15 +82,26 @@ function optionalJson(value, label) {
 function handoffReporter(options) {
   const taskPath = options['handoff-task'];
   if (!taskPath) return async () => {};
+  let attemptId = options['attempt-id'] || null;
   return async (status, stageMessage, patch = {}) => {
     const task = await readHandoffTask(taskPath);
+    if (!attemptId) attemptId = task.currentAttempt?.attemptId || null;
     if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)
       && task.status !== status) return task;
-    return updateHandoffTask(taskPath, {
-      status,
-      stageMessage,
-      ...patch,
-    });
+    if (task.currentAttempt?.attemptId && attemptId && task.currentAttempt.attemptId !== attemptId) {
+      return task;
+    }
+    try {
+      return await updateHandoffTask(taskPath, {
+        status,
+        stageMessage,
+        attemptId,
+        ...patch,
+      });
+    } catch (error) {
+      if (NON_FATAL_HANDOFF_COMMAND_ERRORS.has(error.code)) return task;
+      throw error;
+    }
   };
 }
 
@@ -140,8 +152,8 @@ function helpText() {
   video-skill douyin-approve --project <v3 正式项目目录> [--variant-id <ID>] [--approved-warnings <JSON 数组>] [--json]
   video-skill douyin-build --project <v3 正式项目目录> [--variant-id <ID>] [--json]
   video-skill douyin-verify --project <v3 正式项目目录> [--variant-id <ID>] [--json]
-  video-skill handoff-update --handoff-task <task.json> --stage <状态> [--message <说明>] [--hyperframes-decision <enabled|disabled|attempted-rejected>] [--hyperframes-reason <理由>] [--hyperframes-gap <表达缺口>] [--hyperframes-quality-review <复核结果>] [--json]
-  video-skill handoff-complete --handoff-task <task.json> --project <v3 正式项目目录> [--json]
+  video-skill handoff-update --handoff-task <task.json> [--attempt-id <attemptId>] --stage <状态> [--message <说明>] [--hyperframes-decision <enabled|disabled|attempted-rejected>] [--hyperframes-reason <理由>] [--hyperframes-gap <表达缺口>] [--hyperframes-quality-review <复核结果>] [--json]
+  video-skill handoff-complete --handoff-task <task.json> [--attempt-id <attemptId>] --project <v3 正式项目目录> [--json]
   video-skill handoff-return --handoff-task <task.json> [--json]
 
 CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。正式时间线默认使用生产规格，粗剪预览默认保持 640×360。由 v3 发起时，把 --handoff-task 传给 prepare、validate-analysis、build 和 verify。
@@ -419,8 +431,10 @@ async function execute(argv) {
   if (command === 'handoff-update') {
     const taskPath = required(options, 'handoff-task');
     const stage = required(options, 'stage');
+    const attemptId = options['attempt-id'] || null;
     const result = await updateHandoffTask(taskPath, {
       status: stage,
+      attemptId,
       stageMessage: options.message,
       hyperframesDecision: options['hyperframes-decision'],
       hyperframesReason: options['hyperframes-reason'],
@@ -435,6 +449,8 @@ async function execute(argv) {
     const taskPath = required(options, 'handoff-task');
     const projectPath = required(options, 'project');
     const task = await readHandoffTask(taskPath);
+    const attemptId = options['attempt-id']
+      || (task.currentAttempt?.generation > 1 ? null : task.currentAttempt?.attemptId);
     if (!task.hyperframesDecision || !task.hyperframesReason) {
       throw Object.assign(new Error('完成交接前必须记录 HyperFrames 决策与理由。'), {
         code: 'MISSING_HYPERFRAMES_DECISION',
@@ -455,6 +471,7 @@ async function execute(argv) {
     const status = warnings.length ? 'completed_with_warnings' : 'completed';
     const completed = await updateHandoffTask(taskPath, {
       status,
+      attemptId,
       stageMessage: warnings.length
         ? '正式项目已完成并通过验证，但存在需要确认的警告。'
         : '正式项目、粗剪、FCPXML、观看复核与完整验证均已完成。',
@@ -490,6 +507,7 @@ async function execute(argv) {
     }
     const result = await updateHandoffTask(taskPath, {
       status: task.status,
+      attemptId: task.currentAttempt?.attemptId,
       returnState: {
         ...(task.returnState || {}),
         requestedAt: new Date().toISOString(),
@@ -523,6 +541,7 @@ async function main() {
           && !['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)) {
           await updateHandoffTask(taskPath, {
             status: 'failed',
+            attemptId: task.currentAttempt?.attemptId,
             stageMessage: `处理失败：${error.message}`,
             errors: [{
               code: error.code || 'VIDEO_SKILL_FAILED',

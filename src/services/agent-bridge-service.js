@@ -5,15 +5,30 @@ const path = require('node:path');
 const { DEFAULT_PROJECT_ROOT } = require('../constants');
 const {
   AGENT_ENGINES,
+  cancelHandoffTask,
   createHandoffTask,
   listHandoffTasks,
+  markAgentDisconnected,
   readHandoffTask,
+  startAgentAttempt,
   updateHandoffTask,
 } = require('./handoff-task-service');
 const {
   continueBuildFromAnalysis,
   inspectAnalysisArtifacts,
 } = require('./cursor-agent-handoff-service');
+const {
+  LIFECYCLE,
+  canCancel,
+  engineSelectionLocked,
+  evaluateLiveness,
+  hydrateAttempts,
+  isTerminalStatus,
+  lifecycleOf,
+  processingViewModel,
+  recoveryActions,
+} = require('./agent-lifecycle-service');
+const { probeTaskRuntime } = require('./agent-runtime-service');
 
 const USER_STATUS = Object.freeze({
   waiting_ai: { id: 'waiting_ai', label: '等待 AI' },
@@ -21,26 +36,22 @@ const USER_STATUS = Object.freeze({
   results_ready: { id: 'results_ready', label: '结果已就绪' },
   in_fcp: { id: 'in_fcp', label: '已进入 FCP' },
   blocked: { id: 'blocked', label: '真正阻塞' },
+  agent_disconnected: { id: 'agent_disconnected', label: 'Agent 已停止' },
 });
-
-const PROCESSING_STATUSES = new Set([
-  'launching_codex', 'launching_cursor', 'awaiting_user_send',
-  'scanning_media', 'extracting_metadata', 'extracting_frames',
-  'analyzing_media', 'planning_story', 'analysis_complete',
-  'deciding_hyperframes', 'designing_hyperframes', 'rendering_hyperframes',
-  'reviewing_hyperframes', 'building_project', 'rendering_preview',
-  'generating_fcpxml', 'verifying',
-]);
 
 function userFacingStatus(task) {
   if (!task) return USER_STATUS.waiting_ai;
-  if (task.status === 'failed') return USER_STATUS.blocked;
-  if (task.status === 'cancelled') return USER_STATUS.waiting_ai;
-  if (task.status === 'completed' || task.status === 'completed_with_warnings') {
+  const lifecycle = lifecycleOf(task);
+  if (lifecycle === LIFECYCLE.failed) return USER_STATUS.blocked;
+  if (lifecycle === LIFECYCLE.canceled) return USER_STATUS.waiting_ai;
+  if (lifecycle === LIFECYCLE.agent_disconnected) return USER_STATUS.agent_disconnected;
+  if (lifecycle === LIFECYCLE.completed) {
     if (task.openedInFcpAt) return USER_STATUS.in_fcp;
     return USER_STATUS.results_ready;
   }
-  if (PROCESSING_STATUSES.has(task.status)) return USER_STATUS.processing;
+  if (lifecycle === LIFECYCLE.running || lifecycle === LIFECYCLE.handed_off) {
+    return USER_STATUS.processing;
+  }
   return USER_STATUS.waiting_ai;
 }
 
@@ -48,10 +59,35 @@ function blockingErrors(task) {
   return (task?.errors || []).filter((item) => item && item.message);
 }
 
+function matchTaskForSource(tasks, sourceDirectory) {
+  const resolved = path.resolve(String(sourceDirectory || ''));
+  return tasks
+    .filter((task) => path.resolve(task.sourceDirectoryRealPath || task.sourceDirectory || '') === resolved)
+    .sort((left, right) => Date.parse(right.updatedAt || 0) - Date.parse(left.updatedAt || 0))[0] || null;
+}
+
 async function createAgentTask(userDataPath, input) {
   const engine = input.engine || 'cursor_agent';
   if (!AGENT_ENGINES[engine]) {
     throw Object.assign(new Error(`不支持的剪辑引擎：${engine}`), { code: 'INVALID_AGENT_ENGINE' });
+  }
+  const listed = await listHandoffTasks(userDataPath);
+  const existing = matchTaskForSource(listed.tasks, input.sourceDirectory);
+  if (existing && !isTerminalStatus(existing.status)) {
+    const life = lifecycleOf(existing);
+    if (life === LIFECYCLE.agent_disconnected) {
+      return startAgentAttempt(existing.taskFilePath, {
+        engine,
+        reason: engine === existing.engine ? 'resume_after_disconnect' : 'switch_engine',
+        extraRequirements: input.extraRequirements,
+      });
+    }
+    if (life === LIFECYCLE.running || life === LIFECYCLE.handed_off) {
+      throw Object.assign(new Error('当前素材已有进行中的 AI 任务。请先取消或等待完成后重试。'), {
+        code: 'AGENT_TASK_IN_PROGRESS',
+        task: existing,
+      });
+    }
   }
   return createHandoffTask(userDataPath, {
     ...input,
@@ -71,6 +107,7 @@ async function autoContinueIfNeeded(taskPath) {
     return updateHandoffTask(taskPath, {
       status: 'failed',
       stageMessage: '分析结果未通过必要数据合同，无法继续。',
+      attemptId: task.currentAttempt?.attemptId,
       errors: [{
         code: 'AGENT_CONTRACT_INVALID',
         message: inspection.validation?.error?.message || 'manifest/analysis 缺失或无效',
@@ -121,6 +158,7 @@ async function finalizeAgentTask(taskPath) {
       const variant = await autoFinalizeDouyin(projectPath);
       task = await updateHandoffTask(taskPath, {
         status: task.status,
+        attemptId: task.currentAttempt?.attemptId,
         artifacts: {
           ...(task.artifacts || {}),
           douyinVariantId: variant.variantId,
@@ -133,6 +171,7 @@ async function finalizeAgentTask(taskPath) {
         task = await updateHandoffTask(taskPath, {
           status: 'failed',
           stageMessage: error.message,
+          attemptId: task.currentAttempt?.attemptId,
           errors: [{ code: error.code || 'DOUYIN_FINALIZE_FAILED', message: error.message, at: new Date().toISOString() }],
         }).catch(() => task);
         return { task, blocked: true, error };
@@ -142,22 +181,122 @@ async function finalizeAgentTask(taskPath) {
   return { task, blocked: false };
 }
 
-function matchTaskForSource(tasks, sourceDirectory) {
-  const resolved = path.resolve(String(sourceDirectory || ''));
-  return tasks
-    .filter((task) => path.resolve(task.sourceDirectoryRealPath || task.sourceDirectory || '') === resolved)
-    .sort((left, right) => Date.parse(right.updatedAt || 0) - Date.parse(left.updatedAt || 0))[0] || null;
+async function maybeCompleteFromExistingProject(task) {
+  if (isTerminalStatus(task.status) || !task.resultProjectPath) return null;
+  if (!['verifying', 'building_project', 'rendering_preview', 'generating_fcpxml', 'analysis_complete'].includes(task.status)
+    && lifecycleOf(task) !== LIFECYCLE.agent_disconnected) {
+    return null;
+  }
+  try {
+    const { verifyCodexVideoProject } = require('./codex-video-service');
+    const { readCodexProjectResult } = require('./codex-project-result-service');
+    const verification = await verifyCodexVideoProject(task.resultProjectPath);
+    if (!verification.ok) return null;
+    const result = await readCodexProjectResult(task.resultProjectPath);
+    const warnings = [...new Set([
+      ...(task.warnings || []),
+      ...(verification.warnings || []),
+      ...(result.verification.warnings || []),
+    ])];
+    const status = warnings.length ? 'completed_with_warnings' : 'completed';
+    const completed = await updateHandoffTask(task.taskFilePath, {
+      status,
+      attemptId: task.currentAttempt?.attemptId,
+      stageMessage: warnings.length
+        ? '已根据现有正式项目完成交接，但存在警告。'
+        : '已根据现有正式项目完成交接。',
+      resultProjectPath: result.project.path,
+      resultProjectId: result.project.name,
+      verification,
+      warnings,
+    });
+    return completed;
+  } catch {
+    return null;
+  }
 }
 
-async function recoverActiveTasks(userDataPath) {
+async function reconcileActiveTasks(userDataPath, options = {}) {
   const payload = await listHandoffTasks(userDataPath);
   const recovered = [];
-  for (const task of payload.tasks) {
-    if (task.status === 'analysis_complete' && !task.resultProjectPath) {
-      recovered.push(await finalizeAgentTask(task.taskFilePath));
+  const probe = options.probeTaskRuntime || probeTaskRuntime;
+  const now = options.now || Date.now();
+  const engineRuntime = new Map();
+  async function runtimeFor(task) {
+    if (probe !== probeTaskRuntime) {
+      return probe(task, { now, ...options.runtimeOptions });
+    }
+    const { probeAgentRuntime, attachResultEvidence, probeTaskWindow } = require('./agent-runtime-service');
+    const engine = task.engine === 'codex' ? 'codex' : 'cursor_agent';
+    if (!engineRuntime.has(engine)) {
+      engineRuntime.set(engine, probeAgentRuntime(engine, { now, ...options.runtimeOptions }));
+    }
+    const shared = await engineRuntime.get(engine);
+    const withResults = await attachResultEvidence(task, shared, now);
+    const windowProbe = await probeTaskWindow(task, {
+      ...(options.runtimeOptions || {}),
+      processes: shared.processes,
+    });
+    const sessionExists = engine === 'cursor_agent'
+      ? windowProbe.taskWindowExists === true
+      : withResults.processExists === true;
+    return { ...withResults, ...windowProbe, sessionExists };
+  }
+  for (const listed of payload.tasks) {
+    const task = hydrateAttempts(listed);
+    if (isTerminalStatus(task.status)) {
+      recovered.push({ task, action: 'none', blocked: task.status === 'failed' });
       continue;
     }
-    recovered.push({ task, blocked: task.status === 'failed' });
+    if (task.status === 'analysis_complete' && !task.resultProjectPath) {
+      const finalized = await finalizeAgentTask(task.taskFilePath);
+      recovered.push({
+        task: finalized.task,
+        action: 'finalize',
+        blocked: finalized.blocked === true,
+      });
+      continue;
+    }
+    const completedFromProject = await maybeCompleteFromExistingProject(task);
+    if (completedFromProject) {
+      recovered.push({ task: completedFromProject, action: 'complete_from_project', blocked: false });
+      continue;
+    }
+    const runtime = await runtimeFor(task);
+    const liveness = evaluateLiveness(task, runtime, now);
+    if (liveness.disconnected && task.status !== 'agent_disconnected') {
+      const fresh = await readHandoffTask(task.taskFilePath);
+      const freshRuntime = await runtimeFor(fresh);
+      const freshLiveness = evaluateLiveness(fresh, freshRuntime, Date.now());
+      if (!freshLiveness.disconnected) {
+        recovered.push({
+          task: fresh,
+          action: 'running',
+          blocked: false,
+          liveness: freshLiveness,
+          runtime: freshRuntime,
+        });
+        continue;
+      }
+      const disconnected = await markAgentDisconnected(task.taskFilePath, freshLiveness.reason);
+      recovered.push({
+        task: disconnected,
+        action: 'disconnected',
+        blocked: false,
+        liveness: freshLiveness,
+        runtime: freshRuntime,
+      });
+      continue;
+    }
+    recovered.push({
+      task,
+      action: task.status === 'agent_disconnected'
+        ? 'disconnected'
+        : (liveness.live ? 'running' : 'none'),
+      blocked: false,
+      liveness,
+      runtime,
+    });
   }
   return {
     tasks: payload.tasks,
@@ -166,15 +305,34 @@ async function recoverActiveTasks(userDataPath) {
   };
 }
 
+async function recoverActiveTasks(userDataPath, options = {}) {
+  return reconcileActiveTasks(userDataPath, options);
+}
+
+async function cancelAgentTask(taskPath) {
+  return cancelHandoffTask(taskPath);
+}
+
+async function takeoverAgentTask(taskPath, input = {}) {
+  return startAgentAttempt(taskPath, input);
+}
+
 module.exports = {
   USER_STATUS,
-  PROCESSING_STATUSES,
   autoContinueIfNeeded,
   autoFinalizeDouyin,
-  createAgentTask,
-  finalizeAgentTask,
-  matchTaskForSource,
-  recoverActiveTasks,
-  userFacingStatus,
   blockingErrors,
+  canCancel,
+  cancelAgentTask,
+  createAgentTask,
+  engineSelectionLocked,
+  finalizeAgentTask,
+  lifecycleOf,
+  matchTaskForSource,
+  processingViewModel,
+  recoverActiveTasks,
+  reconcileActiveTasks,
+  recoveryActions,
+  takeoverAgentTask,
+  userFacingStatus,
 };

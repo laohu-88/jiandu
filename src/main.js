@@ -3,6 +3,11 @@ const fs = require('node:fs/promises');
 const { watch } = require('node:fs');
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require('electron');
 
+if (!app) {
+  process.stderr.write('视频剪辑编排器 v3 需要在 Electron 主进程中启动。\n');
+  process.exit(1);
+}
+
 if (app && process.env.PLANNER_CDP_PORT) {
   app.commandLine.appendSwitch('remote-debugging-port', String(process.env.PLANNER_CDP_PORT));
 }
@@ -28,14 +33,18 @@ const {
   taskRoot,
   updateHandoffTask,
 } = require('./services/handoff-task-service');
-const { finalizeAgentTask, userFacingStatus } = require('./services/agent-bridge-service');
+const { lifecycleOf, reconcileActiveTasks, userFacingStatus } = require('./services/agent-bridge-service');
+const { LIFECYCLE } = require('./services/agent-lifecycle-service');
 const { createIpcHelpers } = require('./ipc/helpers');
 const { registerIpc } = require('./ipc/register');
 
 let mainWindow;
 const terminalTaskVersions = new Map();
+const progressTaskVersions = new Map();
 let handoffWatcher = null;
 let handoffRefreshTimer = null;
+let livenessTimer = null;
+let reconcileInFlight = null;
 const protocolQueue = new ProtocolQueue();
 let appReady = false;
 
@@ -76,20 +85,32 @@ function createWindow() {
   return mainWindow;
 }
 
-async function focusPlannerOnTask(task) {
+async function focusPlannerOnTask(task, options = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   if (mainWindow.webContents.isLoadingMainFrame()) {
     await new Promise((resolve) => mainWindow.webContents.once('did-finish-load', resolve));
   }
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-  app.focus({ steal: true });
-  mainWindow.webContents.send('handoff:progress', {
-    task,
-    userStatus: userFacingStatus(task),
-  });
-  if (TERMINAL_STATUSES.has(task.status) || task.status === 'analysis_complete' || task.status === 'failed') {
+  if (options.activate !== false) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    app.focus({ steal: true });
+  }
+  const lifecycle = lifecycleOf(task);
+  const progressVersion = `${task.taskId}:${task.currentAttempt?.attemptId || ''}:${task.status}:${task.updatedAt}`;
+  if (progressTaskVersions.get(task.taskId) !== progressVersion) {
+    progressTaskVersions.set(task.taskId, progressVersion);
+    mainWindow.webContents.send('handoff:progress', {
+      task,
+      userStatus: userFacingStatus(task),
+      lifecycle,
+    });
+  }
+  const shouldReturn = TERMINAL_STATUSES.has(task.status)
+    || task.status === 'analysis_complete'
+    || task.status === 'failed'
+    || lifecycle === LIFECYCLE.agent_disconnected;
+  if (shouldReturn) {
     mainWindow.webContents.send('handoff:terminal', task);
   }
 }
@@ -122,25 +143,41 @@ function queueReturnUrl(rawUrl) {
   }
 }
 
+async function reconcileAndNotify(options = {}) {
+  if (reconcileInFlight) return reconcileInFlight;
+  reconcileInFlight = (async () => {
+    const payload = await reconcileActiveTasks(app.getPath('userData'));
+    for (const item of payload.recovered) {
+      const task = item.task;
+      if (!task) continue;
+      if (item.action === 'disconnected' || item.action === 'finalize' || item.action === 'complete_from_project') {
+        await focusPlannerOnTask(task);
+        continue;
+      }
+      if (item.action === 'running' && options.includeExisting) {
+        await focusPlannerOnTask(task, { activate: false });
+      }
+    }
+    return payload;
+  })().finally(() => {
+    reconcileInFlight = null;
+  });
+  return reconcileInFlight;
+}
+
 async function refreshTerminalHandoffs(options = {}) {
+  await reconcileAndNotify(options).catch(() => {});
   const payload = await listHandoffTasks(app.getPath('userData'));
   for (const task of payload.tasks) {
-    if (task.status === 'analysis_complete' && !task.resultProjectPath) {
-      const finalized = await finalizeAgentTask(task.taskFilePath).catch((error) => ({
-        task,
-        blocked: true,
-        error,
-      }));
-      if (finalized?.task) await focusPlannerOnTask(finalized.task);
-      continue;
-    }
     if (!TERMINAL_STATUSES.has(task.status)) {
       if (options.includeExisting && !['draft', 'ready', 'cancelled'].includes(task.status)) {
-        await focusPlannerOnTask(task);
+        await focusPlannerOnTask(task, {
+          activate: task.status === 'agent_disconnected',
+        });
       }
       continue;
     }
-    const version = `${task.updatedAt}:${task.returnState?.requestedAt || ''}`;
+    const version = `${task.currentAttempt?.attemptId || ''}:${task.updatedAt}:${task.returnState?.requestedAt || ''}`;
     const requestedAt = Date.parse(task.returnState?.requestedAt || 0) || 0;
     const acknowledgedAt = Date.parse(task.returnState?.acknowledgedAt || 0) || 0;
     if (acknowledgedAt >= requestedAt && acknowledgedAt > 0) {
@@ -153,6 +190,7 @@ async function refreshTerminalHandoffs(options = {}) {
     const acknowledgmentTime = new Date().toISOString();
     const acknowledged = await updateHandoffTask(task.taskFilePath, {
       status: task.status,
+      attemptId: task.currentAttempt?.attemptId,
       returnState: { ...(task.returnState || {}), acknowledgedAt: acknowledgmentTime },
     }).catch(() => {});
     if (acknowledged) {
@@ -167,6 +205,7 @@ async function refreshTerminalHandoffs(options = {}) {
         await openInFinalCut(validated.result.artifacts.fcpxml.path).catch(async (error) => {
           await updateHandoffTask(task.taskFilePath, {
             status: task.status,
+            attemptId: task.currentAttempt?.attemptId,
             errors: [...(task.errors || []), {
               code: 'FINAL_CUT_OPEN_FAILED',
               message: error.message,
@@ -187,6 +226,13 @@ async function startHandoffWatcher() {
     clearTimeout(handoffRefreshTimer);
     handoffRefreshTimer = setTimeout(() => refreshTerminalHandoffs().catch(() => {}), 150);
   });
+}
+
+function startLivenessMonitor() {
+  clearInterval(livenessTimer);
+  livenessTimer = setInterval(() => {
+    reconcileAndNotify().catch(() => {});
+  }, 4000);
 }
 
 app.setName(APP_NAME);
@@ -230,6 +276,7 @@ app.whenReady().then(async () => {
   });
   createWindow();
   startHandoffWatcher().catch(() => {});
+  startLivenessMonitor();
   await protocolQueue.drain(handleReturnProtocol).catch(() => {});
 
   app.on('activate', () => {
@@ -244,4 +291,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   handoffWatcher?.close();
   clearTimeout(handoffRefreshTimer);
+  clearInterval(livenessTimer);
 });

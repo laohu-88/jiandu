@@ -7,10 +7,12 @@ const {
 const { DEFAULT_PENDING_ROOT } = require('../services/pending-media-catalog-service');
 const {
   assertUserDataTask,
+  cancelHandoffTask,
   createHandoffTask,
   listHandoffTasks,
   loadHandoffSettings,
   saveHandoffSettings,
+  startAgentAttempt,
   updateHandoffTask,
 } = require('../services/handoff-task-service');
 const {
@@ -21,8 +23,95 @@ const {
   markAnalysisComplete,
 } = require('../services/cursor-agent-handoff-service');
 const { launchAndInjectCursor, checkAccessibilityPermission } = require('../services/cursor-automation-service');
-const { createAgentTask } = require('../services/agent-bridge-service');
+const {
+  createAgentTask,
+  processingViewModel,
+  reconcileActiveTasks,
+} = require('../services/agent-bridge-service');
 const { scanCanonicalInventory } = require('../services/hotingest-adapter');
+
+async function launchCodexTask(shell, task) {
+  if ((task.engine || 'codex') !== 'codex') {
+    throw new Error('当前任务不是 Codex 引擎任务。');
+  }
+  const attemptId = task.currentAttempt?.attemptId;
+  const launching = await updateHandoffTask(task.taskFilePath, {
+    status: 'launching_codex',
+    attemptId,
+    stageMessage: '正在使用官方深链接打开 Codex。',
+  });
+  try {
+    await shell.openExternal(launching.codexDeepLink, { activate: true });
+    return updateHandoffTask(task.taskFilePath, {
+      status: 'awaiting_user_send',
+      attemptId,
+      stageMessage: 'Codex 已打开并预填提示词。',
+    });
+  } catch (error) {
+    await updateHandoffTask(task.taskFilePath, {
+      status: 'launching_codex',
+      attemptId,
+      stageMessage: `Codex 深链接打开失败：${error.message}`,
+      errors: [{ code: 'CODEX_DEEP_LINK_FAILED', message: error.message, at: new Date().toISOString() }],
+    });
+    throw error;
+  }
+}
+
+async function launchCursorTask(clipboard, task, options = {}) {
+  if (task.engine !== 'cursor_agent') {
+    throw new Error('当前任务不是 Cursor 引擎任务。');
+  }
+  const attemptId = task.currentAttempt?.attemptId;
+  const plan = buildCursorLaunchPlan(task);
+  await updateHandoffTask(task.taskFilePath, {
+    status: 'launching_cursor',
+    attemptId,
+    stageMessage: '正在打开 Cursor，并放入正式任务提示词。',
+  });
+  try {
+    const inject = await launchAndInjectCursor({
+      openArgs: plan.openArgs,
+      prompt: task.prompt,
+      verifyNeedle: attemptId || task.taskId,
+      clipboard,
+      inject: true,
+      submit: options.submit !== false,
+      windowTitleNeedle: plan.windowTitleNeedle,
+    });
+    const verified = inject.verified === true;
+    const message = verified
+      ? (inject.submitted
+        ? 'Cursor 已打开，正式提示词已放入输入框并已启动 Agent。'
+        : 'Cursor 已打开，正式提示词已放入输入框。')
+      : inject.granted === false
+        ? inject.guidance || inject.message
+        : inject.message || plan.userInstruction;
+    return updateHandoffTask(task.taskFilePath, {
+      status: verified ? 'scanning_media' : 'awaiting_user_send',
+      attemptId,
+      stageMessage: message,
+      cursorInject: {
+        launched: inject.launched === true,
+        injected: inject.injected === true,
+        verified,
+        submitted: inject.submitted === true,
+        code: inject.code || null,
+        message,
+        guidance: inject.guidance || null,
+        preview: inject.preview || null,
+      },
+    });
+  } catch (error) {
+    await updateHandoffTask(task.taskFilePath, {
+      status: 'launching_cursor',
+      attemptId,
+      stageMessage: `打开 Cursor 失败：${error.message}`,
+      errors: [{ code: 'CURSOR_LAUNCH_FAILED', message: error.message, at: new Date().toISOString() }],
+    });
+    throw error;
+  }
+}
 
 function registerHandoffIpc(ctx) {
   const {
@@ -73,72 +162,12 @@ function registerHandoffIpc(ctx) {
 
   ipcMain.handle('handoff:launch-codex', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
-    if ((task.engine || 'codex') !== 'codex') {
-      throw new Error('当前任务不是 Codex 引擎任务。');
-    }
-    const launching = await updateHandoffTask(task.taskFilePath, {
-      status: 'launching_codex',
-      stageMessage: '正在使用官方深链接打开 Codex。',
-    });
-    try {
-      await shell.openExternal(launching.codexDeepLink, { activate: true });
-      return updateHandoffTask(task.taskFilePath, {
-        status: 'awaiting_user_send',
-        stageMessage: 'Codex 已打开并预填提示词。',
-      });
-    } catch (error) {
-      await updateHandoffTask(task.taskFilePath, {
-        status: 'launching_codex',
-        stageMessage: `Codex 深链接打开失败：${error.message}`,
-        errors: [{ code: 'CODEX_DEEP_LINK_FAILED', message: error.message, at: new Date().toISOString() }],
-      });
-      throw error;
-    }
+    return launchCodexTask(shell, task);
   });
 
   ipcMain.handle('handoff:launch-cursor', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
-    if (task.engine !== 'cursor_agent') {
-      throw new Error('当前任务不是 Cursor 引擎任务。');
-    }
-    const plan = buildCursorLaunchPlan(task);
-    await updateHandoffTask(task.taskFilePath, {
-      status: 'launching_cursor',
-      stageMessage: '正在打开 Cursor，并放入正式任务提示词。',
-    });
-    try {
-      const inject = await launchAndInjectCursor({
-        openArgs: plan.openArgs,
-        prompt: task.prompt,
-        verifyNeedle: task.taskId,
-        clipboard,
-        inject: true,
-      });
-      const message = inject.verified
-        ? 'Cursor 已打开，正式提示词已放入输入框。'
-        : inject.granted === false
-          ? inject.guidance || inject.message
-          : inject.message || plan.userInstruction;
-      return updateHandoffTask(task.taskFilePath, {
-        status: 'awaiting_user_send',
-        stageMessage: message,
-        cursorInject: {
-          launched: inject.launched === true,
-          injected: inject.injected === true,
-          verified: inject.verified === true,
-          code: inject.code || null,
-          message,
-          guidance: inject.guidance || null,
-        },
-      });
-    } catch (error) {
-      await updateHandoffTask(task.taskFilePath, {
-        status: 'launching_cursor',
-        stageMessage: `打开 Cursor 失败：${error.message}`,
-        errors: [{ code: 'CURSOR_LAUNCH_FAILED', message: error.message, at: new Date().toISOString() }],
-      });
-      throw error;
-    }
+    return launchCursorTask(clipboard, task);
   });
 
   ipcMain.handle('handoff:check-accessibility', () => checkAccessibilityPermission());
@@ -231,13 +260,31 @@ function registerHandoffIpc(ctx) {
 
   ipcMain.handle('handoff:cancel', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
-    if (!['draft', 'ready', 'launching_codex', 'launching_cursor', 'awaiting_user_send'].includes(task.status)) {
-      throw new Error('只有尚未进入生产的交接任务可以取消。');
-    }
-    return updateHandoffTask(task.taskFilePath, {
-      status: 'cancelled',
-      stageMessage: '交接任务已取消。',
+    return cancelHandoffTask(task.taskFilePath);
+  });
+
+  ipcMain.handle('handoff:takeover', async (_event, args) => {
+    const task = await assertUserDataTask(app.getPath('userData'), args?.taskPath);
+    const engine = args?.engine === 'codex' ? 'codex' : 'cursor_agent';
+    const updated = await startAgentAttempt(task.taskFilePath, {
+      engine,
+      reason: args?.reason || (engine === task.engine ? 'resume_after_disconnect' : 'switch_engine'),
+      extraRequirements: args?.extraRequirements,
     });
+    if (updated.engine === 'codex') return launchCodexTask(shell, updated);
+    return launchCursorTask(clipboard, updated);
+  });
+
+  ipcMain.handle('handoff:reconcile', async () => {
+    const payload = await reconcileActiveTasks(app.getPath('userData'));
+    return {
+      ...payload,
+      views: payload.recovered.map((item) => ({
+        task: item.task,
+        action: item.action,
+        view: processingViewModel(item.task),
+      })),
+    };
   });
 
   ipcMain.handle('handoff:activate-codex', async (_event, taskPath) => {
@@ -252,9 +299,10 @@ function registerHandoffIpc(ctx) {
     await launchAndInjectCursor({
       openArgs: plan.openArgs,
       prompt: task.prompt,
-      verifyNeedle: task.taskId,
+      verifyNeedle: task.currentAttempt?.attemptId || task.taskId,
       clipboard,
       inject: false,
+      windowTitleNeedle: plan.windowTitleNeedle,
     });
     return { activated: true };
   });
@@ -285,4 +333,4 @@ function registerHandoffIpc(ctx) {
   });
 }
 
-module.exports = { registerHandoffIpc };
+module.exports = { registerHandoffIpc, launchCodexTask, launchCursorTask };

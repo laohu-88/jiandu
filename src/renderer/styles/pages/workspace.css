@@ -25,6 +25,11 @@
   align-items: center;
 }
 
+.workspace-header-meta .status-pill:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .extra-requirements {
   display: flex;
   flex-direction: column;

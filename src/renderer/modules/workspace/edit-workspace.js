@@ -22,14 +22,23 @@
         data.toast('没有可交接的素材目录。', true);
         return;
       }
+      const current = snap.runningOverlays?.handoffTask;
+      if (current && ['handed_off', 'running'].includes(current.lifecycle)) {
+        data.toast('当前任务仍在处理中。请先取消或等待完成。', true);
+        return;
+      }
       try {
+        if (current?.status === 'agent_disconnected') {
+          await takeoverTask(current, snap.route.engine || current.engine, 'resume_after_disconnect', extraRequirements);
+          return;
+        }
         const created = await window.plannerApi.startEditHandoff({
           sourceDirectory,
           engine: snap.route.engine || 'cursor_agent',
           platformMode: snap.route.platformMode || 'douyin',
           extraRequirements: extraRequirements == null ? '' : String(extraRequirements),
           kind,
-          parentTaskId: snap.runningOverlays?.handoffTask?.taskId || null,
+          parentTaskId: current?.taskId || null,
           previousProjectPath: snap.route.projectPath || null,
         });
         const task = created.task || created;
@@ -40,6 +49,7 @@
           sessionOpen: true,
           workspacePhase: 'processing',
           projectPage: 'processing',
+          engine: task.engine || snap.route.engine,
           runningTask: { id: task.taskId, label: task.stageMessage },
         });
         const launched = task.engine === 'codex'
@@ -50,8 +60,57 @@
         });
         if (launched.cursorInject?.granted === false) {
           data.toast(launched.cursorInject.guidance || '需要辅助功能权限才能放入提示词', true);
+        } else if (launched.cursorInject && launched.cursorInject.verified !== true) {
+          data.toast(launched.cursorInject.message || '提示词未能验证放入 Cursor 输入框', true);
         } else {
           data.toast(task.engine === 'codex' ? '已打开 Codex' : '已打开 Cursor');
+        }
+      } catch (error) {
+        data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
+      }
+    }
+
+    async function cancelTask(task) {
+      if (!task?.taskFilePath) return;
+      try {
+        const cancelled = await window.plannerApi.cancelHandoffTask(task.taskFilePath);
+        data.patch({
+          runningOverlays: { ...data.get().runningOverlays, handoffTask: cancelled },
+        });
+        data.routeStore.set({
+          workspacePhase: 'brief',
+          projectPage: 'brief',
+          engine: data.get().route.engine,
+        });
+        data.toast('任务已取消');
+      } catch (error) {
+        data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
+      }
+    }
+
+    async function takeoverTask(task, engine, reason, extraRequirements) {
+      if (!task?.taskFilePath) return;
+      try {
+        const launched = await window.plannerApi.takeoverHandoffTask({
+          taskPath: task.taskFilePath,
+          engine,
+          reason,
+          extraRequirements,
+        });
+        data.patch({
+          runningOverlays: { ...data.get().runningOverlays, handoffTask: launched },
+        });
+        data.routeStore.set({
+          sessionOpen: true,
+          workspacePhase: 'processing',
+          projectPage: 'processing',
+          engine,
+          runningTask: { id: launched.taskId, label: launched.stageMessage },
+        });
+        if (launched.cursorInject?.verified === false) {
+          data.toast(launched.cursorInject.message || '提示词未能验证放入 Cursor 输入框', true);
+        } else {
+          data.toast(engine === 'codex' ? '已改用 Codex' : '已改用 Cursor');
         }
       } catch (error) {
         data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
@@ -110,39 +169,65 @@
       if ((snap.route.workspacePhase || snap.route.projectPage) !== 'processing') return;
       processing.replaceChildren();
       const task = snap.runningOverlays?.handoffTask;
+      const disconnected = task?.status === 'agent_disconnected' || task?.lifecycle === 'agent_disconnected';
+      const engine = task?.engine === 'codex' ? 'codex' : 'cursor_agent';
+      const title = disconnected
+        ? (engine === 'codex' ? 'Codex 已停止，任务未完成' : 'Cursor 已停止，任务未完成')
+        : (engine === 'codex' ? 'Codex 正在处理' : 'Cursor 正在处理');
       processing.append(
-        text('h3', task?.engine === 'codex' ? 'Codex 正在处理' : 'Cursor 正在处理'),
-        text('p', task?.stageMessage || '已交接，等待 Agent 返回。', 'muted'),
+        text('h3', title),
+        text('p', task?.stageMessage || (disconnected ? title : '已交接，等待 Agent 返回。'), 'muted'),
       );
-      const status = document.createElement('ol');
-      status.className = 'process-steps';
-      [
-        ['已交接', true],
-        ['正在分析', /analyz|planning|extract|scanning/i.test(task?.status || '')],
-        ['正在生成', /build|render|generat|verif/i.test(task?.status || '')],
-        ['已完成', ['completed', 'completed_with_warnings'].includes(task?.status)],
-      ].forEach(([label, on]) => {
-        const item = text('li', label, on ? 'on' : '');
-        status.appendChild(item);
-      });
-      processing.appendChild(status);
+      if (!disconnected) {
+        const status = document.createElement('ol');
+        status.className = 'process-steps';
+        [
+          ['已交接', true],
+          ['正在分析', /analyz|planning|extract|scanning/i.test(task?.status || '')],
+          ['正在生成', /build|render|generat|verif/i.test(task?.status || '')],
+          ['已完成', ['completed', 'completed_with_warnings'].includes(task?.status)],
+        ].forEach(([label, on]) => {
+          const item = text('li', label, on ? 'on' : '');
+          status.appendChild(item);
+        });
+        processing.appendChild(status);
+      }
       const actions = document.createElement('div');
       actions.className = 'result-actions';
-      const reopen = text('button', task?.engine === 'codex' ? '重新打开 Codex' : '重新打开 Agent', 'button secondary');
-      reopen.type = 'button';
-      reopen.addEventListener('click', async () => {
-        if (!task) return;
-        if (task.engine === 'codex') await window.plannerApi.activateCodexHandoff(task.taskFilePath);
-        else await window.plannerApi.activateCursorHandoff(task.taskFilePath);
-      });
-      const cancel = text('button', '取消', 'button ghost');
-      cancel.type = 'button';
-      cancel.addEventListener('click', async () => {
-        if (!task) return;
-        await window.plannerApi.cancelHandoffTask(task.taskFilePath);
-        data.routeStore.set({ workspacePhase: 'brief', projectPage: 'brief' });
-      });
-      actions.append(reopen, cancel);
+      if (disconnected) {
+        const continueSame = text('button', engine === 'codex' ? '继续使用 Codex' : '继续使用 Cursor', 'button primary');
+        continueSame.type = 'button';
+        continueSame.addEventListener('click', () => takeoverTask(
+          task,
+          engine,
+          'resume_after_disconnect',
+          snap.route.extraRequirements,
+        ));
+        const switchEngine = text('button', engine === 'codex' ? '改用 Cursor' : '改用 Codex', 'button secondary');
+        switchEngine.type = 'button';
+        switchEngine.addEventListener('click', () => takeoverTask(
+          task,
+          engine === 'codex' ? 'cursor_agent' : 'codex',
+          'switch_engine',
+          snap.route.extraRequirements,
+        ));
+        const cancel = text('button', '取消任务', 'button ghost');
+        cancel.type = 'button';
+        cancel.addEventListener('click', () => cancelTask(task));
+        actions.append(continueSame, switchEngine, cancel);
+      } else {
+        const reopen = text('button', engine === 'codex' ? '重新打开 Codex' : '重新打开 Agent', 'button secondary');
+        reopen.type = 'button';
+        reopen.addEventListener('click', async () => {
+          if (!task) return;
+          if (task.engine === 'codex') await window.plannerApi.activateCodexHandoff(task.taskFilePath);
+          else await window.plannerApi.activateCursorHandoff(task.taskFilePath);
+        });
+        const cancel = text('button', '取消任务', 'button ghost');
+        cancel.type = 'button';
+        cancel.addEventListener('click', () => cancelTask(task));
+        actions.append(reopen, cancel);
+      }
       processing.appendChild(actions);
     }
 

@@ -31,7 +31,15 @@ draft → ready → launching_codex | launching_cursor → awaiting_user_send
 → completed | completed_with_warnings | failed | cancelled
 ```
 
-`analysis_complete` 表示分析结果已通过协议校验，App 可继续构建；Cursor Agent 默认在此回流。`cancelled` 只允许在未进入生产时使用。运行中超过两分钟无心跳只显示“可能已暂停、等待审批或状态未知”，不自动判失败。
+`analysis_complete` 表示分析结果已通过协议校验，App 可继续构建；Cursor Agent 默认在此回流。
+
+用户可见生命周期：
+
+```text
+preparing → handed_off → running → completed | failed | canceled | agent_disconnected
+```
+
+内部阶段可以更细，但 `running` 必须有进程/心跳/结果写回等现场证据，不能只凭历史状态文件成立。Agent 进程消失、会话无法继续或心跳超出约 120 秒窗口后，任务转为 `agent_disconnected`，不标记失败或成功。未终态任务始终可以取消。同一任务允许多次 Agent attempt；旧 attempt 的迟到回写不得覆盖当前 attempt。`agent_disconnected` 可在当前项目恢复：继续原 Agent、改用另一 Agent，或取消。
 
 ## CLI 协作
 

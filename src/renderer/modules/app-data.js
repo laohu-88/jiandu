@@ -402,7 +402,34 @@
       data.runningOverlays.handoffTask = task;
       const failed = task.status === 'failed';
       const ready = task.status === 'completed' || task.status === 'completed_with_warnings';
+      const cancelled = task.status === 'cancelled';
+      const disconnected = task.status === 'agent_disconnected' || task.lifecycle === 'agent_disconnected';
       const route = routeStore.get();
+      if (cancelled) {
+        routeStore.set({
+          sessionOpen: true,
+          sourceDirectory: task.sourceDirectory || route.sourceDirectory,
+          workspacePhase: 'brief',
+          projectPage: 'brief',
+          engine: task.engine || route.engine,
+          error: null,
+        });
+        return notify();
+      }
+      if (disconnected) {
+        routeStore.set({
+          sessionOpen: true,
+          nav: 'library',
+          sourceDirectory: task.sourceDirectory,
+          projectPath: task.resultProjectPath || route.projectPath || null,
+          workspacePhase: 'processing',
+          projectPage: 'processing',
+          engine: task.engine || route.engine,
+          platformMode: task.platformMode || 'douyin',
+          error: null,
+        });
+        return notify();
+      }
       if (!route.sessionOpen && !failed && !ready && task.status !== 'analysis_complete') {
         return notify();
       }
@@ -436,12 +463,21 @@
     function handleAgentProgress(payload) {
       const task = payload?.task || payload;
       if (!task) return notify();
+      const previous = data.runningOverlays.handoffTask;
+      if (previous?.currentAttempt?.attemptId
+        && task.currentAttempt?.attemptId
+        && previous.currentAttempt.attemptId !== task.currentAttempt.attemptId
+        && Date.parse(task.updatedAt || 0) < Date.parse(previous.updatedAt || 0)) {
+        return notify();
+      }
       data.runningOverlays.handoffTask = task;
-      if (routeStore.get().sessionOpen) {
+      if (routeStore.get().sessionOpen || task.status === 'agent_disconnected') {
         const terminal = ['completed', 'completed_with_warnings', 'failed'].includes(task.status);
+        const cancelled = task.status === 'cancelled';
         routeStore.set({
-          workspacePhase: terminal ? 'results' : 'processing',
-          projectPage: terminal ? 'results' : 'processing',
+          workspacePhase: cancelled ? 'brief' : (terminal ? 'results' : 'processing'),
+          projectPage: cancelled ? 'brief' : (terminal ? 'results' : 'processing'),
+          engine: task.engine || routeStore.get().engine,
         });
       }
       return notify();
@@ -449,14 +485,21 @@
 
     async function recoverAgentSession() {
       try {
+        if (window.plannerApi?.reconcileHandoffTasks) {
+          await window.plannerApi.reconcileHandoffTasks();
+        }
         const listed = await window.plannerApi.listHandoffTasks();
         const tasks = listed?.tasks || [];
         const active = tasks
-          .filter((task) => !['cancelled', 'draft', 'ready'].includes(task.status))
-          .sort((left, right) => Date.parse(right.updatedAt || 0) - Date.parse(left.updatedAt || 0))[0];
+          .filter((task) => !['cancelled', 'draft', 'ready', 'completed', 'completed_with_warnings', 'failed'].includes(task.status))
+          .sort((left, right) => Date.parse(right.updatedAt || 0) - Date.parse(left.updatedAt || 0))[0]
+          || tasks
+            .filter((task) => ['completed', 'completed_with_warnings', 'failed'].includes(task.status)
+              && !(task.returnState?.acknowledgedAt))
+            .sort((left, right) => Date.parse(right.updatedAt || 0) - Date.parse(left.updatedAt || 0))[0];
         if (!active) return notify();
         data.runningOverlays.handoffTask = active;
-        if (['completed', 'completed_with_warnings', 'failed'].includes(active.status)) {
+        if (['completed', 'completed_with_warnings', 'failed', 'agent_disconnected', 'cancelled'].includes(active.status)) {
           return handleAgentReturn(active);
         }
         routeStore.set({

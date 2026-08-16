@@ -42,7 +42,12 @@
       });
       const engine = text('button', info?.engineLabel || (snap.route.engine === 'codex' ? 'Codex' : 'Cursor'), 'status-pill');
       engine.type = 'button';
+      const task = snap.runningOverlays?.handoffTask;
+      const locked = ['handed_off', 'running'].includes(task?.lifecycle);
+      engine.disabled = Boolean(locked);
+      if (locked) engine.title = '处理中不可切换 Agent，请先取消任务';
       engine.addEventListener('click', () => {
+        if (engine.disabled) return;
         const next = snap.route.engine === 'codex' ? 'cursor_agent' : 'codex';
         data.routeStore.set({ engine: next });
       });
@@ -63,6 +68,7 @@
       if (snap.runningOverlays?.handoffTask && !['results', 'advanced', 'revise'].includes(phase)) {
         const status = snap.runningOverlays.handoffTask.status;
         if (['completed', 'completed_with_warnings', 'failed'].includes(status)) phase = 'results';
+        else if (status === 'cancelled') phase = 'brief';
         else if (!['draft', 'ready'].includes(status)) phase = 'processing';
       }
       Object.entries(pages).forEach(([id, el]) => {

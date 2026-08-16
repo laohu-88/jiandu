@@ -44,19 +44,19 @@ function engineLabel(engine) {
 }
 
 function buildCursorLaunchPlan(task) {
-  const packageDir = task.cursorPackagePath || packageDirForTask(task.taskFilePath);
+  const packageDir = path.resolve(task.cursorPackagePath || packageDirForTask(task.taskFilePath));
   const promptPath = path.join(packageDir, 'prompt.md');
-  const workspace = path.resolve(String(task.appWorkspace || ''));
   return {
     engine: 'cursor_agent',
-    workspace,
+    workspace: packageDir,
     packageDir,
     promptPath,
     taskFilePath: task.taskFilePath,
-    openArgs: ['--new-window', workspace, '-g', `${promptPath}:1`],
+    windowTitleNeedle: path.basename(packageDir),
+    openArgs: ['--new-window', packageDir],
     clipboardText: task.prompt,
     restoreClipboard: true,
-    userInstruction: 'Cursor 已打开，App 会尝试把正式提示词放入输入框。默认不自动发送。',
+    userInstruction: 'Cursor 已打开独立任务窗口，App 会把正式提示词放入 Agent 输入框。',
   };
 }
 
@@ -219,6 +219,17 @@ function classifyAgentHandoffState(task) {
       engine,
     };
   }
+  if (status === 'agent_disconnected') {
+    return {
+      state: 'agent_disconnected',
+      label: STAGE_LABELS.agent_disconnected || 'Agent 已停止，任务未完成',
+      canContinueBuild: false,
+      canRecover: true,
+      recoverable: true,
+      canCancel: true,
+      engine,
+    };
+  }
   if (TERMINAL_STATUSES.has(status) && status !== 'failed' && status !== 'cancelled') {
     return {
       state: 'completed',
@@ -335,6 +346,7 @@ async function markAnalysisComplete(taskPath, input = {}) {
   const validated = await validateAnalysisFile(manifestPath, analysisPath);
   const updated = await updateHandoffTask(taskPath, {
     status: 'analysis_complete',
+    attemptId: task.currentAttempt?.attemptId,
     stageMessage: input.stageMessage
       || 'Cursor Agent 分析已通过协议校验，等待 App 继续构建与验证。',
     artifacts: {
@@ -355,6 +367,7 @@ async function markAnalysisComplete(taskPath, input = {}) {
 
 async function continueBuildFromAnalysis(taskPath, options = {}) {
   const task = await readHandoffTask(taskPath);
+  const attemptId = task.currentAttempt?.attemptId;
   if (TERMINAL_STATUSES.has(task.status)) {
     throw Object.assign(new Error('终态任务不能再次构建；请直接查看已有结果。'), {
       code: 'HANDOFF_TERMINAL_STATE',
@@ -375,6 +388,7 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
   if (inspection.incomplete || !inspection.validation || inspection.validation.ok === false) {
     const failed = await updateHandoffTask(taskPath, {
       status: 'analysis_complete',
+      attemptId: task.currentAttempt?.attemptId,
       stageMessage: '分析产物不完整或未通过协议校验，不能继续构建。',
       errors: [{
         code: 'ARTIFACTS_INCOMPLETE',
@@ -420,6 +434,7 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
 
   let building = await updateHandoffTask(taskPath, {
     status: 'building_project',
+    attemptId: task.currentAttempt?.attemptId,
     stageMessage: 'App 正在基于 Cursor Agent 分析结果创建正式项目。',
   });
   await syncPackageStatusPointer(building);
@@ -440,6 +455,7 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
               status === 'generating_fcpxml' ? 'generating_fcpxml' : 'building_project'
             )
           ),
+          attemptId,
           stageMessage: message || STAGE_LABELS[status] || status,
         });
         await syncPackageStatusPointer(building);
@@ -448,6 +464,7 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
 
     await updateHandoffTask(taskPath, {
       status: 'verifying',
+      attemptId,
       stageMessage: '正式项目已生成，正在完整验证。',
       resultProjectPath: built.projectPath,
       resultProjectId: built.project?.projectId || built.project?.projectName || projectName,
@@ -463,6 +480,7 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
     if (!verification.ok) {
       const failed = await updateHandoffTask(taskPath, {
         status: 'failed',
+        attemptId,
         stageMessage: '构建后的项目未通过完整性验证。',
         resultProjectPath: built.projectPath,
         verification,
@@ -485,6 +503,7 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
     const status = warnings.length ? 'completed_with_warnings' : 'completed';
     const completed = await updateHandoffTask(taskPath, {
       status,
+      attemptId,
       stageMessage: warnings.length
         ? 'Cursor Agent 分析后由 App 完成构建与验证，但存在警告。'
         : 'Cursor Agent 分析后由 App 完成构建、验证与结果交接准备。',
@@ -514,11 +533,14 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
     await syncPackageStatusPointer(completed);
     return completed;
   } catch (error) {
-    if (error.code === 'HANDOFF_TERMINAL_STATE' || error.code === 'INVALID_HANDOFF_TRANSITION') {
+    if (error.code === 'HANDOFF_TERMINAL_STATE'
+      || error.code === 'INVALID_HANDOFF_TRANSITION'
+      || error.code === 'LATE_ATTEMPT_WRITE') {
       throw error;
     }
     const failed = await updateHandoffTask(taskPath, {
       status: 'failed',
+      attemptId,
       stageMessage: `App 续建失败：${error.message}`,
       errors: [{
         code: error.code || 'CONTINUE_BUILD_FAILED',

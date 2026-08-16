@@ -130,6 +130,9 @@ test('Cursor 启动计划包含打开参数；权限检查失败时给出恢复�
     prompt: '执行视频剪辑任务 demo',
   });
   assert.ok(plan.openArgs.includes('--new-window'));
+  assert.ok(plan.openArgs.some((arg) => String(arg).includes('.cursor-package')));
+  assert.equal(plan.windowTitleNeedle, '11111111-1111-4111-8111-111111111111.cursor-package');
+  assert.equal(plan.openArgs.includes(ROOT), false);
   const permission = await checkAccessibilityPermission();
   assert.equal(typeof permission.granted, 'boolean');
   if (!permission.granted) {
@@ -148,12 +151,14 @@ test('Cursor 启动计划包含打开参数；权限检查失败时给出恢复�
   assert.equal(clipboard.stored, 'original');
 });
 
-test('Codex / Cursor 完成与失败回流状态模型', () => {
+test('Codex / Cursor 完成、失败、失联回流状态模型', () => {
   assert.equal(userFacingStatus({ status: 'awaiting_user_send' }).id, USER_STATUS.processing.id);
   assert.equal(userFacingStatus({ status: 'completed' }).id, USER_STATUS.results_ready.id);
   assert.equal(userFacingStatus({ status: 'completed', openedInFcpAt: 't' }).id, USER_STATUS.in_fcp.id);
   assert.equal(userFacingStatus({ status: 'failed' }).id, USER_STATUS.blocked.id);
+  assert.equal(userFacingStatus({ status: 'agent_disconnected' }).id, USER_STATUS.agent_disconnected.id);
   assert.equal(deriveUserStatus({ task: { status: 'failed' } }), 'blocked');
+  assert.equal(deriveUserStatus({ task: { status: 'agent_disconnected' } }), 'agent_disconnected');
   assert.equal(blockingErrors({ errors: [{ message: '媒体缺失' }] }).length, 1);
 });
 
