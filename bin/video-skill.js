@@ -34,8 +34,12 @@ const NON_FATAL_HANDOFF_COMMAND_ERRORS = new Set([
   'LATE_ATTEMPT_WRITE',
 ]);
 
-function shouldMarkHandoffFailed(error) {
-  return !NON_FATAL_HANDOFF_COMMAND_ERRORS.has(error?.code);
+function shouldMarkHandoffFailed(error, context = {}) {
+  if (NON_FATAL_HANDOFF_COMMAND_ERRORS.has(error?.code)) return false;
+  if (context.command === 'validate-analysis' && error?.code === 'INVALID_VIDEO_ANALYSIS') {
+    return false;
+  }
+  return true;
 }
 
 function parseArguments(argv) {
@@ -264,13 +268,33 @@ async function execute(argv) {
   }
   if (command === 'validate-analysis') {
     const report = handoffReporter(options);
-    await report('planning_story', '正在校验镜头编排、素材区间和轻字幕 Marker。');
-    const validated = await validateAnalysisFile(
-      required(options, 'manifest'),
-      required(options, 'analysis'),
-      formatOptions(options),
-    );
     const taskPath = options['handoff-task'];
+    const beforeValidation = taskPath ? await readHandoffTask(taskPath) : null;
+    await report(
+      beforeValidation?.status === 'analysis_needs_correction' ? 'analysis_needs_correction' : 'planning_story',
+      beforeValidation?.status === 'analysis_needs_correction'
+        ? 'Agent 正在重新校验修正后的分析合同。'
+        : '正在校验镜头编排、素材区间和轻字幕 Marker。',
+    );
+    let validated;
+    try {
+      validated = await validateAnalysisFile(
+        required(options, 'manifest'),
+        required(options, 'analysis'),
+        formatOptions(options),
+      );
+    } catch (error) {
+      if (taskPath && error?.code === 'INVALID_VIDEO_ANALYSIS') {
+        await report('analysis_needs_correction', '分析合同校验未通过，正在等待 Agent 修正后再次校验。', {
+          validationIssues: [{
+            code: error.code,
+            message: error.message,
+            at: new Date().toISOString(),
+          }],
+        });
+      }
+      throw error;
+    }
     let nextStage = 'deciding_hyperframes';
     let nextMessage = '真实素材初步时间线已通过协议校验，正在判断 HyperFrames。';
     if (taskPath) {
@@ -288,6 +312,7 @@ async function execute(argv) {
           hyperframesReason: task.hyperframesReason
             || 'Stage 6B 默认由 App 继续构建；HyperFrames 保持关闭，除非后续显式启用。',
           hyperframesGap: task.hyperframesGap || '无',
+          validationIssues: [],
         });
         return {
           command,
@@ -305,7 +330,7 @@ async function execute(argv) {
         };
       }
     }
-    await report(nextStage, nextMessage);
+    await report(nextStage, nextMessage, { validationIssues: [] });
     return {
       command,
       options,
@@ -500,7 +525,7 @@ async function execute(argv) {
   if (command === 'handoff-return') {
     const taskPath = required(options, 'handoff-task');
     const task = await readHandoffTask(taskPath);
-    if (!['completed', 'completed_with_warnings', 'failed', 'analysis_complete'].includes(task.status)) {
+    if (!['completed', 'completed_with_warnings', 'failed', 'analysis_complete', 'analysis_needs_correction'].includes(task.status)) {
       throw Object.assign(new Error('只有完成、警告、失败或分析完成任务可以触发回流。'), {
         code: 'HANDOFF_NOT_TERMINAL',
       });
@@ -537,7 +562,7 @@ async function main() {
       const taskPath = parsedArgs.options?.['handoff-task'];
       if (taskPath) {
         const task = await readHandoffTask(taskPath);
-        if (shouldMarkHandoffFailed(error)
+        if (shouldMarkHandoffFailed(error, { command: parsedArgs.command })
           && !['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)) {
           await updateHandoffTask(taskPath, {
             status: 'failed',

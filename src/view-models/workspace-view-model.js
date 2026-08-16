@@ -124,7 +124,7 @@ function deriveUserStatus({
   const processing = [
     'launching_codex', 'launching_cursor', 'awaiting_user_send',
     'scanning_media', 'extracting_metadata', 'extracting_frames',
-    'analyzing_media', 'planning_story', 'analysis_complete',
+    'analyzing_media', 'planning_story', 'analysis_needs_correction', 'analysis_complete',
     'deciding_hyperframes', 'designing_hyperframes', 'rendering_hyperframes',
     'reviewing_hyperframes', 'building_project', 'rendering_preview',
     'generating_fcpxml', 'verifying',

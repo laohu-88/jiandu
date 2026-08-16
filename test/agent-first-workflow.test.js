@@ -130,9 +130,11 @@ test('Cursor 启动计划包含打开参数；权限检查失败时给出恢复�
     prompt: '执行视频剪辑任务 demo',
   });
   assert.ok(plan.openArgs.includes('--new-window'));
-  assert.ok(plan.openArgs.some((arg) => String(arg).includes('.cursor-package')));
-  assert.equal(plan.windowTitleNeedle, '11111111-1111-4111-8111-111111111111.cursor-package');
-  assert.equal(plan.openArgs.includes(ROOT), false);
+  assert.equal(plan.workspace, ROOT);
+  assert.ok(plan.openArgs.some((arg) => String(arg).endsWith('.code-workspace')));
+  assert.equal(plan.openArgs.some((arg) => String(arg).endsWith('.cursor-package')), false);
+  assert.equal(plan.windowTitleNeedle, '视频剪辑编排器 · 任务');
+  assert.doesNotMatch(plan.openArgs.join(' '), /prompt\.md|TASK\.json|RECOVERY\.md/);
   const permission = await checkAccessibilityPermission();
   assert.equal(typeof permission.granted, 'boolean');
   if (!permission.granted) {

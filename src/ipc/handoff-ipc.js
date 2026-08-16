@@ -21,6 +21,8 @@ const {
   continueBuildFromAnalysis,
   inspectAnalysisArtifacts,
   markAnalysisComplete,
+  sweepHandoffPackages,
+  writeCursorWindowWorkspace,
 } = require('../services/cursor-agent-handoff-service');
 const { launchAndInjectCursor, checkAccessibilityPermission } = require('../services/cursor-automation-service');
 const {
@@ -63,6 +65,7 @@ async function launchCursorTask(clipboard, task, options = {}) {
     throw new Error('当前任务不是 Cursor 引擎任务。');
   }
   const attemptId = task.currentAttempt?.attemptId;
+  await writeCursorWindowWorkspace(task);
   const plan = buildCursorLaunchPlan(task);
   await updateHandoffTask(task.taskFilePath, {
     status: 'launching_cursor',
@@ -78,28 +81,45 @@ async function launchCursorTask(clipboard, task, options = {}) {
       inject: true,
       submit: options.submit !== false,
       windowTitleNeedle: plan.windowTitleNeedle,
+      workspace: plan.workspace,
+      session: plan.session,
+      attemptId,
+      taskId: task.taskId,
     });
     const verified = inject.verified === true;
+    const submitted = inject.submitted === true;
     const message = verified
-      ? (inject.submitted
+      ? (submitted
         ? 'Cursor 已打开，正式提示词已放入输入框并已启动 Agent。'
         : 'Cursor 已打开，正式提示词已放入输入框。')
       : inject.granted === false
         ? inject.guidance || inject.message
         : inject.message || plan.userInstruction;
+    const cursorSession = inject.session
+      ? {
+        ...inject.session,
+        active: true,
+        taskId: task.taskId,
+        attemptId,
+        workspace: plan.workspace,
+      }
+      : (plan.session || null);
     return updateHandoffTask(task.taskFilePath, {
-      status: verified ? 'scanning_media' : 'awaiting_user_send',
+      status: verified && submitted ? 'scanning_media' : 'awaiting_user_send',
       attemptId,
       stageMessage: message,
+      cursorSession,
       cursorInject: {
         launched: inject.launched === true,
+        reused: inject.reused === true,
         injected: inject.injected === true,
         verified,
-        submitted: inject.submitted === true,
+        submitted,
         code: inject.code || null,
         message,
         guidance: inject.guidance || null,
         preview: inject.preview || null,
+        windowName: inject.windowName || cursorSession?.windowName || null,
       },
     });
   } catch (error) {
@@ -277,14 +297,20 @@ function registerHandoffIpc(ctx) {
 
   ipcMain.handle('handoff:reconcile', async () => {
     const payload = await reconcileActiveTasks(app.getPath('userData'));
+    const sweep = await sweepHandoffPackages(app.getPath('userData')).catch(() => null);
     return {
       ...payload,
+      sweep,
       views: payload.recovered.map((item) => ({
         task: item.task,
         action: item.action,
         view: processingViewModel(item.task),
       })),
     };
+  });
+
+  ipcMain.handle('handoff:sweep-packages', async () => {
+    return sweepHandoffPackages(app.getPath('userData'));
   });
 
   ipcMain.handle('handoff:activate-codex', async (_event, taskPath) => {
@@ -295,16 +321,34 @@ function registerHandoffIpc(ctx) {
 
   ipcMain.handle('handoff:activate-cursor', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
+    await writeCursorWindowWorkspace(task);
     const plan = buildCursorLaunchPlan(task);
-    await launchAndInjectCursor({
+    const result = await launchAndInjectCursor({
       openArgs: plan.openArgs,
       prompt: task.prompt,
       verifyNeedle: task.currentAttempt?.attemptId || task.taskId,
       clipboard,
       inject: false,
       windowTitleNeedle: plan.windowTitleNeedle,
+      workspace: plan.workspace,
+      session: plan.session,
+      attemptId: task.currentAttempt?.attemptId,
+      taskId: task.taskId,
     });
-    return { activated: true };
+    if (result.session) {
+      await updateHandoffTask(task.taskFilePath, {
+        status: task.status,
+        attemptId: task.currentAttempt?.attemptId,
+        cursorSession: {
+          ...result.session,
+          active: task.cursorSession?.active !== false,
+          taskId: task.taskId,
+          attemptId: task.currentAttempt?.attemptId,
+          workspace: plan.workspace,
+        },
+      }).catch(() => {});
+    }
+    return { activated: true, reused: result.reused === true, launched: result.launched === true };
   });
 
   ipcMain.handle('handoff:copy-prompt', async (_event, taskPath) => {

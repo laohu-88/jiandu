@@ -1154,12 +1154,29 @@ async function exportConfirmedCaptionsToFcpxml(projectPath, options = {}) {
     xmllint = { ok: false, message: error.message };
   }
 
-  // Persist latest FCPXML report into status without rewriting unrelated fields.
+  // Refresh the persisted verification too.  Otherwise a previously generated
+  // project can keep showing the "caption not exported" warning even after the
+  // native Title was successfully written.
   try {
     const statusPath = path.join(context.projectPath, CODEX_VIDEO_STATUS_FILE);
     const status = context.status || {};
+    let verification = null;
+    try {
+      // Loaded lazily to keep the export service independent during initial
+      // project construction and to make a verification failure non-destructive.
+      const { verifyCodexVideoProject } = require('./codex-video-service');
+      verification = await verifyCodexVideoProject(context.projectPath);
+    } catch {
+      // The FCPXML write and its structural report remain useful even when a
+      // full read-only verification cannot run in this environment.
+    }
     const nextStatus = {
       ...status,
+      ...(verification ? {
+        status: verification.ok ? 'verified' : status.status,
+        verifiedAt: verification.verifiedAt,
+        verification,
+      } : {}),
       fcpxmlReport: writeResult.report,
       captionExport: {
         updatedAt: new Date().toISOString(),

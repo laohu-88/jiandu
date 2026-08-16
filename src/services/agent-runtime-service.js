@@ -5,7 +5,7 @@ const { promisify } = require('node:util');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const { HEARTBEAT_STALE_MS } = require('./agent-lifecycle-service');
+const { HEARTBEAT_STALE_MS, isActiveLifecycle, lifecycleOf } = require('./agent-lifecycle-service');
 
 const execFileAsync = promisify(execFile);
 
@@ -119,25 +119,68 @@ async function listAppWindowNames(appName, options = {}) {
 }
 
 function taskWindowNeedle(task) {
-  const packagePath = task?.cursorPackagePath || task?.artifacts?.cursorPackagePath || '';
-  const base = path.basename(String(packagePath || ''));
-  return /\.cursor-package$/i.test(base) ? base : '';
+  const session = task?.cursorSession;
+  if (session?.active === true && (session.windowName || session.fingerprint || session.windowId != null)) {
+    return session.windowName || session.fingerprint || String(session.windowId);
+  }
+  return '';
+}
+
+function cursorSessionIsActive(task) {
+  const session = task?.cursorSession;
+  const attemptId = task?.currentAttempt?.attemptId || null;
+  if (!session || session.active !== true) return false;
+  if (attemptId && session.attemptId && session.attemptId !== attemptId) return false;
+  return true;
 }
 
 async function probeTaskWindow(task, options = {}) {
   if ((task?.engine || 'codex') !== 'cursor_agent') {
     return { taskWindowExists: null, windowProbeOk: false, windowNames: [] };
   }
-  const needle = taskWindowNeedle(task);
-  const processes = options.processes || await listProcessCommands(options);
-  const hits = needle
-    ? processes.filter((item) => String(item.command || '').includes(needle))
-    : [];
-  return {
-    taskWindowExists: hits.length > 0,
-    windowProbeOk: true,
-    windowNames: hits.map((item) => item.command),
-  };
+  if (!cursorSessionIsActive(task)) {
+    const packagePath = task?.cursorPackagePath || task?.artifacts?.cursorPackagePath || '';
+    const needle = path.basename(String(packagePath || ''));
+    if (isActiveLifecycle(lifecycleOf(task)) && /\.cursor-package$/i.test(needle) && !task?.cursorSession) {
+      const processes = options.processes || await listProcessCommands(options);
+      const hits = processes.filter((item) => String(item.command || '').includes(needle));
+      return {
+        taskWindowExists: hits.length > 0,
+        windowProbeOk: true,
+        windowNames: hits.map((item) => item.command),
+        sessionActive: false,
+        legacyPackageProbe: true,
+      };
+    }
+    return {
+      taskWindowExists: false,
+      windowProbeOk: true,
+      windowNames: [],
+      sessionActive: false,
+    };
+  }
+  const { listCursorWindows, findSessionWindow } = require('./cursor-automation-service');
+  try {
+    const listed = options.windows
+      ? { ok: true, windows: options.windows, names: options.windows.map((item) => item.name || item) }
+      : await listCursorWindows();
+    const windows = listed.windows || [];
+    const matched = findSessionWindow(windows, task.cursorSession);
+    return {
+      taskWindowExists: Boolean(matched),
+      windowProbeOk: true,
+      windowNames: matched ? [matched.name] : (listed.names || []),
+      sessionActive: true,
+      window: matched || null,
+    };
+  } catch {
+    return {
+      taskWindowExists: false,
+      windowProbeOk: false,
+      windowNames: [],
+      sessionActive: true,
+    };
+  }
 }
 
 async function probeAgentRuntime(engine, options = {}) {
@@ -214,6 +257,7 @@ module.exports = {
   ENGINE_BUNDLES,
   attachResultEvidence,
   bundleIsRunning,
+  cursorSessionIsActive,
   listAppWindowNames,
   matchesEngine,
   normalizeProcessName,

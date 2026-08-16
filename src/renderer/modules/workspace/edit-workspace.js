@@ -170,10 +170,13 @@
       processing.replaceChildren();
       const task = snap.runningOverlays?.handoffTask;
       const disconnected = task?.status === 'agent_disconnected' || task?.lifecycle === 'agent_disconnected';
+      const correcting = task?.status === 'analysis_needs_correction' || task?.lifecycle === 'analysis_needs_correction';
       const engine = task?.engine === 'codex' ? 'codex' : 'cursor_agent';
-      const title = disconnected
+      const title = correcting
+        ? (engine === 'codex' ? 'Codex 正在修正分析' : 'Cursor 正在修正分析')
+        : (disconnected
         ? (engine === 'codex' ? 'Codex 已停止，任务未完成' : 'Cursor 已停止，任务未完成')
-        : (engine === 'codex' ? 'Codex 正在处理' : 'Cursor 正在处理');
+        : (engine === 'codex' ? 'Codex 正在处理' : 'Cursor 正在处理'));
       processing.append(
         text('h3', title),
         text('p', task?.stageMessage || (disconnected ? title : '已交接，等待 Agent 返回。'), 'muted'),
@@ -235,8 +238,42 @@
       if (!snap.route.sessionOpen) return;
       if ((snap.route.workspacePhase || snap.route.projectPage) !== 'results') return;
       results.replaceChildren();
+      const task = snap.runningOverlays?.handoffTask;
+      const failed = task?.status === 'failed' || snap.route.error;
       const variant = snap.douyinVariant;
       const blocking = (snap.issues || []).filter((item) => item.level === 'blocking' && !item.resolved);
+      if (failed) {
+        const banner = document.createElement('div');
+        banner.className = 'notice warning';
+        const reason = task?.errors?.[0]?.message || snap.route.error || task?.stageMessage || 'AI 剪辑失败';
+        banner.append(text('strong', reason));
+        results.appendChild(banner);
+        const actions = document.createElement('div');
+        actions.className = 'result-actions';
+        const engine = task?.engine === 'codex' ? 'codex' : 'cursor_agent';
+        const retrySame = text('button', engine === 'codex' ? '重新使用 Codex' : '重新使用 Cursor', 'button primary');
+        retrySame.type = 'button';
+        retrySame.addEventListener('click', () => takeoverTask(
+          task,
+          engine,
+          'resume_after_failure',
+          snap.route.extraRequirements,
+        ));
+        const switchEngine = text('button', engine === 'codex' ? '改用 Cursor' : '改用 Codex', 'button secondary');
+        switchEngine.type = 'button';
+        switchEngine.addEventListener('click', () => takeoverTask(
+          task,
+          engine === 'codex' ? 'cursor_agent' : 'codex',
+          'switch_engine',
+          snap.route.extraRequirements,
+        ));
+        const diag = text('button', '详细诊断', 'button ghost');
+        diag.type = 'button';
+        diag.addEventListener('click', () => data.routeStore.set({ nav: 'settings' }));
+        actions.append(retrySame, switchEngine, diag);
+        results.appendChild(actions);
+        if (!snap.projectResult && !task?.resultProjectPath) return;
+      }
       if (blocking.length) {
         const banner = document.createElement('div');
         banner.className = 'notice warning';
@@ -245,7 +282,7 @@
           text('button', '详细诊断', 'button ghost'),
         );
         banner.querySelector('button').addEventListener('click', () => {
-          data.routeStore.set({ workspacePhase: 'advanced', projectPage: 'advanced' });
+          data.routeStore.set({ nav: 'settings' });
         });
         results.appendChild(banner);
       }

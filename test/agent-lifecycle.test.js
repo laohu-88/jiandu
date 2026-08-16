@@ -90,10 +90,88 @@ test('lifecycle 映射覆盖 preparing/handed_off/running/终态/失联', () => 
   assert.equal(lifecycleOf({ status: 'ready' }), LIFECYCLE.preparing);
   assert.equal(lifecycleOf({ status: 'awaiting_user_send' }), LIFECYCLE.handed_off);
   assert.equal(lifecycleOf({ status: 'analyzing_media' }), LIFECYCLE.running);
+  assert.equal(lifecycleOf({ status: 'analysis_needs_correction' }), LIFECYCLE.analysis_needs_correction);
   assert.equal(lifecycleOf({ status: 'completed' }), LIFECYCLE.completed);
   assert.equal(lifecycleOf({ status: 'failed' }), LIFECYCLE.failed);
   assert.equal(lifecycleOf({ status: 'cancelled' }), LIFECYCLE.canceled);
   assert.equal(lifecycleOf({ status: 'agent_disconnected' }), LIFECYCLE.agent_disconnected);
+});
+
+test('analysis 合同失败保持同一 attempt 可修正、可取消且重启后可恢复', async () => {
+  const paths = await fixture();
+  let task = await createTask(paths, { engine: 'cursor_agent' });
+  const attemptId = task.currentAttempt.attemptId;
+  task = await updateHandoffTask(task.taskFilePath, {
+    status: 'analysis_needs_correction',
+    attemptId,
+    stageMessage: '分析合同校验未通过，正在等待 Agent 修正后再次校验。',
+    validationIssues: [{ code: 'INVALID_VIDEO_ANALYSIS', message: 'warnings 缺失' }],
+  });
+  assert.equal(task.currentAttempt.attemptId, attemptId);
+  assert.equal(task.lifecycle, LIFECYCLE.analysis_needs_correction);
+  assert.equal(canCancel(task), true);
+  assert.equal(processingViewModel(task).title, 'Cursor 正在修正分析');
+  assert.equal(deriveUserStatus({ task }), 'processing');
+
+  const afterRestart = await readHandoffTask(task.taskFilePath);
+  assert.equal(afterRestart.status, 'analysis_needs_correction');
+  assert.equal(afterRestart.validationIssues.length, 1);
+
+  task = await updateHandoffTask(task.taskFilePath, {
+    status: 'analysis_needs_correction',
+    attemptId,
+    validationIssues: [{ code: 'INVALID_VIDEO_ANALYSIS', message: '字幕 marker 缺失' }],
+  });
+  assert.equal(task.currentAttempt.attemptId, attemptId);
+  task = await updateHandoffTask(task.taskFilePath, {
+    status: 'analysis_complete',
+    attemptId,
+    validationIssues: [],
+  });
+  assert.equal(task.currentAttempt.attemptId, attemptId);
+  assert.deepEqual(task.validationIssues, []);
+
+  const correction = await updateHandoffTask(task.taskFilePath, {
+    status: 'analysis_needs_correction',
+    attemptId,
+    validationIssues: [{ code: 'INVALID_VIDEO_ANALYSIS', message: '再次修正' }],
+  }).catch((error) => error);
+  assert.equal(correction.code, 'INVALID_HANDOFF_TRANSITION');
+});
+
+test('correction 状态下取消保持终态；failed recovery 保留旧 attempt 并记录复用谱系', async () => {
+  const paths = await fixture();
+  let task = await createTask(paths, { engine: 'cursor_agent' });
+  task = await updateHandoffTask(task.taskFilePath, {
+    status: 'analysis_needs_correction',
+    validationIssues: [{ code: 'INVALID_VIDEO_ANALYSIS', message: '待修正' }],
+  });
+  const canceled = await cancelHandoffTask(task.taskFilePath);
+  assert.equal(canceled.status, 'cancelled');
+  assert.equal((await cancelHandoffTask(task.taskFilePath)).status, 'cancelled');
+
+  task = await createTask(paths, { engine: 'cursor_agent' });
+  task = await updateHandoffTask(task.taskFilePath, {
+    status: 'failed',
+    artifacts: { analysisPath: '/tmp/reused-analysis.json', manifestPath: '/tmp/reused-manifest.json' },
+    errors: [{ code: 'AGENT_FAILURE', message: '明确失败' }],
+  });
+  const failedAttemptId = task.currentAttempt.attemptId;
+  const recovery = await startAgentAttempt(task.taskFilePath, {
+    engine: 'codex',
+    reason: 'recovery_after_failure',
+  });
+  const old = recovery.attempts.find((item) => item.attemptId === failedAttemptId);
+  assert.equal(old.status, LIFECYCLE.failed);
+  assert.equal(recovery.currentAttempt.previousAttemptId, failedAttemptId);
+  assert.equal(recovery.currentAttempt.recoveryReason, 'recovery_after_failure');
+  assert.equal(recovery.currentAttempt.reusedAnalysis, true);
+  assert.equal(recovery.currentAttempt.generation, 2);
+  assert.equal(recovery.currentAttempt.reusableArtifacts.analysisPath, '/tmp/reused-analysis.json');
+  await assert.rejects(
+    updateHandoffTask(recovery.taskFilePath, { status: 'completed', attemptId: failedAttemptId }),
+    /迟到回写/,
+  );
 });
 
 test('running Agent 正常 heartbeat 保持 live', () => {
@@ -112,7 +190,7 @@ test('Codex 关闭 → disconnected，不依赖超长超时', () => {
   assert.equal(liveness.reason, 'process_missing');
 });
 
-test('Cursor 关闭 → disconnected', () => {
+test('Cursor 关闭且无近期写回 → disconnected', () => {
   const task = runningTask({ engine: 'cursor_agent', status: 'planning_story', stage: 'planning_story' });
   task.engine = 'cursor_agent';
   task.currentAttempt.engine = 'cursor_agent';
@@ -121,12 +199,27 @@ test('Cursor 关闭 → disconnected', () => {
     taskWindowExists: false,
     windowProbeOk: true,
     sessionExists: false,
-  }, Date.parse(task.lastHeartbeatAt) + 1_000);
+  }, Date.parse(task.lastHeartbeatAt) + HEARTBEAT_STALE_MS + 5_000);
   assert.equal(liveness.disconnected, true);
   assert.equal(liveness.reason, 'window_missing');
 });
 
-test('Cursor 任务窗口存在时即使 heartbeat 变旧也保持 running', () => {
+test('Cursor 窗口暂时无法匹配但刚有状态写回时保持 running', () => {
+  const task = runningTask({ engine: 'cursor_agent', status: 'analyzing_media', stage: 'analyzing_media' });
+  task.engine = 'cursor_agent';
+  task.currentAttempt.engine = 'cursor_agent';
+  const liveness = evaluateLiveness(task, {
+    processExists: true,
+    taskWindowExists: false,
+    windowProbeOk: true,
+    sessionExists: false,
+  }, Date.parse(task.lastHeartbeatAt) + 15_000);
+  assert.equal(liveness.live, true);
+  assert.equal(liveness.disconnected, false);
+  assert.equal(liveness.reason, 'heartbeat');
+});
+
+test('Cursor 任务窗口存在但心跳过期 → disconnected', () => {
   const task = runningTask({ engine: 'cursor_agent', status: 'planning_story', stage: 'planning_story' });
   task.engine = 'cursor_agent';
   task.currentAttempt.engine = 'cursor_agent';
@@ -136,9 +229,9 @@ test('Cursor 任务窗口存在时即使 heartbeat 变旧也保持 running', () 
     windowProbeOk: true,
     sessionExists: true,
   }, Date.parse(task.lastHeartbeatAt) + HEARTBEAT_STALE_MS + 60_000);
-  assert.equal(liveness.live, true);
-  assert.equal(liveness.disconnected, false);
-  assert.equal(liveness.reason, 'task_window');
+  assert.equal(liveness.live, false);
+  assert.equal(liveness.disconnected, true);
+  assert.equal(liveness.reason, 'heartbeat_stale');
 });
 
 test('cancel 对任何未终态任务可用，并解锁 Agent 选择', async () => {
@@ -333,19 +426,33 @@ test('Cursor 窗口选择与 copy-back 验证拒绝假阳性', () => {
   assert.equal(copiedLooksLikePrompt('', needle, prompt), false);
   const chosen = pickTargetWindowName([
     'prompt.md — video-cut-planner-v3',
-    'TASK.md — e39fdc96-a97b-4777-8be0-c77d422cb214.cursor-package',
-  ], 'e39fdc96-a97b-4777-8be0-c77d422cb214.cursor-package');
-  assert.match(chosen, /\.cursor-package/);
-  assert.equal(pickTargetWindowName(['prompt.md — video-cut-planner-v3'], 'missing.cursor-package'), null);
+    'video-cut-planner-v3',
+    '视频剪辑编排器 · 任务',
+  ], '视频剪辑编排器 · 任务');
+  assert.equal(chosen, '视频剪辑编排器 · 任务');
   assert.equal(
-    pickTargetWindowName([
-      '3e926dea-8b75-4e68-af35-fbddb4c7ab17.cursor-package',
-      'd4865b81-d08b-4739-bdb5-78710afa86a8.cursor-package',
-    ], 'd4865b81-d08b-4739-bdb5-78710afa86a8.cursor-package'),
-    'd4865b81-d08b-4739-bdb5-78710afa86a8.cursor-package',
+    pickTargetWindowName(
+      [{ name: 'prompt.md — video-cut-planner-v3', position: [0, 0], size: [800, 600] }],
+      '视频剪辑编排器 · 任务',
+      { preexisting: [{ name: 'prompt.md — video-cut-planner-v3', position: [0, 0], size: [800, 600] }] },
+    ),
+    null,
   );
   assert.equal(
-    pickTargetWindowName(['3e926dea-8b75-4e68-af35-fbddb4c7ab17.cursor-package'], 'd4865b81-d08b-4739-bdb5-78710afa86a8.cursor-package'),
+    pickTargetWindowName([
+      { name: 'README.md — video-cut-planner-v3', position: [0, 0], size: [800, 600] },
+      { name: '视频剪辑编排器 · 任务', position: [40, 40], size: [800, 600] },
+    ], '视频剪辑编排器 · 任务', {
+      preexisting: [{ name: 'README.md — video-cut-planner-v3', position: [0, 0], size: [800, 600] }],
+    }),
+    '视频剪辑编排器 · 任务',
+  );
+  assert.equal(
+    pickTargetWindowName(
+      [{ name: 'README.md — video-cut-planner-v3', position: [0, 0], size: [800, 600] }],
+      '视频剪辑编排器 · 任务',
+      { preexisting: [{ name: 'README.md — video-cut-planner-v3', position: [0, 0], size: [800, 600] }] },
+    ),
     null,
   );
 });
@@ -359,25 +466,58 @@ test('runtime 进程名识别 Codex / Cursor', () => {
   assert.equal(matchesEngine('Safari', 'codex'), false);
 });
 
-test('Cursor 任务会话用 extension-host 命令行识别，不依赖辅助功能', async () => {
+test('Cursor 任务会话用已记录的 attempt 窗口识别，完成后不再把旧窗口当活跃证据', async () => {
   const { probeTaskWindow } = require('../src/services/agent-runtime-service');
-  const task = {
+  const attemptId = 'd4865b81-d08b-4739-bdb5-78710afa86a8';
+  const active = await probeTaskWindow({
     engine: 'cursor_agent',
+    status: 'scanning_media',
+    currentAttempt: { attemptId },
+    cursorSession: {
+      active: true,
+      attemptId,
+      windowName: 'video-cut-planner-v3',
+      fingerprint: 'name:video-cut-planner-v3|pos:10,10|size:800,600',
+    },
+  }, {
+    windows: [
+      { name: 'README.md — video-cut-planner-v3', position: [0, 0], size: [800, 600] },
+      { name: 'video-cut-planner-v3', position: [10, 10], size: [800, 600] },
+    ],
+  });
+  assert.equal(active.taskWindowExists, true);
+  assert.equal(active.windowProbeOk, true);
+
+  const finished = await probeTaskWindow({
+    engine: 'cursor_agent',
+    status: 'completed',
+    currentAttempt: { attemptId },
+    cursorSession: {
+      active: false,
+      attemptId,
+      windowName: 'video-cut-planner-v3',
+      fingerprint: 'name:video-cut-planner-v3|pos:10,10|size:800,600',
+    },
     cursorPackagePath: '/tmp/d4865b81-d08b-4739-bdb5-78710afa86a8.cursor-package',
-  };
-  const found = await probeTaskWindow(task, {
+  }, {
+    processes: [
+      { pid: 1, command: 'Cursor Helper (Plugin): extension-host (user) d4865b81-d08b-4739-bdb5-78710afa86a8.cursor-package [6-66]' },
+    ],
+    windows: [{ name: 'video-cut-planner-v3', position: [10, 10], size: [800, 600] }],
+  });
+  assert.equal(finished.taskWindowExists, false);
+
+  const legacy = await probeTaskWindow({
+    engine: 'cursor_agent',
+    status: 'scanning_media',
+    cursorPackagePath: '/tmp/d4865b81-d08b-4739-bdb5-78710afa86a8.cursor-package',
+  }, {
     processes: [
       { pid: 1, command: 'Cursor Helper (Plugin): extension-host (user) d4865b81-d08b-4739-bdb5-78710afa86a8.cursor-package [6-66]' },
     ],
   });
-  assert.equal(found.taskWindowExists, true);
-  assert.equal(found.windowProbeOk, true);
-  const missing = await probeTaskWindow(task, {
-    processes: [
-      { pid: 2, command: 'Cursor Helper (Plugin): extension-host (user) video-cut-planner-v3 [1-1]' },
-    ],
-  });
-  assert.equal(missing.taskWindowExists, false);
+  assert.equal(legacy.taskWindowExists, true);
+  assert.equal(legacy.legacyPackageProbe, true);
 });
 
 test('heartbeat stale 在进程仍在时也能失联', () => {

@@ -3,6 +3,7 @@
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { spawn } = require('node:child_process');
+const path = require('node:path');
 
 const execFileAsync = promisify(execFile);
 
@@ -12,9 +13,19 @@ const ACCESSIBILITY_GUIDANCE = [
   '授权后回到 App，再次点击「开始 AI 剪辑」。',
 ].join('\n');
 
-const FORBIDDEN_WINDOW_MARKERS = Object.freeze([
-  'video-cut-planner-v3',
+const TECHNICAL_WINDOW_MARKERS = Object.freeze([
+  'prompt.md',
+  'TASK.md',
+  'TASK.json',
+  'RECOVERY.md',
+  'status.json',
+  'paths.json',
+  'expected-artifacts.json',
+  '.cursor-package',
 ]);
+
+const PROJECT_WORKSPACE_BASENAME = 'video-cut-planner-v3';
+const TASK_WINDOW_TITLE = '视频剪辑编排器 · 任务';
 
 function runOsascript(source, timeoutMs = 12_000) {
   return execFileAsync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', source], {
@@ -27,12 +38,144 @@ function parseOsascriptJson(stdout) {
   return JSON.parse(String(stdout || '{}').trim() || '{}');
 }
 
-function windowLooksForbidden(name, titleNeedle) {
+function windowLooksTechnical(name) {
   const text = String(name || '');
-  const needle = String(titleNeedle || '');
-  if (needle && text.includes(needle)) return false;
-  if (/\.cursor-package/i.test(text)) return false;
-  return FORBIDDEN_WINDOW_MARKERS.some((marker) => text.includes(marker));
+  return TECHNICAL_WINDOW_MARKERS.some((marker) => text.includes(marker));
+}
+
+function windowLooksLikeEditor(window) {
+  const size = Array.isArray(window?.size) ? window.size : null;
+  if (!size || size.length < 2) return true;
+  return Number(size[0]) >= 600 && Number(size[1]) >= 400;
+}
+
+function windowLooksLikeWorkspace(name, workspaceNeedle) {
+  const text = String(name || '');
+  const needle = String(workspaceNeedle || PROJECT_WORKSPACE_BASENAME);
+  if (!text || !needle || /\.cursor-package/i.test(text)) return false;
+  if (windowLooksTechnical(text)) return false;
+  return text === needle
+    || text === `${needle} (工作区)`
+    || text === `${needle} (Workspace)`;
+}
+
+function windowFingerprint(window) {
+  if (!window || typeof window !== 'object') return '';
+  if (window.id != null && Number.isFinite(Number(window.id))) return `id:${window.id}`;
+  const pos = Array.isArray(window.position) ? window.position.join(',') : '';
+  const size = Array.isArray(window.size) ? window.size.join(',') : '';
+  return `name:${window.name || ''}|pos:${pos}|size:${size}`;
+}
+
+function normalizeWindow(raw, index = 0) {
+  const name = String(raw?.name || '');
+  const id = raw?.id == null || raw.id === '' ? null : Number(raw.id);
+  return {
+    name,
+    id: Number.isFinite(id) ? id : null,
+    position: Array.isArray(raw?.position) ? raw.position.map(Number) : null,
+    size: Array.isArray(raw?.size) ? raw.size.map(Number) : null,
+    index,
+    fingerprint: windowFingerprint({
+      name,
+      id,
+      position: raw?.position,
+      size: raw?.size,
+    }),
+    technical: windowLooksTechnical(name),
+  };
+}
+
+function sessionMatchesWindow(session, window) {
+  if (!session || !window) return false;
+  if (session.windowId != null && window.id != null && Number(session.windowId) === Number(window.id)) {
+    return true;
+  }
+  if (session.fingerprint && window.fingerprint && session.fingerprint === window.fingerprint) {
+    return true;
+  }
+  if (session.windowName && window.name && session.windowName === window.name) {
+    const samePosition = Array.isArray(session.position)
+      && Array.isArray(window.position)
+      && session.position[0] === window.position[0]
+      && session.position[1] === window.position[1];
+    if (samePosition || session.windowId == null) return !window.technical;
+  }
+  return false;
+}
+
+function isReusableCursorSession(session, { attemptId, taskId } = {}) {
+  if (!session || session.active !== true) return false;
+  if (attemptId && session.attemptId && session.attemptId !== attemptId) return false;
+  if (taskId && session.taskId && session.taskId !== taskId) return false;
+  return Boolean(session.windowName || session.windowId || session.fingerprint);
+}
+
+function pickTaskWindow(windows, options = {}) {
+  const list = (Array.isArray(windows) ? windows : []).map((item, index) => (
+    item && typeof item === 'object' && 'fingerprint' in item ? item : normalizeWindow(item, index)
+  ));
+  const session = options.session || null;
+  const workspaceNeedle = options.workspaceNeedle || options.titleNeedle || PROJECT_WORKSPACE_BASENAME;
+  const preexisting = new Set(
+    (options.preexisting || []).map((item) => (
+      typeof item === 'string' ? item : windowFingerprint(item)
+    )),
+  );
+
+  if (session && isReusableCursorSession(session, options)) {
+    const matched = list.find((window) => sessionMatchesWindow(session, window) && !window.technical);
+    if (matched) return matched;
+  }
+
+  const candidates = list.filter((window) => {
+    if (!window.name) return false;
+    if (window.technical) return false;
+    if (/\.cursor-package/i.test(window.name)) return false;
+    if (preexisting.has(window.fingerprint)) return false;
+    if (!windowLooksLikeEditor(window)) return false;
+    if (!windowLooksLikeWorkspace(window.name, workspaceNeedle)) return false;
+    return true;
+  });
+  if (!candidates.length) return null;
+  const preferred = candidates.filter((window) => !window.technical);
+  const pool = preferred.length ? preferred : candidates;
+  const bareWorkspace = pool.find((window) => window.name === workspaceNeedle);
+  return bareWorkspace || pool[pool.length - 1];
+}
+
+function pickTargetWindowName(names, titleNeedle, options = {}) {
+  const list = Array.isArray(names) ? names : [];
+  const windows = list.length && typeof list[0] === 'object'
+    ? list.map((item, index) => (item && item.fingerprint ? item : normalizeWindow(item, index)))
+    : list.map((name, index) => normalizeWindow({ name }, index));
+  const picked = pickTaskWindow(windows, {
+    ...options,
+    workspaceNeedle: titleNeedle || options.workspaceNeedle,
+  });
+  return picked ? picked.name : null;
+}
+
+function windowLooksForbidden(name, titleNeedle, options = {}) {
+  const text = String(name || '');
+  if (windowLooksTechnical(text)) return true;
+  if (text === 'Cursor Agents') return true;
+  const window = normalizeWindow(options.window || {
+    name: text,
+    id: options.windowId,
+    position: options.position,
+    size: options.size,
+  });
+  if (options.session && sessionMatchesWindow(options.session, window)) return false;
+  const preexisting = options.preexisting || [];
+  const samePreexistingWindow = preexisting.some((item) => {
+    if (typeof item === 'string') return item === window.fingerprint;
+    const previous = item.fingerprint ? item : normalizeWindow(item);
+    return Boolean(window.fingerprint && previous.fingerprint && window.fingerprint === previous.fingerprint);
+  });
+  if (samePreexistingWindow) return true;
+  if (options.allowWorkspace === true && windowLooksLikeWorkspace(text, titleNeedle)) return false;
+  return false;
 }
 
 async function checkAccessibilityPermission() {
@@ -54,9 +197,12 @@ async function checkAccessibilityPermission() {
 
 function launchCursorProcess(openArgs) {
   return new Promise((resolve, reject) => {
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
     const child = spawn('cursor', openArgs, {
       detached: true,
       stdio: 'ignore',
+      env,
     });
     child.on('error', reject);
     child.unref();
@@ -64,53 +210,89 @@ function launchCursorProcess(openArgs) {
   });
 }
 
-async function listCursorWindows() {
+async function describeCursorWindows() {
   const { stdout } = await runOsascript(`
     const se = Application("System Events");
     const procs = se.processes.whose({ name: "Cursor" });
     if (!procs.length) {
-      JSON.stringify({ ok: false, count: 0, names: [] });
+      JSON.stringify({ ok: false, count: 0, windows: [] });
     } else {
       const windows = procs[0].windows();
-      const names = [];
-      for (let i = 0; i < windows.length; i++) names.push(String(windows[i].name() || ""));
-      JSON.stringify({ ok: names.length > 0, count: names.length, names });
+      const items = [];
+      for (let i = 0; i < windows.length; i++) {
+        const win = windows[i];
+        let id = null;
+        let position = null;
+        let size = null;
+        try { id = win.id(); } catch (error) {}
+        try { position = win.position(); } catch (error) {}
+        try { size = win.size(); } catch (error) {}
+        items.push({
+          name: String(win.name() || ""),
+          id: id,
+          position: position,
+          size: size,
+        });
+      }
+      JSON.stringify({ ok: items.length > 0, count: items.length, windows: items });
     }
-  `, 4000);
-  return parseOsascriptJson(stdout);
+  `, 5000);
+  const parsed = parseOsascriptJson(stdout);
+  const windows = (parsed.windows || []).map((item, index) => normalizeWindow(item, index));
+  return {
+    ok: windows.length > 0,
+    count: windows.length,
+    windows,
+    names: windows.map((item) => item.name),
+  };
 }
 
-function pickTargetWindowName(names, titleNeedle) {
-  const list = Array.isArray(names) ? names : [];
-  const needle = String(titleNeedle || '');
-  if (needle) {
-    return list.find((name) => {
-      const text = String(name);
-      return text.includes(needle) && !windowLooksForbidden(text, needle);
-    }) || null;
+async function listCursorWindows() {
+  try {
+    const described = await describeCursorWindows();
+    return {
+      ok: described.ok,
+      count: described.count,
+      names: described.names,
+      windows: described.windows,
+    };
+  } catch {
+    return { ok: false, count: 0, names: [], windows: [] };
   }
-  const byPackage = [...list].reverse().find((name) => /\.cursor-package/i.test(String(name))
-    && !windowLooksForbidden(name, needle));
-  return byPackage || null;
 }
 
-async function waitForCursorWindow(timeoutMs = 12_000, titleNeedle = '') {
+function findSessionWindow(windows, session) {
+  return (windows || []).find((window) => sessionMatchesWindow(session, window) && !window.technical) || null;
+}
+
+async function waitForCursorWindow(timeoutMs = 12_000, titleNeedle = '', options = {}) {
   const started = Date.now();
   let lastError = null;
   let lastCount = 0;
   let lastNames = [];
+  let lastWindows = [];
   while (Date.now() - started < timeoutMs) {
     try {
       const listed = await listCursorWindows();
       lastCount = Number(listed.count || 0);
       lastNames = listed.names || [];
-      const targetName = pickTargetWindowName(lastNames, titleNeedle);
-      if (listed.ok && (titleNeedle ? Boolean(targetName) : lastCount > 0)) {
+      lastWindows = listed.windows || [];
+      const targetName = pickTargetWindowName(lastWindows, titleNeedle, {
+        workspaceNeedle: titleNeedle || options.workspaceNeedle,
+        session: options.session,
+        preexisting: options.preexisting,
+        attemptId: options.attemptId,
+        taskId: options.taskId,
+      });
+      const target = lastWindows.find((window) => window.name === targetName) || null;
+      if (listed.ok && targetName && target && !target.technical) {
         return {
           ok: true,
           windowCount: lastCount,
-          windowName: targetName || lastNames[lastNames.length - 1] || '',
+          windowName: targetName,
+          window: target,
           names: lastNames,
+          windows: lastWindows,
         };
       }
     } catch (error) {
@@ -124,12 +306,80 @@ async function waitForCursorWindow(timeoutMs = 12_000, titleNeedle = '') {
     ok: false,
     code: 'CURSOR_WINDOW_NOT_FOUND',
     message: titleNeedle
-      ? `已启动 Cursor，但未找到独立任务窗口（${titleNeedle}）。`
+      ? `已启动 Cursor，但未找到项目任务窗口（${titleNeedle}）。`
       : '已启动 Cursor，但未找到可操作窗口。请手动点进 Cursor 后再试一次。',
     lastError: lastError?.message || null,
     windowCount: lastCount,
     names: lastNames,
+    windows: lastWindows,
   };
+}
+
+async function waitForNewCursorWindow({
+  before = [],
+  workspaceNeedle = PROJECT_WORKSPACE_BASENAME,
+  timeoutMs = 20_000,
+  session = null,
+  attemptId = '',
+  taskId = '',
+} = {}) {
+  const preexistingWindows = (before || []).map((item, index) => (
+    typeof item === 'string' ? normalizeWindow({ name: item }, index) : item
+  ));
+  const preexisting = preexistingWindows.map((item) => windowFingerprint(item));
+  const beforeCount = preexistingWindows.length;
+  if (session && isReusableCursorSession(session, { attemptId, taskId })) {
+    const current = await listCursorWindows();
+    const existing = findSessionWindow(current.windows, session);
+    if (existing) {
+      return {
+        ok: true,
+        reused: true,
+        window: existing,
+        windowName: existing.name,
+        windowCount: current.count,
+        names: current.names,
+        windows: current.windows,
+      };
+    }
+  }
+  const started = Date.now();
+  let last = {
+    ok: false,
+    code: 'CURSOR_WINDOW_NOT_FOUND',
+    message: `已启动 Cursor，但未找到新的项目任务窗口（${workspaceNeedle}）。`,
+    windowCount: beforeCount,
+    names: preexistingWindows.map((item) => item.name),
+  };
+  while (Date.now() - started < timeoutMs) {
+    const listed = await listCursorWindows().catch(() => ({ ok: false, windows: [], count: 0, names: [] }));
+    const grown = Number(listed.count || 0) > beforeCount;
+    const target = pickTaskWindow(listed.windows || [], {
+      workspaceNeedle,
+      session,
+      preexisting,
+      attemptId,
+      taskId,
+    });
+    if (target && (grown || !beforeCount) && !preexisting.includes(target.fingerprint)) {
+      return {
+        ok: true,
+        reused: false,
+        window: target,
+        windowName: target.name,
+        windowCount: listed.count,
+        names: listed.names,
+        windows: listed.windows,
+      };
+    }
+    last = {
+      ...last,
+      windowCount: listed.count,
+      names: listed.names,
+    };
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return last;
 }
 
 async function runCursorKeys(scriptBody, timeoutMs = 12_000) {
@@ -147,36 +397,60 @@ async function runCursorKeys(scriptBody, timeoutMs = 12_000) {
   return parseOsascriptJson(stdout);
 }
 
-function raiseTargetScript(titleNeedle) {
-  const needle = JSON.stringify(String(titleNeedle || ''));
+function raiseTargetScript(target) {
+  const needle = JSON.stringify(String(target?.name || target || ''));
+  const fingerprint = JSON.stringify(String(target?.fingerprint || ''));
+  const windowId = target?.id == null ? 'null' : JSON.stringify(Number(target.id));
+  const expectedPos = JSON.stringify(Array.isArray(target?.position) ? target.position : null);
+  const expectedSize = JSON.stringify(Array.isArray(target?.size) ? target.size : null);
   return `
       const needle = ${needle};
+      const expectedId = ${windowId};
+      const expectedFingerprint = ${fingerprint};
+      const expectedPos = ${expectedPos};
+      const expectedSize = ${expectedSize};
+      function fp(name, id, position, size) {
+        if (id != null && isFinite(Number(id))) return "id:" + Number(id);
+        return "name:" + name + "|pos:" + (position ? position.join(",") : "") + "|size:" + (size ? size.join(",") : "");
+      }
       let target = null;
-      for (let i = windows.length - 1; i >= 0; i--) {
-        const name = String(windows[i].name() || "");
-        if (needle && name.indexOf(needle) !== -1) { target = windows[i]; break; }
-        if (!needle && name.indexOf("cursor-package") !== -1) {
-          target = windows[i];
+      let exactName = null;
+      for (let i = 0; i < windows.length; i++) {
+        const win = windows[i];
+        const name = String(win.name() || "");
+        let id = null;
+        let position = null;
+        let size = null;
+        try { id = win.id(); } catch (error) {}
+        try { position = win.position(); } catch (error) {}
+        try { size = win.size(); } catch (error) {}
+        if (name.indexOf("cursor-package") !== -1) continue;
+        if (name.indexOf("prompt.md") !== -1 || name.indexOf("TASK.json") !== -1) continue;
+        if (expectedId != null && id === expectedId) { target = win; break; }
+        if (expectedFingerprint && fp(name, id, position, size) === expectedFingerprint) { target = win; break; }
+        const samePos = expectedPos && position && position[0] === expectedPos[0] && position[1] === expectedPos[1];
+        const sameSize = expectedSize && size && size[0] === expectedSize[0] && size[1] === expectedSize[1];
+        if (needle && name === needle && (samePos || sameSize || !expectedPos)) {
+          target = win;
           break;
         }
+        if (!exactName && needle && name === needle) exactName = win;
       }
+      if (!target) target = exactName;
       if (!target) {
         const names = [];
         for (let i = 0; i < windows.length; i++) names.push(String(windows[i].name() || ""));
-        return JSON.stringify({ ok: false, code: "CURSOR_WINDOW_NOT_FOUND", names });
+        return JSON.stringify({ ok: false, code: "CURSOR_WINDOW_NOT_FOUND", names, expectedFingerprint });
       }
       const targetName = String(target.name() || "");
-      if (!needle && /video-cut-planner-v3/.test(targetName) && targetName.indexOf("cursor-package") === -1) {
-        return JSON.stringify({ ok: false, code: "CURSOR_WINDOW_FORBIDDEN", targetName });
-      }
       cursor.frontmost = true;
       try { target.actions["AXRaise"](); } catch (error) {}
       delay(0.45);
   `;
 }
 
-async function focusAgentComposer(titleNeedle) {
-  const raise = raiseTargetScript(titleNeedle);
+async function focusAgentComposer(target) {
+  const raise = raiseTargetScript(target);
   const opened = await runCursorKeys(`
       ${raise}
       se.keyCode(53);
@@ -190,25 +464,48 @@ async function focusAgentComposer(titleNeedle) {
       se.keystroke("composer.newAgentChat");
       delay(0.35);
       se.keyCode(36);
-      delay(0.8);
-      return JSON.stringify({ ok: true, focused: true, targetName: targetName, windowCount: windows.length });
+      delay(0.9);
+      let front = "";
+      try { front = String(windows[0].name() || ""); } catch (error) {}
+      return JSON.stringify({ ok: true, focused: true, targetName: targetName, frontName: front, windowCount: windows.length });
   `, 18_000);
   if (opened.ok) return opened;
 
-  const fallback = await runCursorKeys(`
+  const inWindow = await runCursorKeys(`
       ${raise}
+      se.keyCode(53);
+      delay(0.08);
       se.keyCode(53);
       delay(0.12);
       se.keystroke("i", { using: ["command down"] });
-      delay(0.55);
-      return JSON.stringify({ ok: true, focused: true, fallback: "cmd-i", targetName: targetName, windowCount: windows.length });
+      delay(0.7);
+      let front = "";
+      try { front = String(windows[0].name() || ""); } catch (error) {}
+      return JSON.stringify({ ok: true, focused: true, fallback: "cmd-i", targetName: targetName, frontName: front, windowCount: windows.length });
   `, 12_000);
-  return fallback;
+  return inWindow;
 }
 
-async function copyFocusedText(titleNeedle) {
+async function readFocusedComposer(target) {
+  return runCursorKeys(`
+      ${raiseTargetScript(target)}
+      let role = "";
+      let value = "";
+      try {
+        const el = se.processes.whose({ name: "Cursor" })[0].focusedUIElement();
+        try { role = String(el.role() || ""); } catch (error) {}
+        try { value = String(el.value() || ""); } catch (error) {}
+        if (!value) {
+          try { value = String(el.valueDescription() || ""); } catch (error) {}
+        }
+      } catch (error) {}
+      return JSON.stringify({ ok: true, role, value, targetName: targetName });
+  `, 8000);
+}
+
+async function copyFocusedText(target) {
   await runCursorKeys(`
-      ${raiseTargetScript(titleNeedle)}
+      ${raiseTargetScript(target)}
       se.keystroke("a", { using: ["command down"] });
       delay(0.1);
       se.keystroke("c", { using: ["command down"] });
@@ -217,9 +514,9 @@ async function copyFocusedText(titleNeedle) {
   `, 8000);
 }
 
-async function pasteIntoFocusedField(titleNeedle) {
+async function pasteIntoFocusedField(target) {
   await runCursorKeys(`
-      ${raiseTargetScript(titleNeedle)}
+      ${raiseTargetScript(target)}
       se.keystroke("a", { using: ["command down"] });
       delay(0.08);
       se.keystroke("v", { using: ["command down"] });
@@ -228,13 +525,23 @@ async function pasteIntoFocusedField(titleNeedle) {
   `, 8000);
 }
 
-async function submitFocusedField(titleNeedle) {
+async function submitFocusedField(target) {
   await runCursorKeys(`
-      ${raiseTargetScript(titleNeedle)}
+      ${raiseTargetScript(target)}
       se.keyCode(36, { using: ["command down"] });
-      delay(0.35);
+      delay(0.45);
+      se.keyCode(36);
+      delay(0.45);
       return JSON.stringify({ ok: true, submitted: true, targetName: targetName });
-  `, 4000);
+  `, 6000);
+}
+
+function composerHoldsUnsentPrompt(state, verifyNeedle, prompt) {
+  const role = String(state?.role || '');
+  const value = String(state?.value || '');
+  const editable = /AXTextArea|AXTextField|AXComboBox/i.test(role) && !/StaticText/i.test(role);
+  if (!editable) return false;
+  return copiedLooksLikePrompt(value, verifyNeedle, prompt);
 }
 
 function copiedLooksLikePrompt(copied, verifyNeedle, prompt) {
@@ -250,20 +557,50 @@ function copiedLooksLikePrompt(copied, verifyNeedle, prompt) {
   return true;
 }
 
+function sessionFromWindow(window, extras = {}) {
+  if (!window) return null;
+  return {
+    active: true,
+    windowName: window.name || '',
+    windowId: window.id,
+    fingerprint: window.fingerprint,
+    position: window.position,
+    size: window.size,
+    workspace: extras.workspace || '',
+    taskId: extras.taskId || null,
+    attemptId: extras.attemptId || null,
+    launchedAt: extras.launchedAt || new Date().toISOString(),
+    reused: extras.reused === true,
+  };
+}
+
 async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) {
   const permission = await checkAccessibilityPermission();
   if (!permission.granted) return permission;
-  const titleNeedle = options.windowTitleNeedle || options.titleNeedle || '';
-  const windowReady = await waitForCursorWindow(titleNeedle ? 20_000 : 14_000, titleNeedle);
+  const titleNeedle = options.windowTitleNeedle || options.titleNeedle || TASK_WINDOW_TITLE;
+  const windowReady = options.targetWindow
+    ? {
+      ok: true,
+      windowName: options.targetWindow.name,
+      window: options.targetWindow,
+      windowCount: options.windowCount,
+    }
+    : await waitForCursorWindow(titleNeedle ? 20_000 : 14_000, titleNeedle, options);
   if (!windowReady.ok) return windowReady;
-  if (windowLooksForbidden(windowReady.windowName, titleNeedle)) {
+  const target = windowReady.window || normalizeWindow({ name: windowReady.windowName });
+  if (target.technical || windowLooksForbidden(windowReady.windowName, titleNeedle, {
+    session: options.session,
+    preexisting: options.preexisting,
+    allowWorkspace: true,
+    window: target,
+  })) {
     return {
       ok: false,
       injected: false,
       verified: false,
       submitted: false,
       code: 'CURSOR_WINDOW_FORBIDDEN',
-      message: '拒绝写入当前开发用 Cursor 窗口。请等待独立的 .cursor-package 任务窗口。',
+      message: '拒绝写入当前开发用 Cursor 窗口或其他无关会话。将打开独立的项目任务窗口。',
       preview: '',
       windowName: windowReady.windowName,
     };
@@ -273,7 +610,7 @@ async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) 
   let last = null;
   for (let index = 0; index < attempts; index += 1) {
     try {
-      const focused = await focusAgentComposer(titleNeedle || windowReady.windowName);
+      const focused = await focusAgentComposer(target);
       if (!focused.ok) {
         last = { ...focused, injected: false, verified: false };
         continue;
@@ -281,55 +618,112 @@ async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) 
       if (options.clipboard && typeof options.clipboard.writeText === 'function') {
         options.clipboard.writeText('');
       }
-      const targetNeedle = titleNeedle || windowReady.windowName;
-      await copyFocusedText(targetNeedle);
+      await copyFocusedText(target);
       const before = options.clipboard && typeof options.clipboard.readText === 'function'
         ? String(options.clipboard.readText() || '')
         : '';
-      if (copiedLooksLikePrompt(before, verifyNeedle, prompt)) {
-        last = {
-          ok: false,
-          injected: false,
-          verified: false,
-          code: 'CURSOR_WINDOW_FORBIDDEN',
-          message: '复制到的是已有提示词文件，不是空的 Agent 输入框。已中止，避免写入当前开发会话。',
-          preview: before.slice(0, 240),
-          windowName: focused.targetName || windowReady.windowName,
-        };
-        continue;
+      const alreadyOurs = copiedLooksLikePrompt(before, verifyNeedle, prompt);
+      if (before && !alreadyOurs && before.length > 80 && !copiedLooksLikePrompt(before, verifyNeedle, prompt)) {
+        const looksLikeOtherSession = /执行视频剪辑任务|You are an AI|user_query|Project Sentinel|交接体验与端到端最终收口/.test(before)
+          && !String(before).includes(String(verifyNeedle || ''));
+        if (looksLikeOtherSession) {
+          last = {
+            ok: false,
+            injected: false,
+            verified: false,
+            code: 'CURSOR_WINDOW_FORBIDDEN',
+            message: '复制到的是其它会话内容，不是当前任务的 Agent 输入框。已中止，避免写入当前开发会话。',
+            preview: before.slice(0, 240),
+            windowName: focused.targetName || windowReady.windowName,
+          };
+          continue;
+        }
       }
-      if (options.clipboard && typeof options.clipboard.writeText === 'function') {
-        options.clipboard.writeText(String(prompt || ''));
+      if (!alreadyOurs) {
+        if (options.clipboard && typeof options.clipboard.writeText === 'function') {
+          options.clipboard.writeText(String(prompt || ''));
+        }
+        await pasteIntoFocusedField(target);
+        await copyFocusedText(target);
       }
-      await pasteIntoFocusedField(targetNeedle);
-      await copyFocusedText(targetNeedle);
-      const copied = options.clipboard && typeof options.clipboard.readText === 'function'
-        ? String(options.clipboard.readText() || '')
-        : '';
+      const copied = alreadyOurs
+        ? before
+        : (options.clipboard && typeof options.clipboard.readText === 'function'
+          ? String(options.clipboard.readText() || '')
+          : '');
       const verified = copiedLooksLikePrompt(copied, verifyNeedle, prompt);
       last = {
         ok: verified,
         injected: true,
         verified,
-          preview: copied.slice(0, 800),
+        preview: copied.slice(0, 800),
         windowName: focused.targetName || windowReady.windowName,
         windowCount: focused.windowCount || windowReady.windowCount,
         code: verified ? null : 'PROMPT_INJECT_UNVERIFIED',
+        window: target,
       };
       if (verified) {
         const expectedNeedle = String(titleNeedle || '');
-        if (expectedNeedle && !String(last.windowName || '').includes(expectedNeedle)) {
+        if (expectedNeedle && windowLooksTechnical(last.windowName)) {
           last = {
             ...last,
             ok: false,
             verified: false,
             submitted: false,
             code: 'CURSOR_WINDOW_MISMATCH',
-            message: `提示词窗口不匹配：期望 ${expectedNeedle}，实际 ${last.windowName || '未知'}。`,
+            message: `提示词窗口不匹配：期望项目窗口 ${expectedNeedle}，实际 ${last.windowName || '未知'}。`,
           };
           continue;
         }
-        if (submit) await submitFocusedField(targetNeedle);
+        if (last.windowName === 'Cursor Agents' && !copied.includes(String(verifyNeedle || ''))) {
+          last = {
+            ...last,
+            ok: false,
+            verified: false,
+            submitted: false,
+            code: 'CURSOR_WINDOW_FORBIDDEN',
+            message: '拒绝写入全局 Cursor Agents 会话。将使用独立的项目任务窗口。',
+          };
+          continue;
+        }
+        if (submit) {
+          await submitFocusedField(target);
+          await new Promise((resolve) => setTimeout(resolve, 900));
+          let composer = await readFocusedComposer(target).catch(() => ({ value: '', role: '' }));
+          let composerValue = String(composer.value || '');
+          const hijackedThisChat = /交接体验与端到端最终收口/.test(composerValue)
+            && !composerValue.includes(String(verifyNeedle || ''));
+          if (hijackedThisChat) {
+            last = {
+              ...last,
+              ok: false,
+              verified: true,
+              submitted: false,
+              code: 'CURSOR_WINDOW_FORBIDDEN',
+              message: '提交后焦点落到了当前开发会话。已中止。',
+              preview: composerValue.slice(0, 800),
+            };
+            continue;
+          }
+          if (composerHoldsUnsentPrompt(composer, verifyNeedle, prompt)) {
+            await submitFocusedField(target);
+            await new Promise((resolve) => setTimeout(resolve, 900));
+            composer = await readFocusedComposer(target).catch(() => ({ value: '', role: '' }));
+            composerValue = String(composer.value || '');
+          }
+          if (composerHoldsUnsentPrompt(composer, verifyNeedle, prompt)) {
+            last = {
+              ...last,
+              ok: false,
+              verified: true,
+              submitted: false,
+              code: 'PROMPT_SUBMIT_UNCONFIRMED',
+              message: '提示词已在输入框中验证，但未能确认 Agent 已进入运行。',
+              preview: composerValue.slice(0, 800),
+            };
+            continue;
+          }
+        }
         return {
           ok: true,
           injected: true,
@@ -338,6 +732,8 @@ async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) 
           preview: last.preview,
           windowName: last.windowName,
           windowCount: last.windowCount,
+          window: target,
+          session: sessionFromWindow(target, options),
         };
       }
     } catch (error) {
@@ -362,7 +758,9 @@ async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) 
     message: last?.message || '已尝试粘贴提示词，但未能在 Cursor Agent 输入框中验证到任务内容。',
     preview: last?.preview || '',
     windowName: last?.windowName || windowReady.windowName,
-    guidance: '请点进独立任务窗口的 Agent 输入框后，回到 App 使用「重新打开 Agent」。',
+    window: target,
+    session: sessionFromWindow(target, options),
+    guidance: '请点进项目窗口的 Agent 输入框后，回到 App 使用「重新打开 Agent」。',
   };
 }
 
@@ -380,6 +778,16 @@ async function withClipboard(clipboard, text, action) {
   }
 }
 
+function workspaceFromOpenArgs(openArgs, fallback = '') {
+  const args = Array.isArray(openArgs) ? openArgs : [];
+  const folder = [...args].reverse().find((arg) => (
+    String(arg).startsWith('/')
+    && !String(arg).includes('.cursor-package')
+    && !/\.(md|json|code-workspace)$/i.test(String(arg))
+  ));
+  return folder || fallback;
+}
+
 async function launchAndInjectCursor({
   openArgs,
   prompt,
@@ -388,59 +796,146 @@ async function launchAndInjectCursor({
   inject = true,
   submit = false,
   windowTitleNeedle = '',
+  workspace = '',
+  session = null,
+  attemptId = '',
+  taskId = '',
 } = {}) {
-  const launch = await launchCursorProcess(openArgs);
+  const resolvedWorkspace = workspaceFromOpenArgs(openArgs, workspace);
+  const workspaceNeedle = windowTitleNeedle || TASK_WINDOW_TITLE;
+  const before = await listCursorWindows().catch(() => ({ windows: [], names: [], count: 0 }));
+  const reusable = isReusableCursorSession(session, { attemptId, taskId })
+    ? findSessionWindow(before.windows, session)
+    : null;
+
+  let launch = { launched: false, args: openArgs, reused: false };
+  let target = reusable;
+  if (target) {
+    launch = { launched: false, reused: true, args: openArgs };
+  } else {
+    launch = await launchCursorProcess(openArgs);
+    const appeared = await waitForNewCursorWindow({
+      before: before.windows,
+      workspaceNeedle,
+      timeoutMs: 20_000,
+      session,
+      attemptId,
+      taskId,
+    });
+    if (!appeared.ok) {
+      return {
+        ok: false,
+        launched: true,
+        reused: false,
+        injected: false,
+        verified: false,
+        submitted: false,
+        launch,
+        ...appeared,
+      };
+    }
+    target = appeared.window || normalizeWindow({ name: appeared.windowName });
+  }
+
   if (!inject) {
+    try {
+      await runCursorKeys(`${raiseTargetScript(target)} return JSON.stringify({ ok: true, targetName: targetName });`);
+    } catch {
+      // Raising the existing task window is best-effort when inject is skipped.
+    }
     return {
       ok: true,
-      launched: true,
+      launched: launch.launched !== false && !reusable,
+      reused: Boolean(reusable),
       injected: false,
       verified: false,
       submitted: false,
       launch,
+      windowName: target.name,
+      window: target,
+      session: sessionFromWindow(target, {
+        workspace: resolvedWorkspace,
+        taskId,
+        attemptId,
+        reused: Boolean(reusable),
+      }),
     };
   }
+
   const permission = await checkAccessibilityPermission();
   if (!permission.granted) {
     return {
       ok: false,
-      launched: true,
+      launched: !reusable,
+      reused: Boolean(reusable),
       injected: false,
       verified: false,
       submitted: false,
       launch,
+      windowName: target.name,
+      session: sessionFromWindow(target, {
+        workspace: resolvedWorkspace,
+        taskId,
+        attemptId,
+        reused: Boolean(reusable),
+      }),
       ...permission,
     };
   }
-  const titleNeedle = windowTitleNeedle
-    || (Array.isArray(openArgs) ? openArgs.find((arg) => String(arg).includes('.cursor-package')) : '')
-    || '';
-  const basenameNeedle = String(titleNeedle).split('/').filter(Boolean).pop() || titleNeedle;
+
   const result = await withClipboard(clipboard, prompt, () => (
     injectPromptViaAccessibility(prompt, verifyNeedle, {
       submit,
       retries: 3,
       clipboard,
-      windowTitleNeedle: basenameNeedle,
+      windowTitleNeedle: workspaceNeedle,
+      targetWindow: target,
+      session,
+      preexisting: before.windows,
+      attemptId,
+      taskId,
+      workspace: resolvedWorkspace,
     })
   ));
   return {
     ...result,
-    launched: true,
+    launched: !reusable,
+    reused: Boolean(reusable),
     launch,
     verified: result.verified === true,
     submitted: result.submitted === true,
+    session: result.session || sessionFromWindow(target, {
+      workspace: resolvedWorkspace,
+      taskId,
+      attemptId,
+      reused: Boolean(reusable),
+    }),
   };
 }
 
 module.exports = {
   ACCESSIBILITY_GUIDANCE,
+  PROJECT_WORKSPACE_BASENAME,
+  TASK_WINDOW_TITLE,
+  TECHNICAL_WINDOW_MARKERS,
   checkAccessibilityPermission,
   copiedLooksLikePrompt,
+  composerHoldsUnsentPrompt,
+  describeCursorWindows,
+  findSessionWindow,
   injectPromptViaAccessibility,
+  isReusableCursorSession,
   launchAndInjectCursor,
   launchCursorProcess,
+  listCursorWindows,
   pickTargetWindowName,
+  pickTaskWindow,
+  sessionFromWindow,
+  sessionMatchesWindow,
+  windowLooksLikeEditor,
   waitForCursorWindow,
+  waitForNewCursorWindow,
+  windowLooksForbidden,
+  windowLooksTechnical,
   withClipboard,
 };

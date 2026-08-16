@@ -108,6 +108,7 @@ async function focusPlannerOnTask(task, options = {}) {
   }
   const shouldReturn = TERMINAL_STATUSES.has(task.status)
     || task.status === 'analysis_complete'
+    || task.status === 'analysis_needs_correction'
     || task.status === 'failed'
     || lifecycle === LIFECYCLE.agent_disconnected;
   if (shouldReturn) {
@@ -126,7 +127,7 @@ function restoreMainWindow() {
 async function handleReturnProtocol(entry) {
   const taskPath = path.join(taskRoot(app.getPath('userData')), `${entry.taskId}.json`);
   const task = await assertUserDataTask(app.getPath('userData'), taskPath);
-  if (!TERMINAL_STATUSES.has(task.status) && task.status !== 'analysis_complete') {
+  if (!TERMINAL_STATUSES.has(task.status) && !['analysis_complete', 'analysis_needs_correction'].includes(task.status)) {
     throw Object.assign(new Error('只有终态或分析完成任务可以通过协议回流。'), {
       code: 'HANDOFF_NOT_TERMINAL',
     });

@@ -25,7 +25,7 @@ Read:
 1. This Skill
 2. The task manifest JSON (`*.task.json` or Cursor package `TASK.json`)
 
-The manifest contains `taskId`, `engine`, `kind` (`edit` or `revise`), `platformMode` (`douyin` default, or `main`), source/output paths, `extraRequirements`, and writeback paths. Copy `extraRequirements` into the work unchanged; an empty value means no extra instruction.
+The manifest contains `taskId`, `engine`, `kind` (`edit` or `revise`), `platformMode` (`douyin` default, or `main`), source/output paths, `extraRequirements`, `packageDir`, and writeback paths. Copy `extraRequirements` into the work unchanged; an empty value means no extra instruction. The App does not open `prompt.md` or the `.cursor-package` folder as a Cursor workspace; read those files only via the absolute paths in the task manifest.
 
 ### HotIngest
 
@@ -68,7 +68,7 @@ If `previous.projectPath` / `previous.analysisPath` exist, increment from that a
 
 ### Writeback
 
-Cursor engine: `validate-analysis` then `handoff-update --stage analysis_complete` then `handoff-return`. App continues build/verify/Douyin finalize.
+Cursor engine: `validate-analysis` then `handoff-update --stage analysis_complete` then `handoff-return`. App continues build/verify/Douyin finalize. `validate-analysis` must pass before `analysis_complete`. Copy each manifest `storyUnits[].warnings` and item `semanticProfile.warnings` / `conflicts` into the analysis verbatim; if validate fails, fix `analysis.json` and re-run validate. A failing `validate-analysis` does not mark the handoff failed; keep iterating until the contract passes. Do not mark analysis complete on a failing contract. If the task manifest already has `reusableResults.analysisPath`, validate that file first and only rewrite it when invalid or extra requirements demand a change.
 
 Codex engine: complete `build` / `handoff-complete` then `handoff-return`.
 
@@ -83,7 +83,7 @@ When the prompt contains a handoff task ID and an absolute task JSON path, this 
 - Respect the task's `hyperframesMode`: `disabled` forbids generation; `auto` decides only after a truthful real-media first cut; `force-attempt` requires a serious design attempt but still rejects work that fails the quality gate.
 - Always record `hyperframesDecision`, `hyperframesReason`, the expression gap, whether ordinary editing/subtitles/transitions are sufficient, and the final quality review. Do not mark an enabled animation reviewed without viewing its rendered output.
 - `build` leaves a handoff in `verifying` so Codex can watch the rough cut and any HyperFrames render. After this visual review, run `handoff-complete --handoff-task "<task.json>" --project "<v3 project>" --json`; then run `handoff-return --handoff-task "<task.json>" --json` even for warning/failure outcomes.
-- If a command fails, preserve the partial project and task record. The CLI writes `failed`; still run `handoff-return` when possible. Never fabricate a stage from a timer.
+- If `validate-analysis` fails with `INVALID_VIDEO_ANALYSIS`, keep the handoff running, fix `analysis.json`, and re-validate. Other command failures may mark `failed`; still run `handoff-return` when possible. Never fabricate a stage from a timer.
 
 Example semantic updates:
 

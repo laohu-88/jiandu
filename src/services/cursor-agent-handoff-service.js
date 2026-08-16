@@ -3,17 +3,28 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const { DEFAULT_PROJECT_ROOT } = require('../constants');
+const { CODEX_WORKSPACE_ROOT, DEFAULT_PROJECT_ROOT } = require('../constants');
 const {
   AGENT_ENGINES,
   STAGE_LABELS,
   TERMINAL_STATUSES,
   atomicWriteJson,
   buildCursorAgentPrompt,
+  listHandoffTasks,
   packageDirForTask,
   readHandoffTask,
   updateHandoffTask,
 } = require('./handoff-task-service');
+const { isReusableCursorSession, TASK_WINDOW_TITLE } = require('./cursor-automation-service');
+const { lifecycleOf, LIFECYCLE } = require('./agent-lifecycle-service');
+
+const PACKAGE_SWEEP_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const PACKAGE_RETENTION = Object.freeze({
+  retain: 'retain',
+  retain_recovery: 'retain_recovery',
+  retain_diagnostics: 'retain_diagnostics',
+  sweepable: 'sweepable',
+});
 const { validateAnalysisFile, buildCodexVideoProject, verifyCodexVideoProject } = require('./codex-video-service');
 const { readCodexProjectResult } = require('./codex-project-result-service');
 const { uniqueProjectName } = require('./in-app-edit-workflow-service');
@@ -43,20 +54,91 @@ function engineLabel(engine) {
   return AGENT_ENGINES[engine]?.label || engine || 'Agent';
 }
 
+function cursorWorkspaceFor(task) {
+  return path.resolve(task?.appWorkspace || CODEX_WORKSPACE_ROOT);
+}
+
+function cursorWindowsDirFor(task) {
+  const packageDir = path.resolve(task.cursorPackagePath || packageDirForTask(task.taskFilePath));
+  return path.join(path.dirname(packageDir), 'cursor-windows');
+}
+
+function cursorWindowWorkspacePath(task) {
+  const attemptId = task.currentAttempt?.attemptId || task.attemptId || 'task';
+  return path.join(cursorWindowsDirFor(task), `cursor-window-${attemptId}.code-workspace`);
+}
+
+function buildCursorWindowWorkspace(task) {
+  const workspace = cursorWorkspaceFor(task);
+  const title = path.basename(workspace);
+  return {
+    folders: [
+      {
+        path: workspace,
+        name: title,
+      },
+    ],
+    settings: {
+      'window.title': TASK_WINDOW_TITLE,
+      'workbench.startupEditor': 'none',
+    },
+  };
+}
+
+async function writeCursorWindowWorkspace(task) {
+  const filePath = cursorWindowWorkspacePath(task);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(buildCursorWindowWorkspace(task), null, 2)}\n`, 'utf8');
+  return filePath;
+}
+
+function deactivateCursorSession(session, reason = 'inactive') {
+  if (!session) return null;
+  return {
+    ...session,
+    active: false,
+    closedReason: reason,
+    closedAt: new Date().toISOString(),
+  };
+}
+
+function packageRetentionOf(task) {
+  const lifecycle = lifecycleOf(task);
+  if (lifecycle === LIFECYCLE.completed || lifecycle === LIFECYCLE.canceled) {
+    return PACKAGE_RETENTION.sweepable;
+  }
+  if (lifecycle === LIFECYCLE.failed) return PACKAGE_RETENTION.retain_diagnostics;
+  if (lifecycle === LIFECYCLE.agent_disconnected) return PACKAGE_RETENTION.retain_recovery;
+  return PACKAGE_RETENTION.retain;
+}
+
 function buildCursorLaunchPlan(task) {
   const packageDir = path.resolve(task.cursorPackagePath || packageDirForTask(task.taskFilePath));
-  const promptPath = path.join(packageDir, 'prompt.md');
+  const workspace = cursorWorkspaceFor(task);
+  const attemptId = task.currentAttempt?.attemptId || null;
+  const session = task.cursorSession || null;
+  const reuseSession = isReusableCursorSession(session, {
+    attemptId,
+    taskId: task.taskId,
+  });
+  const windowWorkspacePath = cursorWindowWorkspacePath(task);
   return {
     engine: 'cursor_agent',
-    workspace: packageDir,
+    workspace,
     packageDir,
-    promptPath,
+    windowWorkspacePath,
+    promptPath: path.join(packageDir, 'prompt.md'),
     taskFilePath: task.taskFilePath,
-    windowTitleNeedle: path.basename(packageDir),
-    openArgs: ['--new-window', packageDir],
+    taskId: task.taskId,
+    attemptId,
+    sessionKey: `${task.taskId}:${attemptId || ''}`,
+    windowTitleNeedle: TASK_WINDOW_TITLE,
+    openArgs: ['--new-window', windowWorkspacePath],
+    reuseSession,
+    session: reuseSession ? session : null,
     clipboardText: task.prompt,
     restoreClipboard: true,
-    userInstruction: 'Cursor 已打开独立任务窗口，App 会把正式提示词放入 Agent 输入框。',
+    userInstruction: 'Cursor 已打开项目窗口，App 会把正式提示词放入 Agent 输入框。',
   };
 }
 
@@ -113,7 +195,7 @@ async function writeCursorAgentPackage(task) {
     '',
     '## 必做步骤',
     '',
-    '1. 在 Cursor Agent 中粘贴并启动 `prompt.md` 中的正式任务提示词',
+    '1. 在 Cursor Agent 中读取任务清单绝对路径并启动正式任务提示词（App 不会打开 prompt.md 或交接包窗口）',
     '2. 使用 `video-skill prepare` 扫描素材、元数据与抽帧',
     '3. 按现有分析数据合同写出 `analysis.json`，并包含独立的 `platformVariants.douyin` 规划',
     '4. 使用 `validate-analysis` 校验',
@@ -132,9 +214,9 @@ async function writeCursorAgentPackage(task) {
   const recovery = [
     '# 错误与恢复',
     '',
-    '- App 或 Cursor 中途关闭后，重新打开 App，从待处理素材进入「查看交接任务」即可继续。',
+    '- App 或 Cursor 中途关闭后，重新打开 App 即可继续；交接包仅作内部恢复，不会作为 Cursor 工作区打开。',
     '- 状态为 `awaiting_user_send`：重新复制提示词，在 Cursor Agent 中启动。',
-    '- 状态为 `analysis_complete`：在 App 中点击「继续构建与验证」，不要重复分析覆盖成功结果。',
+    '- 状态为 `analysis_complete`：App 会自动继续构建与验证；不要重复分析覆盖成功结果。',
     '- 状态为 `failed`：不得显示为成功；修复后可新建独立任务，不得原地覆盖成功项目。',
     '- 产物不完整：检查交接包与 prepare 缓存中的 manifest/analysis 是否齐全且通过 validate-analysis。',
     '- 重复读取已完成结果不得再次覆盖；终态任务不可被普通阶段回写。',
@@ -160,9 +242,14 @@ async function writeCursorAgentPackage(task) {
       note: '权威状态以 taskFilePath 指向的交接任务快照为准；本文件仅便于 Agent 快速定位。',
     }),
   ]);
+  const windowWorkspacePath = await writeCursorWindowWorkspace({
+    ...task,
+    cursorPackagePath: packageDir,
+  });
 
   return {
     packageDir,
+    windowWorkspacePath,
     promptPath: path.join(packageDir, 'prompt.md'),
     pathsPath: path.join(packageDir, 'paths.json'),
     expectedArtifactsPath: path.join(packageDir, 'expected-artifacts.json'),
@@ -187,6 +274,7 @@ async function syncPackageStatusPointer(task) {
     updatedAt: task.updatedAt,
     artifacts: task.artifacts || {},
     errors: task.errors || [],
+    validationIssues: task.validationIssues || [],
     warnings: task.warnings || [],
   });
   return statusPath;
@@ -198,6 +286,19 @@ function classifyAgentHandoffState(task) {
   const artifacts = task.artifacts || {};
   const hasAnalysisPaths = Boolean(artifacts.manifestPath && artifacts.analysisPath);
   const hasErrors = Array.isArray(task.errors) && task.errors.length > 0;
+
+  if (status === 'analysis_needs_correction') {
+    return {
+      state: 'analysis_needs_correction',
+      label: STAGE_LABELS.analysis_needs_correction,
+      canContinueBuild: false,
+      canRecover: true,
+      recoverable: true,
+      canCancel: true,
+      validationIssues: task.validationIssues || [],
+      engine,
+    };
+  }
 
   if (status === 'failed') {
     return {
@@ -553,14 +654,91 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
   }
 }
 
+async function sweepHandoffPackages(userDataPath, options = {}) {
+  const now = options.now || Date.now();
+  const maxAgeMs = options.maxAgeMs == null ? PACKAGE_SWEEP_AGE_MS : Number(options.maxAgeMs);
+  const payload = await listHandoffTasks(userDataPath);
+  const swept = [];
+  const retained = [];
+  for (const task of payload.tasks) {
+    const retention = packageRetentionOf(task);
+    const packageDir = task.cursorPackagePath || packageDirForTask(task.taskFilePath);
+    if (!packageDir) {
+      retained.push({ taskId: task.taskId, retention, reason: 'no_package' });
+      continue;
+    }
+    let exists = false;
+    try {
+      await fs.access(packageDir);
+      exists = true;
+    } catch {
+      retained.push({ taskId: task.taskId, retention, reason: 'already_absent' });
+      continue;
+    }
+    const terminalAt = Date.parse(task.completedAt || task.updatedAt || 0);
+    const ageMs = Number.isFinite(terminalAt) ? now - terminalAt : 0;
+    if (retention !== PACKAGE_RETENTION.sweepable) {
+      retained.push({
+        taskId: task.taskId,
+        retention,
+        reason: retention === PACKAGE_RETENTION.retain_recovery
+          ? 'keep_for_recovery'
+          : (retention === PACKAGE_RETENTION.retain_diagnostics ? 'keep_diagnostics' : 'still_active'),
+        exists,
+      });
+      continue;
+    }
+    if (ageMs < maxAgeMs) {
+      retained.push({
+        taskId: task.taskId,
+        retention,
+        reason: 'too_new',
+        ageMs,
+        exists,
+      });
+      continue;
+    }
+    const windowsDir = path.join(path.dirname(packageDir), 'cursor-windows');
+    const attemptIds = new Set([
+      task.currentAttempt?.attemptId,
+      ...(Array.isArray(task.attempts) ? task.attempts.map((item) => item.attemptId) : []),
+    ].filter(Boolean));
+    for (const attemptId of attemptIds) {
+      await fs.rm(path.join(windowsDir, `cursor-window-${attemptId}.code-workspace`), { force: true });
+    }
+    await fs.rm(packageDir, { recursive: true, force: true });
+    swept.push({
+      taskId: task.taskId,
+      packageDir,
+      retention,
+      ageMs,
+    });
+  }
+  return {
+    rootPath: payload.rootPath,
+    swept,
+    retained,
+    maxAgeMs,
+  };
+}
+
 module.exports = {
   EXPECTED_ANALYSIS_ARTIFACTS,
+  PACKAGE_RETENTION,
+  PACKAGE_SWEEP_AGE_MS,
   buildCursorAgentPrompt,
   buildCursorLaunchPlan,
+  buildCursorWindowWorkspace,
   classifyAgentHandoffState,
   continueBuildFromAnalysis,
+  cursorWindowWorkspacePath,
+  cursorWorkspaceFor,
+  writeCursorWindowWorkspace,
+  deactivateCursorSession,
   inspectAnalysisArtifacts,
   markAnalysisComplete,
+  packageRetentionOf,
+  sweepHandoffPackages,
   syncPackageStatusPointer,
   writeCursorAgentPackage,
 };

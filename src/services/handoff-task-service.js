@@ -46,6 +46,7 @@ const HANDOFF_STATUSES = Object.freeze([
   'extracting_frames',
   'analyzing_media',
   'planning_story',
+  'analysis_needs_correction',
   'analysis_complete',
   'deciding_hyperframes',
   'designing_hyperframes',
@@ -73,6 +74,7 @@ const STAGE_LABELS = Object.freeze({
   extracting_frames: '正在抽帧',
   analyzing_media: '正在分析素材',
   planning_story: '正在编排镜头',
+  analysis_needs_correction: '分析合同待修正，正在等待 Agent 修正后再次校验',
   analysis_complete: '分析完成，可继续构建',
   deciding_hyperframes: '正在判断 HyperFrames',
   designing_hyperframes: '正在设计 HyperFrames',
@@ -356,6 +358,7 @@ async function createHandoffTask(userDataPath, input) {
     skillPath: skillPathFor(input.appWorkspace),
     openedInFcpAt: null,
     cursorInject: null,
+    cursorSession: null,
     lifecycle: LIFECYCLE.preparing,
     currentAttempt: attempt,
     attempts: [attempt],
@@ -368,6 +371,7 @@ async function createHandoffTask(userDataPath, input) {
     resultProjectId: null,
     artifacts: {},
     verification: null,
+    validationIssues: [],
     warnings: [],
     errors: [],
     returnState: { requestedAt: null, acknowledgedAt: null },
@@ -410,6 +414,8 @@ function assertTransition(previous, next, options = {}) {
       code: 'INVALID_HANDOFF_TRANSITION',
     });
   }
+  if (previous === 'analysis_needs_correction'
+    && ['planning_story', 'analysis_complete', 'analysis_needs_correction'].includes(next)) return;
   if (options.newAttempt === true && LAUNCH_STATUSES.has(next)) return;
   const previousIndex = HANDOFF_STATUSES.indexOf(previous);
   const nextIndex = HANDOFF_STATUSES.indexOf(next);
@@ -436,8 +442,8 @@ async function updateHandoffTask(taskPath, patch = {}) {
     'stageMessage', 'hyperframesDecision', 'hyperframesReason', 'hyperframesGap',
     'hyperframesQualityReview', 'resultProjectPath', 'resultProjectId', 'artifacts',
     'verification', 'warnings', 'errors', 'returnState', 'autoOpenFcp',
-    'cursorInject', 'openedInFcpAt', 'extraRequirements',
-    'disconnectReason', 'lastActiveStatus', 'reusableResults',
+    'cursorInject', 'cursorSession', 'openedInFcpAt', 'extraRequirements',
+    'disconnectReason', 'lastActiveStatus', 'reusableResults', 'validationIssues',
   ];
   const cleanPatch = {};
   for (const key of allowed) {
@@ -488,6 +494,9 @@ async function updateHandoffTask(taskPath, patch = {}) {
   const updated = {
     ...hydrated,
     ...cleanPatch,
+    validationIssues: nextStatus === 'analysis_complete'
+      ? (Object.hasOwn(cleanPatch, 'validationIssues') ? cleanPatch.validationIssues : [])
+      : (Object.hasOwn(cleanPatch, 'validationIssues') ? cleanPatch.validationIssues : hydrated.validationIssues || []),
     updatedAt: now,
     lastHeartbeatAt: now,
     status: nextStatus,
@@ -509,6 +518,20 @@ async function updateHandoffTask(taskPath, patch = {}) {
         : null
     ),
     completedAt: TERMINAL_STATUSES.has(nextStatus) ? (hydrated.completedAt || now) : null,
+    cursorSession: (() => {
+      const incoming = Object.hasOwn(cleanPatch, 'cursorSession')
+        ? cleanPatch.cursorSession
+        : hydrated.cursorSession;
+      if ((TERMINAL_STATUSES.has(nextStatus) || nextStatus === 'agent_disconnected') && incoming) {
+        return {
+          ...incoming,
+          active: false,
+          closedReason: nextStatus,
+          closedAt: now,
+        };
+      }
+      return incoming;
+    })(),
     eventHistory: [...hydrated.eventHistory, event].slice(-200),
   };
   validateTaskShape(updated, taskPath);
@@ -571,7 +594,7 @@ async function markAgentDisconnected(taskPath, reason = 'process_missing') {
 
 async function startAgentAttempt(taskPath, input = {}) {
   const task = await readHandoffTask(taskPath);
-  if (TERMINAL_STATUSES.has(task.status)) {
+  if (TERMINAL_STATUSES.has(task.status) && task.status !== 'failed') {
     throw Object.assign(new Error('终态任务不能再发起 Agent attempt。'), {
       code: 'HANDOFF_TERMINAL_STATE',
     });
@@ -581,9 +604,17 @@ async function startAgentAttempt(taskPath, input = {}) {
   const previous = task.currentAttempt || null;
   const endedPrevious = previous ? {
     ...previous,
-    endedAt: now,
+    endedAt: previous.endedAt || now,
     invalidatedAt: now,
-    status: previous.status === 'canceled' ? 'canceled' : LIFECYCLE.agent_disconnected,
+    // Preserve the old terminal truth for lineage. A recovery attempt must not
+    // rewrite a failed attempt as merely disconnected.
+    status: previous.status || (previous.status === 'canceled' ? 'canceled' : LIFECYCLE.agent_disconnected),
+    failure: task.status === 'failed'
+      ? {
+        reason: input.reason || 'recovery_after_failure',
+        error: (task.errors || [])[0] || null,
+      }
+      : previous.failure || null,
   } : null;
   const reusable = {
     ...reusableResultsFrom(task),
@@ -601,10 +632,18 @@ async function startAgentAttempt(taskPath, input = {}) {
       manifestPath: reusable.manifestPath,
       projectPath: reusable.projectPath,
     },
-    generation: (previous?.generation || 1) + 1,
+    generation: Math.max(0, ...(task.attempts || []).map((item) => Number(item.generation) || 0)) + 1,
     now,
     status: LIFECYCLE.handed_off,
   });
+  attempt.recoveryReason = input.recoveryReason || (task.status === 'failed' ? input.reason || 'recovery_after_failure' : null);
+  attempt.reusedAnalysis = Boolean(reusable.analysisPath && reusable.manifestPath);
+  attempt.reusableArtifacts = {
+    analysisPath: reusable.analysisPath || null,
+    manifestPath: reusable.manifestPath || null,
+    cacheDirectory: reusable.cacheDirectory || null,
+    projectPath: reusable.projectPath || null,
+  };
   const {
     buildTaskManifest,
     normalizeExtraRequirements,
@@ -612,7 +651,9 @@ async function startAgentAttempt(taskPath, input = {}) {
     taskManifestPathFor,
   } = require('./agent-prompt-builder');
   const extraRequirements = normalizeExtraRequirements(
-    input.extraRequirements == null ? task.extraRequirements : input.extraRequirements,
+    input.extraRequirements == null || String(input.extraRequirements) === ''
+      ? task.extraRequirements
+      : input.extraRequirements,
   );
   const taskManifestPath = task.taskManifestPath || taskManifestPathFor(task.taskFilePath);
   const prompt = buildAgentPrompt(engine, {
@@ -650,6 +691,17 @@ async function startAgentAttempt(taskPath, input = {}) {
       ? (task.cursorPackagePath || packageDirForTask(task.taskFilePath))
       : task.cursorPackagePath,
     cursorInject: null,
+    cursorSession: task.cursorSession && (task.cursorSession.windowName || task.cursorSession.fingerprint || task.cursorSession.windowId != null)
+      ? {
+        ...task.cursorSession,
+        active: true,
+        taskId: task.taskId,
+        attemptId: attempt.attemptId,
+        reused: true,
+        closedReason: null,
+        closedAt: null,
+      }
+      : null,
     status: launchStatus,
     stage: launchStatus,
     stageMessage: event.message,
@@ -666,6 +718,7 @@ async function startAgentAttempt(taskPath, input = {}) {
     lastActiveStatus: task.lastActiveStatus || task.status,
     disconnectReason: null,
     reusableResults: reusable,
+    validationIssues: [],
     errors: [],
     returnState: { requestedAt: null, acknowledgedAt: null },
     eventHistory: [...(task.eventHistory || []), event].slice(-200),

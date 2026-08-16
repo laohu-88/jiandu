@@ -45,6 +45,7 @@ function userFacingStatus(task) {
   if (lifecycle === LIFECYCLE.failed) return USER_STATUS.blocked;
   if (lifecycle === LIFECYCLE.canceled) return USER_STATUS.waiting_ai;
   if (lifecycle === LIFECYCLE.agent_disconnected) return USER_STATUS.agent_disconnected;
+  if (lifecycle === LIFECYCLE.analysis_needs_correction) return USER_STATUS.processing;
   if (lifecycle === LIFECYCLE.completed) {
     if (task.openedInFcpAt) return USER_STATUS.in_fcp;
     return USER_STATUS.results_ready;

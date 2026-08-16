@@ -6,6 +6,7 @@ const LIFECYCLE = Object.freeze({
   preparing: 'preparing',
   handed_off: 'handed_off',
   running: 'running',
+  analysis_needs_correction: 'analysis_needs_correction',
   completed: 'completed',
   failed: 'failed',
   canceled: 'canceled',
@@ -24,6 +25,7 @@ const RUNNING_STATUSES = new Set([
   'extracting_frames',
   'analyzing_media',
   'planning_story',
+  'analysis_needs_correction',
   'analysis_complete',
   'deciding_hyperframes',
   'designing_hyperframes',
@@ -48,6 +50,7 @@ const TERMINAL_LIFECYCLES = new Set([
 const ACTIVE_LIFECYCLES = new Set([
   LIFECYCLE.handed_off,
   LIFECYCLE.running,
+  LIFECYCLE.analysis_needs_correction,
 ]);
 
 const HEARTBEAT_STALE_MS = 120_000;
@@ -68,6 +71,7 @@ function lifecycleOf(taskOrStatus) {
   if (CANCELED_STATUSES.has(status) || status === LIFECYCLE.canceled) return LIFECYCLE.canceled;
   if (FAILED_STATUSES.has(status)) return LIFECYCLE.failed;
   if (COMPLETED_STATUSES.has(status)) return LIFECYCLE.completed;
+  if (status === 'analysis_needs_correction') return LIFECYCLE.analysis_needs_correction;
   if (RUNNING_STATUSES.has(status)) return LIFECYCLE.running;
   if (HANDED_OFF_STATUSES.has(status)) return LIFECYCLE.handed_off;
   if (PREPARING_STATUSES.has(status)) return LIFECYCLE.preparing;
@@ -103,20 +107,20 @@ function disconnectedCopy(task) {
 }
 
 function recoveryActions(task) {
-  if (lifecycleOf(task) !== LIFECYCLE.agent_disconnected) return [];
+  const lifecycle = lifecycleOf(task);
+  if (lifecycle !== LIFECYCLE.agent_disconnected && lifecycle !== LIFECYCLE.failed) return [];
   const engine = task?.engine === 'codex' ? 'codex' : 'cursor_agent';
-  if (engine === 'codex') {
-    return [
-      { id: 'continue_codex', label: '继续使用 Codex', engine: 'codex' },
-      { id: 'switch_cursor', label: '改用 Cursor', engine: 'cursor_agent' },
-      { id: 'cancel', label: '取消任务' },
-    ];
-  }
-  return [
-    { id: 'continue_cursor', label: '继续使用 Cursor', engine: 'cursor_agent' },
-    { id: 'switch_codex', label: '改用 Codex', engine: 'codex' },
-    { id: 'cancel', label: '取消任务' },
+  const continueLabel = lifecycle === LIFECYCLE.failed
+    ? (engine === 'codex' ? '重新使用 Codex' : '重新使用 Cursor')
+    : (engine === 'codex' ? '继续使用 Codex' : '继续使用 Cursor');
+  const switchLabel = engine === 'codex' ? '改用 Cursor' : '改用 Codex';
+  const switchEngine = engine === 'codex' ? 'cursor_agent' : 'codex';
+  const actions = [
+    { id: engine === 'codex' ? 'continue_codex' : 'continue_cursor', label: continueLabel, engine },
+    { id: engine === 'codex' ? 'switch_cursor' : 'switch_codex', label: switchLabel, engine: switchEngine },
   ];
+  if (lifecycle !== LIFECYCLE.failed) actions.push({ id: 'cancel', label: '取消任务' });
+  return actions;
 }
 
 function createAttemptId() {
@@ -376,13 +380,23 @@ function evaluateLiveness(task, runtime = {}, now = Date.now()) {
     };
   }
 
-  // running cannot be established from a historical status file alone.
+  // running: a leftover task window is not proof the Agent is still working.
   if (cursor) {
-    if (taskWindowExists) {
+    if (resultUpdatedRecently || ageMs <= HEARTBEAT_STALE_MS) {
       return {
         live: true,
         disconnected: false,
-        reason: 'task_window',
+        reason: resultUpdatedRecently ? 'result' : (taskWindowExists ? 'task_window' : 'heartbeat'),
+        lifecycle,
+        evidence,
+        ageMs,
+      };
+    }
+    if (taskWindowExists) {
+      return {
+        live: false,
+        disconnected: true,
+        reason: 'heartbeat_stale',
         lifecycle,
         evidence,
         ageMs,
@@ -393,16 +407,6 @@ function evaluateLiveness(task, runtime = {}, now = Date.now()) {
         live: false,
         disconnected: true,
         reason: 'window_missing',
-        lifecycle,
-        evidence,
-        ageMs,
-      };
-    }
-    if (resultUpdatedRecently || ageMs <= HEARTBEAT_STALE_MS) {
-      return {
-        live: true,
-        disconnected: false,
-        reason: resultUpdatedRecently ? 'result' : 'heartbeat',
         lifecycle,
         evidence,
         ageMs,
@@ -485,16 +489,21 @@ function processingViewModel(task) {
   const lifecycle = lifecycleOf(hydrated);
   const engine = hydrated.engine === 'codex' ? 'codex' : 'cursor_agent';
   const disconnected = lifecycle === LIFECYCLE.agent_disconnected;
+  const correcting = lifecycle === LIFECYCLE.analysis_needs_correction;
   return {
     lifecycle,
     engine,
     engineLabel: engineLabel(engine),
-    title: disconnected
+    title: correcting
+      ? `${engineLabel(engine)} 正在修正分析`
+      : (disconnected
       ? disconnectedCopy(hydrated)
-      : (engine === 'codex' ? 'Codex 正在处理' : 'Cursor 正在处理'),
-    message: disconnected
+      : (engine === 'codex' ? 'Codex 正在处理' : 'Cursor 正在处理')),
+    message: correcting
+      ? (hydrated.stageMessage || '分析合同待修正，等待 Agent 写回并再次校验。')
+      : (disconnected
       ? (hydrated.stageMessage || disconnectedCopy(hydrated))
-      : (hydrated.stageMessage || '已交接，等待 Agent 返回。'),
+      : (hydrated.stageMessage || '已交接，等待 Agent 返回。')),
     canCancel: canCancel(hydrated),
     engineLocked: engineSelectionLocked(hydrated),
     recoveryActions: recoveryActions(hydrated),

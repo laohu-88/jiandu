@@ -154,8 +154,12 @@ test('Cursor 交接包包含任务清单、路径、提示词、预期产物、�
   const plan = buildCursorLaunchPlan(task);
   assert.equal(plan.engine, 'cursor_agent');
   assert.ok(plan.openArgs.includes('--new-window'));
-  assert.ok(plan.openArgs.some((arg) => String(arg).includes('.cursor-package')));
-  assert.match(plan.windowTitleNeedle, /\.cursor-package$/);
+  assert.equal(plan.workspace, '/Users/example/Projects/video-cut-planner-v3');
+  assert.ok(plan.openArgs.some((arg) => String(arg).endsWith('.code-workspace')));
+  assert.equal(plan.openArgs.some((arg) => String(arg).endsWith('.cursor-package')), false);
+  assert.equal(plan.windowTitleNeedle, '视频剪辑编排器 · 任务');
+  assert.equal(String(plan.windowWorkspacePath || '').includes('.cursor-package'), false);
+  assert.doesNotMatch(plan.openArgs.join(' '), /prompt\.md/);
   assert.match(plan.userInstruction, /提示词/);
 });
 

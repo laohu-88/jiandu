@@ -78,11 +78,43 @@
       view.appendChild(fcp);
 
       const diag = root.PlannerDom.createResultSection('诊断信息');
+      const task = snap.runningOverlays?.handoffTask;
+      const retention = task?.status === 'cancelled' || task?.status === 'completed' || task?.status === 'completed_with_warnings'
+        ? '完成后可清理'
+        : (task?.status === 'failed'
+          ? '失败诊断保留'
+          : (task?.status === 'agent_disconnected' ? '失联恢复保留' : (task ? '进行中保留' : '—')));
       diag.appendChild(root.PlannerDom.createDefinitionGrid([
         ['版本', snap.config?.version || '—'],
         ['工作区', snap.config?.workspace || '—'],
         ['FFmpeg', snap.config?.ffmpeg || '本地媒体处理可用'],
+        ['当前任务', task?.taskId || '无'],
+        ['交接包策略', retention],
+        ['Agent 窗口', task?.cursorSession?.active ? '已关联当前 attempt' : '未关联活跃任务'],
       ].filter((item) => item[1])));
+      if (task?.cursorPackagePath) {
+        const show = text('button', '在访达中显示内部交接包', 'button ghost');
+        show.type = 'button';
+        show.addEventListener('click', async () => {
+          try {
+            await window.plannerApi.showHandoffPackage(task.taskFilePath);
+          } catch (error) {
+            data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
+          }
+        });
+        diag.appendChild(show);
+      }
+      const sweep = text('button', '清理已完成临时交接包', 'button secondary');
+      sweep.type = 'button';
+      sweep.addEventListener('click', async () => {
+        try {
+          const result = await window.plannerApi.sweepHandoffPackages();
+          data.toast(`已清理 ${result?.swept?.length || 0} 个完成/取消临时包`);
+        } catch (error) {
+          data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
+        }
+      });
+      diag.appendChild(sweep);
       view.appendChild(diag);
     }
 
