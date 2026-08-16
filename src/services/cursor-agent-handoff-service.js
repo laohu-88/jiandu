@@ -55,7 +55,8 @@ function buildCursorLaunchPlan(task) {
     taskFilePath: task.taskFilePath,
     openArgs: ['--new-window', workspace, '-g', `${promptPath}:1`],
     clipboardText: task.prompt,
-    userInstruction: '请在 Cursor 中打开 Agent，粘贴剪贴板中的正式任务提示词（或直接使用已打开的 prompt.md），然后显式启动任务。应用不会自动点击或模拟键盘发送。',
+    restoreClipboard: true,
+    userInstruction: 'Cursor 已打开，App 会尝试把正式提示词放入输入框。默认不自动发送。',
   };
 }
 
@@ -146,6 +147,7 @@ async function writeCursorAgentPackage(task) {
     fs.writeFile(path.join(packageDir, 'RECOVERY.md'), `${recovery}\n`, 'utf8'),
     atomicWriteJson(path.join(packageDir, 'paths.json'), paths),
     atomicWriteJson(path.join(packageDir, 'expected-artifacts.json'), expectedArtifacts),
+    atomicWriteJson(path.join(packageDir, 'TASK.json'), require('./agent-prompt-builder').buildTaskManifest(task)),
     atomicWriteJson(path.join(packageDir, 'status.json'), {
       schemaVersion: 1,
       taskId: task.taskId,

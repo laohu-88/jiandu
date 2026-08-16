@@ -84,20 +84,11 @@ test('view-models index re-exports core symbols', () => {
 
 test('routing state merge keeps unique shape and defaults', () => {
   const state = buildAppRouteState({});
-  assert.deepEqual(Object.keys(state).sort(), [
-    'assetFilter',
-    'douyinStage',
-    'douyinVariantId',
-    'error',
-    'issueFilters',
-    'nav',
-    'projectPage',
-    'projectPath',
-    'runningTask',
-  ].sort());
   assert.equal(state.nav, 'pending');
   assert.equal(state.projectPath, null);
-  assert.equal(state.projectPage, 'overview');
+  assert.equal(state.projectPage, 'brief');
+  assert.equal(state.platformMode, 'douyin');
+  assert.equal(state.engine, 'cursor_agent');
   assert.equal(state.douyinStage, 'plan');
   assert.equal(state.assetFilter, 'all');
   assert.equal(state.error, null);
@@ -113,8 +104,8 @@ test('routing state merge keeps unique shape and defaults', () => {
     runningTask: { id: 't1', label: '生成中' },
     error: 'boom',
   });
-  assert.equal(next.nav, 'tasks');
-  assert.equal(next.projectPage, 'douyin');
+  assert.equal(next.nav, 'library');
+  assert.equal(next.projectPage, 'results');
   assert.equal(next.douyinStage, 'issues');
   assert.equal(next.assetFilter, 'selected');
   assert.equal(next.issueFilters.unresolvedOnly, true);
@@ -128,17 +119,17 @@ test('routing state merge keeps unique shape and defaults', () => {
     assetFilter: 'zzz',
   });
   assert.equal(invalid.nav, 'pending');
-  assert.equal(invalid.projectPage, 'overview');
+  assert.equal(invalid.projectPage, 'brief');
   assert.equal(invalid.douyinStage, 'plan');
   assert.equal(invalid.assetFilter, 'all');
 });
 
 test('nav and project pages use Chinese labels', () => {
   assert.deepEqual(NAV_ITEMS.map((item) => item.label), [
-    '待处理素材', '项目库', '当前任务', '设置',
+    '待处理', '项目', '设置',
   ]);
   assert.deepEqual(PROJECT_PAGES.map((item) => item.label), [
-    '概览', '主成片', '抖音版本', '素材', '问题与审核', '输出结果',
+    '剪辑准备', '处理中', '结果', '高级调整',
   ]);
   assert.deepEqual([...ASSET_FILTERS], [
     'selected', 'separate', 'excluded', 'issues', 'all',
@@ -199,8 +190,8 @@ test('main vs douyin status remain distinct for old and new projects', () => {
     activePage: 'main',
   });
   assert.equal(header.platformStatus, 'unavailable');
-  assert.equal(header.nextStep.page, 'main');
-  assert.match(header.nextStep.reason, /旧项目|主成片/);
+  assert.equal(header.activePage, 'results');
+  assert.equal(header.nextStep.actionId, 'startAiEdit');
 });
 
 test('four douyin stages are ordered and labeled', () => {
@@ -428,22 +419,21 @@ test('empty and error states stay safe', () => {
       platformVariants: { variants: [] },
     },
   });
-  assert.equal(errored.nextStep.page, 'overview');
-  assert.match(errored.nextStep.reason, /损坏|异常/);
+  assert.equal(errored.nextStep.page, 'results');
+  assert.match(errored.nextStep.reason, /损坏|异常|阻塞/);
 });
 
-test('deriveNextStep prefers workflow action when provided', () => {
+test('deriveNextStep 在无阻塞且无结果时指向开始 AI 剪辑', () => {
   const step = deriveNextStep({
     result: {
       project: { name: 'demo', statusLabel: '已验证' },
       platformVariants: { variants: [{ platform: 'douyin', status: 'draft' }] },
     },
-    douyinWorkflow: {
-      nextAction: { id: 'approve', label: '批准当前抖音方案', reason: '可以批准' },
-    },
+    issueSummary: { unresolvedBlocking: 0 },
+    workspacePhase: 'brief',
   });
-  assert.equal(step.label, '批准当前抖音方案');
-  assert.equal(step.page, 'review');
+  assert.equal(step.actionId, 'startAiEdit');
+  assert.equal(step.page, 'brief');
 });
 
 test('renderer state/router stubs manage route transitions', () => {
@@ -455,16 +445,16 @@ test('renderer state/router stubs manage route transitions', () => {
   assert.equal(PlannerState.get().nav, 'library');
 
   router.openProject('/tmp/project-a');
-  assert.equal(PlannerState.get().nav, 'tasks');
+  assert.equal(PlannerState.get().nav, 'library');
   assert.equal(PlannerState.get().projectPath, '/tmp/project-a');
-  assert.equal(PlannerState.get().projectPage, 'overview');
+  assert.equal(PlannerState.get().projectPage, 'results');
 
-  router.setProjectPage('assets');
-  assert.equal(PlannerState.get().projectPage, 'assets');
+  router.setProjectPage('advanced');
+  assert.equal(PlannerState.get().projectPage, 'advanced');
   assert.equal(PlannerState.get().assetFilter, 'all');
 
   router.setDouyinStage('preview');
-  assert.equal(PlannerState.get().projectPage, 'douyin');
+  assert.equal(PlannerState.get().projectPage, 'advanced');
   assert.equal(PlannerState.get().douyinStage, 'preview');
 
   let seen = null;

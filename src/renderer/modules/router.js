@@ -22,28 +22,53 @@
     const stateStore = resolveStore(store);
 
     function navigate(nav) {
-      return stateStore.set({ nav, projectPath: nav === 'library' || nav === 'pending'
-        ? (nav === 'pending' ? null : stateStore.get().projectPath)
-        : stateStore.get().projectPath });
+      return stateStore.set({
+        nav,
+        sessionOpen: false,
+      });
     }
 
-    function openProject(projectPath) {
+    function openProject(projectPath, extras = {}) {
       return stateStore.set({
-        nav: 'tasks',
+        nav: 'library',
+        sessionOpen: true,
         projectPath: projectPath == null ? null : String(projectPath),
-        projectPage: 'overview',
+        sourceDirectory: extras.sourceDirectory || stateStore.get().sourceDirectory || null,
+        projectPage: extras.projectPage || 'results',
+        workspacePhase: extras.workspacePhase || 'results',
+        platformMode: extras.platformMode || 'douyin',
+        engine: extras.engine || stateStore.get().engine || 'cursor_agent',
         douyinStage: 'plan',
         error: null,
       });
     }
 
+    function openPendingEpisode(sourceDirectory, extras = {}) {
+      return stateStore.set({
+        nav: 'pending',
+        sessionOpen: true,
+        sourceDirectory: String(sourceDirectory),
+        projectPath: extras.projectPath || null,
+        projectPage: extras.projectPage || 'brief',
+        workspacePhase: extras.workspacePhase || 'brief',
+        platformMode: extras.platformMode || 'douyin',
+        engine: extras.engine || 'cursor_agent',
+        extraRequirements: extras.extraRequirements || '',
+        error: null,
+      });
+    }
+
     function setProjectPage(projectPage) {
-      return stateStore.set({ projectPage });
+      return stateStore.set({
+        projectPage,
+        workspacePhase: projectPage,
+      });
     }
 
     function setDouyinStage(douyinStage) {
       return stateStore.set({
-        projectPage: 'douyin',
+        projectPage: 'advanced',
+        workspacePhase: 'advanced',
         douyinStage,
       });
     }
@@ -51,6 +76,7 @@
     return {
       navigate,
       openProject,
+      openPendingEpisode,
       setProjectPage,
       setDouyinStage,
       getState: () => stateStore.get(),
@@ -62,6 +88,7 @@
     createRouter,
     navigate: defaultRouter.navigate,
     openProject: defaultRouter.openProject,
+    openPendingEpisode: defaultRouter.openPendingEpisode,
     setProjectPage: defaultRouter.setProjectPage,
     setDouyinStage: defaultRouter.setDouyinStage,
     getState: defaultRouter.getState,

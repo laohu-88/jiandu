@@ -751,10 +751,13 @@ test('Cursor Agent、Codex、App 和 CLI 共用抖音规划合同与本地续建
   const contract = sharedDouyinPlanningContractText();
   const codexPrompt = buildAgentPrompt('codex', input);
   const cursorPrompt = buildAgentPrompt('cursor_agent', input);
-  assert.ok(codexPrompt.includes(contract));
-  assert.ok(cursorPrompt.includes(contract));
-  assert.match(codexPrompt, /platformVariants\.douyin/);
-  assert.match(cursorPrompt, /platformVariants\.douyin/);
+  const skill = await fs.readFile(path.join(__dirname, '../skills/video-cut-planner/SKILL.md'), 'utf8');
+  assert.equal(codexPrompt.includes(contract), false);
+  assert.equal(cursorPrompt.includes(contract), false);
+  assert.match(codexPrompt, /执行视频剪辑任务/);
+  assert.match(cursorPrompt, /执行视频剪辑任务/);
+  assert.ok(skill.includes(contract));
+  assert.match(skill, /platformVariants\.douyin/);
   assert.match(contract, /不得写入或使用固定目标时长/);
   assert.doesNotMatch(contract, /\d+\s*[–—-]\s*\d+\s*秒/);
 

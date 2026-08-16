@@ -602,8 +602,8 @@ function validateLightCaptionPlan(analysis, manifest, errors, analysisById) {
         errors.push(`${field} 超过单 Story Unit 轻字幕上限 ${MAX_LIGHT_CAPTIONS_PER_STORY_UNIT}。`);
       }
     }
-    if (!isNonEmptyString(caption.text, 40)) {
-      errors.push(`${field}.text 必须是简洁中文（最多 40 字）。`);
+    if (!isNonEmptyString(caption.text, 200)) {
+      errors.push(`${field}.text 必须是简洁中文（最多 200 字）。`);
     }
     if (/\n/.test(caption.text || '')) {
       const lines = String(caption.text).split(/\n/).filter(Boolean);

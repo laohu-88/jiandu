@@ -21,6 +21,7 @@ const REQUIRED_RENDERER_MODULES = [
   'src/renderer/modules/workspace/workspace-shell.js',
   'src/renderer/modules/review/review-page.js',
   'src/renderer/modules/pending/pending-page.js',
+  'src/renderer/modules/workspace/edit-workspace.js',
 ];
 
 const REQUIRED_VIEW_MODELS = [
@@ -171,6 +172,32 @@ test('view-models stay free of platform-variant/fcpxml business services', () =>
     assert.equal(/function renderCodexProjectResult/.test(appSource), false);
   });
 }
+
+test('agent-first architecture keeps a single bridge and no local AI product surface', () => {
+  for (const rel of [
+    'src/services/agent-bridge-service.js',
+    'src/services/agent-prompt-builder.js',
+    'src/services/cursor-automation-service.js',
+    'src/services/hotingest-adapter.js',
+    'src/renderer/modules/workspace/edit-workspace.js',
+  ]) {
+    assert.ok(fs.existsSync(path.join(ROOT, rel)), `missing ${rel}`);
+  }
+  for (const rel of [
+    'src/services/ai-environment-service.js',
+    'src/ipc/ai-ipc.js',
+    'src/preload/ai-api.js',
+    'src/renderer/asset-view-model.js',
+    'src/renderer/modules/workspace/tasks-page.js',
+  ]) {
+    assert.equal(fs.existsSync(path.join(ROOT, rel)), false, rel);
+  }
+  const register = read('src/ipc/register.js');
+  assert.doesNotMatch(register, /registerAiIpc|ai-ipc/);
+  const promptBuilder = read('src/services/agent-prompt-builder.js');
+  assert.match(promptBuilder, /buildCompactAgentPrompt/);
+  assert.doesNotMatch(promptBuilder, /sharedEditingRulesText/);
+});
 
 test('sandboxed preload entry has no relative requires', () => {
   const preload = read('src/preload.js');

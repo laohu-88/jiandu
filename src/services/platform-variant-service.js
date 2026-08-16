@@ -2253,6 +2253,7 @@ module.exports = {
   DOUYIN_WARNING_TYPES,
   PLATFORM_VARIANT_SCHEMA_VERSION,
   SELECTION_FACTOR_KEYS,
+  allWarningIds,
   approveDouyinVariant,
   analyzeDouyinShotTracking,
   buildDouyinVariant,

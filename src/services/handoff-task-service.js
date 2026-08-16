@@ -13,13 +13,13 @@ const AGENT_ENGINES = Object.freeze({
     id: 'codex',
     label: 'Codex',
     launchStatus: 'launching_codex',
-    awaitingMessage: 'Codex 已打开并预填提示词，等待用户按一次发送。',
+    awaitingMessage: 'Codex 已打开并预填提示词。',
   }),
   cursor_agent: Object.freeze({
     id: 'cursor_agent',
-    label: 'Cursor Agent',
+    label: 'Cursor',
     launchStatus: 'launching_cursor',
-    awaitingMessage: 'Cursor 已打开，正式任务提示词已复制到剪贴板；请在 Cursor Agent 中粘贴并显式启动任务。',
+    awaitingMessage: 'Cursor 已打开，正式提示词已放入输入框。',
   }),
 });
 const HANDOFF_STATUSES = Object.freeze([
@@ -198,81 +198,29 @@ async function readTaskEvents(taskPath) {
 }
 
 function buildCodexPrompt(input) {
-  const mode = input.hyperframesMode;
-  const {
-    sharedDouyinPlanningContractText,
-    sharedEditingRulesText,
-  } = require('./editing-contract-service');
-  return `使用 $video-cut-planner，处理这期素材：
-
-${input.sourceDirectory}
-
-本次由视频剪辑编排器 v3 发起。
-交接任务 ID：
-${input.taskId}
-
-交接任务状态文件：
-${input.taskFilePath}
-
-HyperFrames 模式：
-${mode}
-
-请严格使用现有共享 service 和 Video Skill 完成：素材扫描、ffprobe 元数据、抽帧、场景变化抽帧、语义分析、主题与标题、采用/候选/淘汰判断、有效区间、无口播镜头编排、连贯度检查、少量轻字幕 Marker、FCP 原生可编辑 Title、按规则判断 HyperFrames、正式 v3 项目、粗剪预览、独立素材 FCPXML 和完整验证。
-
-${sharedEditingRulesText()}
-
-${sharedDouyinPlanningContractText()}
-
-必须把 --handoff-task ${JSON.stringify(input.taskFilePath)} 传给支持该参数的 video-skill 命令，并在语义分析、镜头编排、HyperFrames 判断/设计/复核等 Codex 决策节点使用 handoff-update 持续更新阶段、心跳、决策依据、表达缺口和质量复核。先仅用真实素材形成初步时间线，再决定 HyperFrames。auto 仅在动画明显优于普通剪辑、轻字幕或转场时启用；disabled 禁止生成；force-attempt 必须认真尝试但质量不足必须放弃。
-
-不得修改、移动、重命名或删除原始素材；不得覆盖非空正式项目目录；不得省略验证；不得把粗剪预览写入 FCPXML；FCPXML 必须引用正式项目内的独立素材；正式时间线规格与预览规格必须分离；生成结果必须可由结果中心读取。
-
-build 完成后必须实际观看粗剪；启用 HyperFrames 时还要观看独立动画，写入 reviewing_hyperframes 和质量复核，必要时返工或放弃。确认正式结果后执行 handoff-complete，把正式项目路径、镜头数、时长、Marker、FCP Title、HyperFrames、粗剪、FCPXML 和验证结果写入终态；警告或失败也必须如实记录。无论成功、警告或失败，最后执行 handoff-return 触发返回视频剪辑编排器 v3。`;
+  return buildCompactPromptFor(input);
 }
 
 function buildCursorAgentPrompt(input) {
-  const mode = input.hyperframesMode;
-  const packageDir = input.packageDir || packageDirForTask(input.taskFilePath);
+  return buildCompactPromptFor(input);
+}
+
+function buildCompactPromptFor(input) {
   const {
-    sharedDouyinPlanningContractText,
-    sharedEditingRulesText,
-  } = require('./editing-contract-service');
-  return `使用视频剪辑编排器 v3 的 video-cut-planner Skill，处理这期素材：
-
-${input.sourceDirectory}
-
-本次由视频剪辑编排器 v3 以 Cursor Agent 剪辑引擎发起（Stage 6B）。
-交接任务 ID：
-${input.taskId}
-
-交接任务状态文件：
-${input.taskFilePath}
-
-Cursor Agent 交接包目录：
-${packageDir}
-
-HyperFrames 模式：
-${mode}
-
-请严格使用现有共享 service 与 Video Skill CLI，不得复制剪辑算法，不得另建分析结果格式。
-
-${sharedEditingRulesText()}
-
-${sharedDouyinPlanningContractText()}
-
-阶段要求（Cursor Agent 默认分析后交回 App）：
-1. 运行 prepare --source 上述素材目录 --handoff-task 上述状态文件 --json
-2. 阅读 analysis-request.json 与 manifest.json，查看全部图片预览与视频故事板，按现有分析协议产出 analysis.json；在不修改默认 timeline 的前提下同时返回 platformVariants.douyin 规划
-3. 将 analysis.json 写到交接包目录下的 analysis.json（同时可写到 prepare 缓存）
-4. 运行 validate-analysis --manifest <manifest> --analysis <analysis> --handoff-task 上述状态文件 --json
-5. 校验通过后，用 handoff-update 将阶段设为 analysis_complete，并在消息中写明 manifest 与 analysis 绝对路径；随后执行 handoff-return，把控制权交回 App
-6. App 将继续执行既有 build、verify、结果交接与 FCP 打开；不要在 Cursor Agent 中擅自创建正式项目，除非用户明确要求完整 Agent 闭环
-
-必须把 --handoff-task ${JSON.stringify(input.taskFilePath)} 传给支持该参数的 video-skill 命令，并在 analyzing_media、planning_story、analysis_complete 等节点使用 handoff-update 更新阶段与心跳。
-
-分析结果必须符合 schemas/codex-video-analysis.schema.json 与现有运行时校验合同。保持：不预设成片目标时长、视频内容完整性优先、视频原声默认保留、时间线按实际 frameDuration 对齐、不修改来源素材、不改写 editorial-review.json 与人工字幕。
-
-不得修改、移动、重命名或删除原始素材；不得覆盖非空正式项目目录；失败时如实写入 failed，不要把失败标成成功；成功项目不得原地覆盖。`;
+    buildCompactAgentPrompt,
+    skillPathFor,
+    taskManifestPathFor,
+    normalizeExtraRequirements,
+  } = require('./agent-prompt-builder');
+  const extraRequirements = normalizeExtraRequirements(input.extraRequirements);
+  const skillPath = skillPathFor(input.appWorkspace);
+  const taskManifestPath = input.taskManifestPath || taskManifestPathFor(input.taskFilePath);
+  return buildCompactAgentPrompt({
+    taskId: input.taskId,
+    skillPath,
+    taskManifestPath,
+    extraRequirements,
+  });
 }
 
 function buildAgentPrompt(engine, input) {
@@ -321,18 +269,31 @@ async function createHandoffTask(userDataPath, input) {
   if (!HYPERFRAMES_MODES.has(input.hyperframesMode)) {
     throw Object.assign(new Error('HyperFrames 模式无效。'), { code: 'INVALID_HYPERFRAMES_MODE' });
   }
-  const engine = normalizeEngine(input.engine || 'codex');
+  const engine = normalizeEngine(input.engine || 'cursor_agent');
   const source = await resolveSourceDirectory(input.pendingRoot, input.sourceDirectory);
   const taskId = crypto.randomUUID();
   const filePath = taskFilePath(userDataPath, taskId);
   const packageDir = packageDirForTask(filePath);
   const now = new Date().toISOString();
+  const {
+    buildTaskManifest,
+    normalizeExtraRequirements,
+    skillPathFor,
+    taskManifestPathFor,
+  } = require('./agent-prompt-builder');
+  const extraRequirements = normalizeExtraRequirements(input.extraRequirements);
+  const platformMode = input.platformMode === 'main' ? 'main' : 'douyin';
+  const kind = input.kind === 'revise' ? 'revise' : 'edit';
+  const taskManifestPath = taskManifestPathFor(filePath);
   const prompt = buildAgentPrompt(engine, {
     sourceDirectory: source.sourceDirectoryRealPath,
     taskId,
     taskFilePath: filePath,
+    taskManifestPath,
     packageDir,
     hyperframesMode: input.hyperframesMode,
+    extraRequirements,
+    appWorkspace: input.appWorkspace,
   });
   const deepLink = engine === 'codex' ? buildCodexDeepLink(prompt, input.appWorkspace) : null;
   const task = {
@@ -361,6 +322,16 @@ async function createHandoffTask(userDataPath, input) {
     hyperframesGap: null,
     hyperframesQualityReview: null,
     prompt,
+    extraRequirements,
+    platformMode,
+    kind,
+    parentTaskId: input.parentTaskId || null,
+    previousProjectPath: input.previousProjectPath || null,
+    previousAnalysisPath: input.previousAnalysisPath || null,
+    taskManifestPath,
+    skillPath: skillPathFor(input.appWorkspace),
+    openedInFcpAt: null,
+    cursorInject: null,
     codexDeepLink: deepLink,
     cursorPackagePath: engine === 'cursor_agent' ? packageDir : null,
     resultProjectPath: null,
@@ -375,6 +346,7 @@ async function createHandoffTask(userDataPath, input) {
   };
   validateTaskShape(task, filePath);
   await atomicWriteJson(filePath, task);
+  await atomicWriteJson(taskManifestPath, buildTaskManifest(task));
   await appendEvent(filePath, task.eventHistory[0]);
   if (engine === 'cursor_agent') {
     const { writeCursorAgentPackage } = require('./cursor-agent-handoff-service');
@@ -420,6 +392,7 @@ async function updateHandoffTask(taskPath, patch = {}) {
     'stageMessage', 'hyperframesDecision', 'hyperframesReason', 'hyperframesGap',
     'hyperframesQualityReview', 'resultProjectPath', 'resultProjectId', 'artifacts',
     'verification', 'warnings', 'errors', 'returnState', 'autoOpenFcp',
+    'cursorInject', 'openedInFcpAt', 'extraRequirements',
   ];
   const cleanPatch = {};
   for (const key of allowed) {
@@ -504,16 +477,25 @@ async function assertUserDataTask(userDataPath, requestedPath) {
 }
 
 async function loadHandoffSettings(userDataPath) {
-  const filePath = path.join(path.resolve(userDataPath), SETTINGS_FILENAME);
+  const filePath = path.join(path.resolve(String(userDataPath || '')), SETTINGS_FILENAME);
   const raw = JSON.parse(await fs.readFile(filePath, 'utf8').catch(() => 'null'));
+  const engine = raw?.defaultEngine === 'codex' ? 'codex' : 'cursor_agent';
   return {
     schemaVersion: 1,
     autoOpenFcp: raw?.schemaVersion === 1 && raw.autoOpenFcp === true,
+    defaultEngine: engine,
+    defaultPlatformMode: raw?.defaultPlatformMode === 'main' ? 'main' : 'douyin',
   };
 }
 
 async function saveHandoffSettings(userDataPath, input) {
-  const settings = { schemaVersion: 1, autoOpenFcp: input?.autoOpenFcp === true };
+  const current = await loadHandoffSettings(userDataPath);
+  const settings = {
+    schemaVersion: 1,
+    autoOpenFcp: input?.autoOpenFcp == null ? current.autoOpenFcp : input.autoOpenFcp === true,
+    defaultEngine: input?.defaultEngine === 'codex' ? 'codex' : (input?.defaultEngine === 'cursor_agent' ? 'cursor_agent' : current.defaultEngine),
+    defaultPlatformMode: input?.defaultPlatformMode === 'main' ? 'main' : (input?.defaultPlatformMode === 'douyin' ? 'douyin' : current.defaultPlatformMode),
+  };
   await atomicWriteJson(path.join(path.resolve(userDataPath), SETTINGS_FILENAME), settings);
   return settings;
 }

@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 
 const {
@@ -269,22 +271,25 @@ test('Cursor Agent 与 Codex 使用相同规则', () => {
     sourceDirectory: '/tmp/src',
     taskId: '00000000-0000-4000-8000-000000000001',
     taskFilePath: '/tmp/task.json',
+    taskManifestPath: '/tmp/task.task.json',
     hyperframesMode: 'disabled',
     packageDir: '/tmp/pkg',
+    appWorkspace: path.join(__dirname, '..'),
   };
   const cursor = buildAgentPrompt(AGENT_ENGINES.cursor_agent.id, input);
   const codex = buildAgentPrompt(AGENT_ENGINES.codex.id, input);
   const shared = sharedEditingRulesText();
-  assert.match(cursor, /不设默认成片目标时长|不得设置或推断默认成片目标时长/);
-  assert.match(codex, /不设默认成片目标时长|不得设置或推断默认成片目标时长/);
-  assert.match(cursor, /默认都需要进入时间线/);
-  assert.match(codex, /默认都需要进入时间线/);
-  assert.match(cursor, /默认保留原声/);
-  assert.match(codex, /默认保留原声/);
-  assert.match(cursor, /轻字幕/);
-  assert.match(codex, /轻字幕/);
+  assert.equal(cursor, codex);
+  assert.match(cursor, /执行视频剪辑任务 00000000-0000-4000-8000-000000000001/);
+  assert.match(cursor, /固定剪辑 Skill：/);
+  assert.doesNotMatch(cursor, /不得设置或推断默认成片目标时长/);
+  assert.doesNotMatch(cursor, /默认都需要进入时间线/);
+  const skill = fs.readFileSync(path.join(__dirname, '../skills/video-cut-planner/SKILL.md'), 'utf8');
+  assert.match(skill, /不设默认成片目标时长|不得设置或推断默认成片目标时长/);
+  assert.match(skill, /默认都需要进入时间线/);
+  assert.match(skill, /默认保留原声/);
+  assert.match(skill, /轻字幕/);
   for (const line of shared.split('\n')) {
-    assert.match(cursor, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.match(codex, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(skill, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });

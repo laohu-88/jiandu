@@ -8,3 +8,5 @@ npm-debug.log*
 *.zip
 coverage/
 install-backups/
+work/
+handoff-*-analysis.json

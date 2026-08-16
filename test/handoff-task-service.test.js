@@ -36,6 +36,7 @@ async function createTask(paths, overrides = {}) {
     sourceSummary: { name: path.basename(paths.sourceDirectory), totalFileCount: 1 },
     appWorkspace: '/Users/example/Projects/video-cut-planner-v3',
     hyperframesMode: 'auto',
+    engine: 'codex',
     autoOpenFcp: false,
     ...overrides,
   });
@@ -48,10 +49,10 @@ test('创建唯一任务、原子快照、事件日志、中文深链接和完�
   assert.notEqual(first.taskId, second.taskId);
   assert.equal(first.status, 'ready');
   assert.equal(first.stage, 'ready');
-  assert.match(first.prompt, /使用 \$video-cut-planner/);
+  assert.match(first.prompt, /执行视频剪辑任务/);
   assert.match(first.prompt, new RegExp(first.taskId));
-  assert.match(first.prompt, /--handoff-task/);
-  assert.match(first.prompt, /不得修改、移动、重命名或删除原始素材/);
+  assert.match(first.prompt, /本次额外要求/);
+  assert.doesNotMatch(first.prompt, /不得修改、移动、重命名或删除原始素材/);
   const parsed = new URL(first.codexDeepLink);
   assert.equal(parsed.protocol, 'codex:');
   assert.equal(parsed.hostname, 'threads');

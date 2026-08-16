@@ -96,13 +96,13 @@ test('协议接受可选轻字幕扩展且旧 Marker 保持兼容', () => {
   assert.equal(validateVideoAnalysis(analysis, manifest), analysis);
 });
 
-test('协议拒绝多行、重复 ID 和无效位置的轻字幕扩展', () => {
+test('协议拒绝超过两行、重复 ID 和无效位置的轻字幕扩展', () => {
   const analysis = validAnalysis();
   analysis.timeline.markers = [
     {
       id: 'duplicate', timeSec: 1, text: 'A', type: 'light-subtitle',
       subtitle: {
-        enabled: true, text: '两行\n字幕', durationSec: 2, position: 'floating',
+        enabled: true, text: '三行\n字幕\n不行', durationSec: 2, position: 'floating',
         purpose: '测试', renderAsFcpTitle: true,
       },
     },
@@ -110,7 +110,7 @@ test('协议拒绝多行、重复 ID 和无效位置的轻字幕扩展', () => {
   ];
   assert.throws(
     () => validateVideoAnalysis(analysis, manifest),
-    (error) => error.details.some((message) => /一行/.test(message))
+    (error) => error.details.some((message) => /最多两行/.test(message))
       && error.details.some((message) => /position 无效/.test(message))
       && error.details.some((message) => /id 重复/.test(message)),
   );

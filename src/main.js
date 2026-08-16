@@ -3,6 +3,10 @@ const fs = require('node:fs/promises');
 const { watch } = require('node:fs');
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require('electron');
 
+if (app && process.env.PLANNER_CDP_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', String(process.env.PLANNER_CDP_PORT));
+}
+
 const {
   APP_ID,
   APP_NAME,
@@ -24,6 +28,7 @@ const {
   taskRoot,
   updateHandoffTask,
 } = require('./services/handoff-task-service');
+const { finalizeAgentTask, userFacingStatus } = require('./services/agent-bridge-service');
 const { createIpcHelpers } = require('./ipc/helpers');
 const { registerIpc } = require('./ipc/register');
 
@@ -39,9 +44,6 @@ const {
   authorizeProject,
   assertAuthorizedProject,
   resolveAuthorizedItem,
-  runExclusiveAiAnalysis,
-  recordNoAiEnvironment,
-  ensureBatchFailureRecord,
   scanHandoffsAndPending,
   validateTerminalProject,
 } = helpers;
@@ -83,7 +85,13 @@ async function focusPlannerOnTask(task) {
   mainWindow.show();
   mainWindow.focus();
   app.focus({ steal: true });
-  mainWindow.webContents.send('handoff:terminal', task);
+  mainWindow.webContents.send('handoff:progress', {
+    task,
+    userStatus: userFacingStatus(task),
+  });
+  if (TERMINAL_STATUSES.has(task.status) || task.status === 'analysis_complete' || task.status === 'failed') {
+    mainWindow.webContents.send('handoff:terminal', task);
+  }
 }
 
 function restoreMainWindow() {
@@ -117,7 +125,21 @@ function queueReturnUrl(rawUrl) {
 async function refreshTerminalHandoffs(options = {}) {
   const payload = await listHandoffTasks(app.getPath('userData'));
   for (const task of payload.tasks) {
-    if (!TERMINAL_STATUSES.has(task.status)) continue;
+    if (task.status === 'analysis_complete' && !task.resultProjectPath) {
+      const finalized = await finalizeAgentTask(task.taskFilePath).catch((error) => ({
+        task,
+        blocked: true,
+        error,
+      }));
+      if (finalized?.task) await focusPlannerOnTask(finalized.task);
+      continue;
+    }
+    if (!TERMINAL_STATUSES.has(task.status)) {
+      if (options.includeExisting && !['draft', 'ready', 'cancelled'].includes(task.status)) {
+        await focusPlannerOnTask(task);
+      }
+      continue;
+    }
     const version = `${task.updatedAt}:${task.returnState?.requestedAt || ''}`;
     const requestedAt = Date.parse(task.returnState?.requestedAt || 0) || 0;
     const acknowledgedAt = Date.parse(task.returnState?.acknowledgedAt || 0) || 0;
@@ -189,6 +211,7 @@ if (!hasSingleInstanceLock) {
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
   appReady = true;
+  app.accessibilitySupportEnabled = true;
   app.setAppUserModelId?.(APP_ID);
   app.setAsDefaultProtocolClient(PROTOCOL_SCHEME);
   registerIpc({
@@ -202,9 +225,6 @@ app.whenReady().then(async () => {
     authorizeProject,
     assertAuthorizedProject,
     resolveAuthorizedItem,
-    runExclusiveAiAnalysis,
-    recordNoAiEnvironment,
-    ensureBatchFailureRecord,
     scanHandoffsAndPending,
     validateTerminalProject,
   });

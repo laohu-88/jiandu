@@ -10,7 +10,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/*.test.js test/architecture/*.test.js",
     "check": "node scripts/check-js.js",
     "preload:build": "node scripts/build-preload.js",
     "video-skill": "node bin/video-skill.js",

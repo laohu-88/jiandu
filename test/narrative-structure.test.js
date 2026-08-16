@@ -17,6 +17,7 @@ const {
 } = require('../src/services/video-analysis-schema');
 const {
   buildFcpxml,
+  escapeXml,
   validateFcpxmlStructure,
 } = require('../src/services/fcpxml-service');
 
@@ -302,7 +303,7 @@ test('FCPXML clip 顺序必须与章节化 analysis 镜头顺序一致', () => {
   const analysis = narrativeAnalysis();
   const mappings = [
     ['setup', '/tmp/setup.png'],
-    ['first', '/tmp/first.png'],
+    ['first', "/tmp/I'm first.png"],
     ['second', '/tmp/second.png'],
   ].map(([assetId, projectAbsolutePath], index) => ({
     assetId,
@@ -316,7 +317,7 @@ test('FCPXML clip 顺序必须与章节化 analysis 镜头顺序一致', () => {
   const xml = buildFcpxml({ projectName: '章节项目', analysis, assetMappings: mappings });
   const expected = analysis.timeline.shots.map((shot) => pathToFileURL(
     mappings.find((item) => item.assetId === shot.assetId).projectAbsolutePath,
-  ).href);
+  ).href).map(escapeXml);
   assert.equal(validateFcpxmlStructure(xml, { clipMediaUrls: expected }).ok, true);
   const wrong = [...expected].reverse();
   const report = validateFcpxmlStructure(xml, { clipMediaUrls: wrong });
@@ -324,15 +325,14 @@ test('FCPXML clip 顺序必须与章节化 analysis 镜头顺序一致', () => {
   assert.match(report.errors.join('；'), /镜头素材顺序/);
 });
 
-test('交接确认页包含章节预览、说明文件、时长范围和交叉状态', async () => {
-  const [html, pending] = await Promise.all([
+test('剪辑工作区展示素材识别与额外要求，不再展示旧交接确认页', async () => {
+  const [html, pending, edit] = await Promise.all([
     fs.readFile(path.join(__dirname, '../src/renderer/index.html'), 'utf8'),
     fs.readFile(path.join(__dirname, '../src/renderer/modules/pending/pending-page.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '../src/renderer/modules/workspace/edit-workspace.js'), 'utf8'),
   ]);
-  assert.match(html, /id="handoffNarrativePreview"/);
-  assert.match(pending, /检测到的章节数/);
-  assert.match(pending, /使用的本期说明文件/);
-  assert.match(pending, /预计成片时长范围/);
-  assert.match(pending, /不设默认成片时长上限/);
-  assert.match(pending, /章节交叉/);
+  assert.match(html, /id="pageBrief"/);
+  assert.match(pending, /开始剪辑/);
+  assert.match(edit, /本次额外要求/);
+  assert.match(edit, /开始 AI 剪辑/);
 });

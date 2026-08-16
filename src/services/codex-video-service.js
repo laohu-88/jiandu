@@ -19,7 +19,7 @@ const {
 } = require('../constants');
 const { createProject } = require('./project-service');
 const { loadAssetIndex, scanAssets, updateAssetReview } = require('./media-service');
-const { probeMedia, runMediaTool } = require('./media-tool-service');
+const { probeMedia, parseFrameRate, runMediaTool } = require('./media-tool-service');
 const {
   compareSourceSnapshots,
   hashFile,
@@ -31,7 +31,12 @@ const {
   validateVideoAnalysis,
 } = require('./video-analysis-schema');
 const { resolvePreviewFormat, resolveVideoFormats } = require('./video-format-service');
-const { collectFcpTitles, validateFcpxmlStructure, writeFcpxml } = require('./fcpxml-service');
+const {
+  collectFcpTitles,
+  escapeXml,
+  validateFcpxmlStructure,
+  writeFcpxml,
+} = require('./fcpxml-service');
 const {
   formatDurationPolicyLabel,
   summarizeMaterialCoverage,
@@ -649,7 +654,8 @@ async function verifyCodexVideoProject(projectPath) {
     fps: timelineFormat.fps,
     clipMediaUrls: effectiveAnalysis.timeline.shots.map((shot) => {
       const mapping = status.assetMappings.find((item) => item.assetId === shot.assetId);
-      return mapping ? pathToFileURL(mapping.projectAbsolutePath).href.replace(/&/g, '&amp;') : null;
+      // Keep expected URLs identical to FCPXML attribute escaping (including apostrophes).
+      return mapping ? escapeXml(pathToFileURL(mapping.projectAbsolutePath).href) : null;
     }),
   });
   errors.push(...fcpxmlReport.errors);
@@ -676,8 +682,11 @@ async function verifyCodexVideoProject(projectPath) {
       || previewMetadata.displayHeight !== previewFormat.height) {
       errors.push('粗剪预览分辨率与独立预览设置不一致。');
     }
-    if (!Number.isFinite(previewMetadata.frameRate)
-      || Math.abs(previewMetadata.frameRate - previewFormat.fps) > 0.05) {
+    const previewFrameRates = [
+      previewMetadata.frameRate,
+      parseFrameRate(previewMetadata.rFrameRate),
+    ].filter(Number.isFinite);
+    if (!previewFrameRates.some((rate) => Math.abs(rate - previewFormat.fps) <= 0.05)) {
       errors.push('粗剪预览帧率与独立预览设置不一致。');
     }
   } catch (error) {

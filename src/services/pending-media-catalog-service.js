@@ -226,7 +226,12 @@ async function scanEpisode(directoryPath, options = {}) {
   };
   const existingProject = matchExistingProject(base, options.projectSources || []);
   const latestTask = matchLatestTask(base, options.tasks || []);
-  const result = { ...base, existingProject, latestTask };
+  const hotingestDetected = files.some((file) => (
+    /(?:^|\/)\.hotingest\//.test(String(file.relativePath || '').split(path.sep).join('/'))
+    || /\.context\.html?$/i.test(file.filename || file.relativePath || '')
+    || path.basename(file.relativePath || '') === '_素材索引.html'
+  ));
+  const result = { ...base, existingProject, latestTask, hotingestDetected };
   result.status = classifyEpisode(result);
   return result;
 }

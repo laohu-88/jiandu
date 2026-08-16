@@ -1,6 +1,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
+const hotingestAdapter = require('./hotingest-adapter');
 
 const MAX_CONTEXT_FILE_BYTES = 256 * 1024;
 const MAX_CONTEXT_TEXT_CHARS = 16_000;
@@ -186,26 +187,32 @@ function parseHtmlFields(rawHtml, role) {
   const sourceLink = links.find((link) => /原(?:始|帖|文).*(?:地址|链接)|来源|source|original/i.test(
     link.label || '',
   )) || links.find((link) => /^https?:\/\//i.test(link.href));
+  const production = hotingestAdapter.extractHotIngestHtmlFields(rawHtml);
   const title = labeledValue(lines, ['标题', '原文标题', 'Title'])
+    || production.title
     || metaValue(rawHtml, ['og:title', 'twitter:title'])
     || headings[0]
     || titleElement;
-  const body = labeledValue(lines, ['正文', '原文', '说明', '内容', '描述', 'Body', 'Description']);
+  const body = labeledValue(lines, ['正文', '原文', '说明', '内容', '描述', 'Body', 'Description'])
+    || production.body;
   const translation = labeledValue(lines, [
-    '中文翻译', '中文译文', '翻译', '译文', 'Translated Title', 'Translated Body',
-  ]);
+    '中文翻译', '中文译文', '翻译', '译文', 'Translated Title', 'Translated Body', '中文对照',
+  ]) || production.translation;
   const tags = parseTags(labeledValue(lines, ['标签', 'Tags']));
   const fields = {
     title,
     body,
     translation,
-    platform: labeledValue(lines, ['来源平台', '平台', 'Platform', 'Source']),
+    platform: labeledValue(lines, ['来源平台', '平台', 'Platform', 'Source']) || production.platform,
     sourceUrl: safeUrl(
       labeledValue(lines, ['原始链接', '原文链接', '原帖地址', '来源 URL', 'Source URL'])
-      || sourceLink?.href,
+      || sourceLink?.href
+      || production.sourceUrl,
     ),
-    author: labeledValue(lines, ['作者', '账号', '频道', 'Author', 'Channel']),
-    publishedAt: labeledValue(lines, ['发布时间', '发布日期', 'Published At', 'Published']),
+    author: labeledValue(lines, ['作者', '账号', '频道', 'Author', 'Channel']) || production.author,
+    publishedAt: labeledValue(lines, ['发布时间', '发布日期', 'Published At', 'Published'])
+      || production.publishedAt,
+    explanationCandidates: production.explanationCandidates || [],
     tags: tags.length ? tags : null,
     comments: labeledValue(lines, ['评论', '热门评论', 'Comments']),
     indexSupplement: role === 'folder-index' ? text : null,
@@ -269,28 +276,11 @@ function translationText(object) {
 }
 
 function parseMetadataFields(value) {
-  const object = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  const body = [
-    pickFirst(object, ['body', 'content', 'text']),
-    pickFirst(object, ['description', 'media_description', 'caption']),
-  ].filter(Boolean);
+  const parsed = hotingestAdapter.parseMetadataFields(value);
   return {
-    title: pickFirst(object, ['title', 'name']),
-    body: normalizeScalar([...new Set(body)].join('\n\n')),
-    translation: translationText(object),
-    platform: pickFirst(object, ['source', 'platform', 'site']),
-    sourceUrl: safeUrl(pickFirst(object, [
-      'source_url', 'post_url', 'canonical_uri', 'external_source_url', 'original_url', 'url',
-    ])),
-    author: pickFirst(object, ['author', 'channel_title', 'account', 'creator']),
-    publishedAt: pickFirst(object, ['published_at', 'created_at', 'published', 'date']),
-    tags: parseTags(object.tags || object.hashtags || []),
-    comments: commentsText(object.comments || object.top_comments),
-    indexSupplement: null,
-    sourceItemKey: pickFirst(object, [
-      'decision_key', 'platform_id', 'source_item_id', 'source_id', 'post_id', 'item_id', 'id',
-    ]),
-    language: pickFirst(object, ['language', 'lang', 'source_language']),
+    ...parsed,
+    sourceUrl: safeUrl(parsed.sourceUrl),
+    translation: parsed.translation || translationText(value && typeof value === 'object' ? value : {}),
   };
 }
 
@@ -309,6 +299,9 @@ function classifyHotIngestFile(relativePath) {
   }
   if (/(?:^|\/)\.hotingest\/items\/\d+\.json$/i.test(normalized)) {
     return { role: 'asset-sidecar', type: 'metadata-json' };
+  }
+  if (/(?:^|\/)\.hotingest\/manifest\.json$/i.test(normalized)) {
+    return { role: 'package-manifest', type: 'package-manifest' };
   }
   return null;
 }
@@ -482,6 +475,24 @@ function mergeRecord(target, record, warnings) {
       );
     }
   }
+  if (Array.isArray(record.fields.translationEntries) && record.fields.translationEntries.length) {
+    target.translationEntries = record.fields.translationEntries;
+  }
+  if (Array.isArray(record.fields.explanationCandidates) && record.fields.explanationCandidates.length) {
+    target.explanationCandidates = [...new Set([
+      ...(target.explanationCandidates || []),
+      ...record.fields.explanationCandidates,
+    ])];
+  }
+  if (typeof record.fields.hasAudio === 'boolean') target.hasAudio = record.fields.hasAudio;
+  if (typeof record.fields.sourceHasAudio === 'boolean') target.sourceHasAudio = record.fields.sourceHasAudio;
+  if (Array.isArray(record.fields.schemaDrift) && record.fields.schemaDrift.length) {
+    target.schemaDrift = [...(target.schemaDrift || []), ...record.fields.schemaDrift];
+    warnings.push(...record.fields.schemaDrift.map((item) => item.message || String(item)));
+  }
+  if (record.fields.rawOriginalItem && typeof record.fields.rawOriginalItem === 'object') {
+    target.rawOriginalItem = record.fields.rawOriginalItem;
+  }
 }
 
 function createAssetContext() {
@@ -499,6 +510,12 @@ function createAssetContext() {
     indexSupplement: null,
     sourceItemKey: null,
     language: null,
+    translationEntries: [],
+    explanationCandidates: [],
+    hasAudio: null,
+    sourceHasAudio: null,
+    schemaDrift: [],
+    rawOriginalItem: null,
     fieldSources: {},
     fieldPriorities: {},
     explicitGroupKeys: [],
@@ -698,6 +715,9 @@ function analysisContextView(context) {
     comments: truncateText(context.comments, 400),
     sourceItemKey: truncateText(context.sourceItemKey, 200),
     language: truncateText(context.language, 50),
+    explanationCandidates: (context.explanationCandidates || []).slice(0, 8),
+    hasAudio: context.hasAudio,
+    sourceHasAudio: context.sourceHasAudio,
     fieldSources: context.fieldSources,
     warnings: (context.warnings || []).slice(0, 5).map((warning) => truncateText(warning, 300)),
   };
@@ -964,12 +984,15 @@ async function ingestHotIngestContexts(sourceDirectory, files, items) {
     : { items: enrichedItems, storyUnits: [] };
   enrichedItems = storyResult.items;
   const assetsWithContext = enrichedItems.filter((item) => item.context?.files.length).length;
+  const inventory = await hotingestAdapter.buildCanonicalInventory(sourceDirectory, files);
+  if (inventory.warnings?.length) warnings.push(...inventory.warnings.filter((item) => !warnings.includes(item)));
   return {
     items: enrichedItems,
     storyUnits: storyResult.storyUnits,
+    inventory,
     contextIngestion: {
       schemaVersion: 2,
-      detected: recognized.length > 0,
+      detected: recognized.length > 0 || inventory.detected,
       assetsWithContext,
       contextFileCount: recognized.length,
       assetSidecarCount: sidecars.length,
@@ -984,6 +1007,7 @@ async function ingestHotIngestContexts(sourceDirectory, files, items) {
       ).length,
       warningCount: warnings.length,
       parseWarningCount: parseWarnings.length,
+      schemaDrift: inventory.schemaDrift || [],
       orphanContexts,
       warnings,
       limits: {
@@ -1010,4 +1034,5 @@ module.exports = {
   parseIndexEntries,
   parseMetadataFields,
   stripUnsafeHtml,
+  hotingestAdapter,
 };

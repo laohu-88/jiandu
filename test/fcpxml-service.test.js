@@ -164,12 +164,35 @@ test('FCPXML 1.14 使用 FCP 12.3 基础标题生成独立可编辑 Title 且不
   assert.match(xml, /<title ref="r\d+" lane="1" offset="23\/30s"[^>]*duration="6\/5s">/);
   assert.match(xml, /<text-style[^>]*>开始 &amp; 调整 &lt;结果&gt;<\/text-style>/);
   assert.match(xml, /<text-style-def id="ts-title-1">/);
+  assert.match(xml, /fontSize="46"/);
+  assert.match(xml, /strokeColor="0 0 0 0\.9" strokeWidth="-4"/);
+  assert.match(xml, /<param name="位置"[^>]*value="0 -360"\/>/);
   assert.match(xml, /<marker [^>]*value="开始调整"\/>/);
   assert.ok(
     xml.indexOf('<title ') < xml.indexOf('<marker '),
     'FCPXML 1.14 DTD 要求锚定 Title 位于 Marker 之前',
   );
   assert.doesNotMatch(xml, /roughcut-preview/);
+});
+
+test('原生标题支持居中位置', () => {
+  const titledAnalysis = structuredClone(analysis);
+  titledAnalysis.timeline.markers = [{
+    id: 'marker-center',
+    timeSec: 0,
+    text: '居中结论',
+    type: 'chapter',
+    subtitle: {
+      enabled: true,
+      text: '最终结论',
+      durationSec: 1,
+      position: 'center',
+      purpose: '结论',
+      renderAsFcpTitle: true,
+    },
+  }];
+  const xml = buildFcpxml({ projectName: '居中标题', analysis: titledAnalysis, assetMappings: mappings });
+  assert.match(xml, /<param name="位置"[^>]*value="0 0"\/>/);
 });
 
 test('没有启用标题的旧分析继续输出 FCPXML 1.10 且无 effect/title', () => {

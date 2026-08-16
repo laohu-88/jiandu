@@ -10,20 +10,30 @@
   const { DOUYIN_STAGES } = douyin;
 
 const NAV_ITEMS = Object.freeze([
-  { id: 'pending', label: '待处理素材' },
-  { id: 'library', label: '项目库' },
-  { id: 'tasks', label: '当前任务' },
+  { id: 'pending', label: '待处理' },
+  { id: 'library', label: '项目' },
   { id: 'settings', label: '设置' },
 ]);
 
 const PROJECT_PAGES = Object.freeze([
-  { id: 'overview', label: '概览' },
-  { id: 'main', label: '主成片' },
-  { id: 'douyin', label: '抖音版本' },
-  { id: 'assets', label: '素材' },
-  { id: 'review', label: '问题与审核' },
-  { id: 'outputs', label: '输出结果' },
+  { id: 'brief', label: '剪辑准备' },
+  { id: 'processing', label: '处理中' },
+  { id: 'results', label: '结果' },
+  { id: 'advanced', label: '高级调整' },
 ]);
+
+const LEGACY_PAGE_MAP = Object.freeze({
+  overview: 'brief',
+  main: 'results',
+  douyin: 'results',
+  assets: 'advanced',
+  review: 'advanced',
+  outputs: 'results',
+  plan: 'brief',
+  issues: 'advanced',
+  preview: 'advanced',
+  deliver: 'results',
+});
 
 const ASSET_FILTERS = Object.freeze([
   'selected',
@@ -39,6 +49,14 @@ const DEFAULT_ISSUE_FILTERS = Object.freeze({
   shotId: null,
   assetId: null,
   unresolvedOnly: false,
+});
+
+const USER_STATUS_LABELS = Object.freeze({
+  waiting_ai: '等待 AI',
+  processing: 'AI 正在处理',
+  results_ready: '结果已就绪',
+  in_fcp: '已进入 FCP',
+  blocked: '真正阻塞',
 });
 
 function asArray(value) {
@@ -87,7 +105,34 @@ function douyinStatusOf(result, item, douyinVariant) {
   return 'none';
 }
 
-function buildCatalogProjectRow(resultSummaryOrCatalogItem = {}) {
+function deriveUserStatus({
+  task = null,
+  result = null,
+  issueSummary = null,
+} = {}) {
+  if (task?.status === 'failed' || result?.project?.status === 'corrupt' || result?.error) {
+    return 'blocked';
+  }
+  if (Number(issueSummary?.unresolvedBlocking || 0) > 0) return 'blocked';
+  if (task && ['completed', 'completed_with_warnings'].includes(task.status)) {
+    return task.openedInFcpAt ? 'in_fcp' : 'results_ready';
+  }
+  const processing = [
+    'launching_codex', 'launching_cursor', 'awaiting_user_send',
+    'scanning_media', 'extracting_metadata', 'extracting_frames',
+    'analyzing_media', 'planning_story', 'analysis_complete',
+    'deciding_hyperframes', 'designing_hyperframes', 'rendering_hyperframes',
+    'reviewing_hyperframes', 'building_project', 'rendering_preview',
+    'generating_fcpxml', 'verifying',
+  ];
+  if (task && processing.includes(task.status)) return 'processing';
+  const outputs = asArray(pickDouyinVariant(result)?.outputs);
+  if (outputs.length || result?.artifacts?.fcpxml?.exists) return 'results_ready';
+  if (task) return 'waiting_ai';
+  return 'waiting_ai';
+}
+
+function buildCatalogProjectRow(resultSummaryOrCatalogItem = {}, task = null) {
   const item = resultSummaryOrCatalogItem || {};
   const result = item.result || item;
   const project = result.project || {};
@@ -109,6 +154,11 @@ function buildCatalogProjectRow(resultSummaryOrCatalogItem = {}) {
     || item.filesystemTime
     || project.createdAt
     || null;
+  const userStatus = deriveUserStatus({
+    task: task || item.latestTask || null,
+    result,
+    issueSummary: item.issueCounts || item.issueSummary,
+  });
 
   return {
     name,
@@ -116,8 +166,11 @@ function buildCatalogProjectRow(resultSummaryOrCatalogItem = {}) {
     updatedAt,
     mainStatus: mainStatusOf(result, item),
     douyinStatus: douyinStatusOf(result, item, item.douyinVariant),
+    userStatus,
+    userStatusLabel: USER_STATUS_LABELS[userStatus] || userStatus,
     issueCounts: normalizeIssueCounts(item.issueCounts || item.issueSummary || emptyIssueCounts()),
     projectPath: item.projectPath || project.path || null,
+    sourceDirectory: item.sourceDirectory || null,
   };
 }
 
@@ -125,102 +178,55 @@ function deriveNextStep({
   result = null,
   douyinVariant = null,
   issueSummary = null,
-  douyinWorkflow = null,
+  task = null,
+  workspacePhase = 'brief',
 } = {}) {
-  const variant = pickDouyinVariant(result, douyinVariant);
-  const unresolvedConfirm = Number(issueSummary?.unresolvedConfirm || 0);
   const unresolvedBlocking = Number(issueSummary?.unresolvedBlocking || 0);
-  const platformVariantsMissing = result != null && result.platformVariants == null;
-
-  if (!result) {
+  if (unresolvedBlocking > 0 || task?.status === 'failed' || result?.error) {
     return {
-      label: '打开项目库',
-      page: null,
-      reason: '尚未打开项目。',
+      label: '查看阻塞原因',
+      page: 'results',
+      reason: task?.errors?.[0]?.message || result?.error || '存在无法安全继续的问题。',
       nav: 'library',
+      actionId: 'resolveBlocker',
     };
   }
-
-  if (result?.error || result?.project?.status === 'corrupt') {
+  if (task && !['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(task.status)
+    && !['draft', 'ready'].includes(task.status)) {
     return {
-      label: '查看概览',
-      page: 'overview',
-      reason: result.error || '项目状态异常，请先查看概览。',
-      nav: 'tasks',
+      label: '查看处理进度',
+      page: 'processing',
+      reason: task.stageMessage || 'AI 正在处理。',
+      nav: 'library',
+      actionId: 'watchProgress',
     };
   }
-
-  if (platformVariantsMissing) {
+  const variant = pickDouyinVariant(result, douyinVariant);
+  const hasOutputs = asArray(variant?.outputs).length > 0 || result?.artifacts?.fcpxml?.exists;
+  if (hasOutputs) {
     return {
-      label: '查看主成片',
-      page: 'main',
-      reason: '旧项目尚未包含平台变体，可先查看主成片。',
-      nav: 'tasks',
+      label: '在 Final Cut Pro 中打开',
+      page: 'results',
+      reason: '结果已就绪。',
+      nav: 'library',
+      actionId: 'openInFcp',
     };
   }
-
-  if (douyinWorkflow?.nextAction) {
-    const action = douyinWorkflow.nextAction;
-    const pageByAction = {
-      saveDraft: 'douyin',
-      confirmIssues: 'review',
-      approve: 'review',
-      generate: 'douyin',
-      playPreview: 'outputs',
-      viewVerification: 'outputs',
-      openOutputDir: 'outputs',
-      openInFcp: 'outputs',
-    };
+  if (workspacePhase === 'brief' || !result) {
     return {
-      label: action.label,
-      page: pageByAction[action.id] || 'douyin',
-      reason: action.reason || '',
-      nav: 'tasks',
-      actionId: action.id,
+      label: '开始 AI 剪辑',
+      page: 'brief',
+      reason: '确认素材后即可开始。',
+      nav: 'pending',
+      actionId: 'startAiEdit',
     };
   }
-
-  if (!variant) {
-    return {
-      label: '创建抖音版本',
-      page: 'douyin',
-      reason: '项目还没有抖音变体。',
-      nav: 'tasks',
-    };
-  }
-
-  if (unresolvedConfirm > 0 || unresolvedBlocking > 1) {
-    return {
-      label: '确认待处理问题',
-      page: 'review',
-      reason: '仍有待处理问题。',
-      nav: 'tasks',
-    };
-  }
-
-  if (!['approved', 'generated', 'generated_with_warnings'].includes(String(variant.status))) {
-    return {
-      label: '批准当前抖音方案',
-      page: 'review',
-      reason: '抖音方案尚未批准。',
-      nav: 'tasks',
-    };
-  }
-
-  if (!asArray(variant.outputs).length) {
-    return {
-      label: '生成预览与 FCP 时间线',
-      page: 'douyin',
-      reason: '方案已批准，可生成输出。',
-      nav: 'tasks',
-    };
-  }
-
   return {
-    label: '查看输出结果',
-    page: 'outputs',
-    reason: '输出已生成。',
-    nav: 'tasks',
+    label: '开始 AI 剪辑',
+    page: 'brief',
+    reason: '可以开始剪辑。',
+    nav: 'pending',
+    actionId: 'startAiEdit',
   };
 }
 
@@ -228,40 +234,54 @@ function buildWorkspaceHeader({
   result = null,
   douyinVariant = null,
   issueSummary = null,
-  activePage = 'overview',
+  activePage = 'brief',
   douyinWorkflow = null,
+  task = null,
+  platformMode = 'douyin',
+  engine = 'cursor_agent',
 } = {}) {
   const project = result?.project || {};
   const variant = pickDouyinVariant(result, douyinVariant);
+  const userStatus = deriveUserStatus({ task, result, issueSummary });
   const nextStep = deriveNextStep({
     result,
     douyinVariant: variant,
     issueSummary,
-    douyinWorkflow,
+    task,
+    workspacePhase: activePage,
   });
-
-  const lastOperation = variant?.generatedAt
-    || variant?.updatedAt
-    || project.verifiedAt
-    || project.generatedAt
-    || project.createdAt
-    || null;
+  const mappedPage = PROJECT_PAGES.some((page) => page.id === activePage)
+    ? activePage
+    : (LEGACY_PAGE_MAP[activePage] || 'brief');
 
   return {
-    name: project.name || '未命名项目',
+    name: project.name || task?.sourceSummary?.name || '未命名项目',
     theme: result?.summary?.theme || result?.summary?.recommendedTitle || null,
-    status: project.statusLabel || project.status || 'unknown',
+    status: USER_STATUS_LABELS[userStatus] || userStatus,
+    userStatus,
     mainFilmStatus: project.statusLabel || project.status || 'unknown',
     platformStatus: variant?.status || (result?.platformVariants == null ? 'unavailable' : 'none'),
-    lastOperation,
+    platformMode: platformMode === 'main' ? 'main' : 'douyin',
+    platformModeLabel: platformMode === 'main' ? '完整成片' : '抖音',
+    engine: engine === 'codex' ? 'codex' : 'cursor_agent',
+    engineLabel: engine === 'codex' ? 'Codex' : 'Cursor',
+    lastOperation: variant?.generatedAt
+      || variant?.updatedAt
+      || project.verifiedAt
+      || project.generatedAt
+      || project.createdAt
+      || task?.updatedAt
+      || null,
     nextStep: {
       label: nextStep.label,
       page: nextStep.page,
       reason: nextStep.reason,
+      actionId: nextStep.actionId,
     },
     canReturnToLibrary: true,
-    activePage: PROJECT_PAGES.some((page) => page.id === activePage) ? activePage : 'overview',
+    activePage: mappedPage,
     issueSummary: normalizeIssueCounts(issueSummary || emptyIssueCounts()),
+    blockingOnly: Number(issueSummary?.unresolvedBlocking || 0) > 0,
   };
 }
 
@@ -271,10 +291,17 @@ function buildAppRouteState(partial = {}) {
   const stageIds = new Set(DOUYIN_STAGES.map((item) => item.id));
   const assetFilters = new Set(ASSET_FILTERS);
 
-  const nav = navIds.has(partial.nav) ? partial.nav : 'pending';
-  const projectPage = pageIds.has(partial.projectPage) ? partial.projectPage : 'overview';
+  let nav = navIds.has(partial.nav) ? partial.nav : (partial.nav === 'tasks' ? 'library' : 'pending');
+  if (!navIds.has(nav)) nav = 'pending';
+  const requestedPage = LEGACY_PAGE_MAP[partial.projectPage] || partial.projectPage;
+  const projectPage = pageIds.has(requestedPage) ? requestedPage : 'brief';
   const douyinStage = stageIds.has(partial.douyinStage) ? partial.douyinStage : 'plan';
   const assetFilter = assetFilters.has(partial.assetFilter) ? partial.assetFilter : 'all';
+  const platformMode = partial.platformMode === 'main' ? 'main' : 'douyin';
+  const engine = partial.engine === 'codex' ? 'codex' : 'cursor_agent';
+  const workspacePhase = ['brief', 'processing', 'results', 'revise', 'advanced'].includes(partial.workspacePhase)
+    ? partial.workspacePhase
+    : projectPage;
 
   const issueFilters = {
     ...DEFAULT_ISSUE_FILTERS,
@@ -293,14 +320,42 @@ function buildAppRouteState(partial = {}) {
   return {
     nav,
     projectPath: partial.projectPath == null ? null : String(partial.projectPath),
+    sourceDirectory: partial.sourceDirectory == null ? null : String(partial.sourceDirectory),
     projectPage,
+    workspacePhase,
+    platformMode,
+    engine,
+    extraRequirements: partial.extraRequirements == null ? '' : String(partial.extraRequirements),
     douyinStage,
     douyinVariantId: partial.douyinVariantId == null ? null : String(partial.douyinVariantId),
     assetFilter,
     issueFilters,
     runningTask: runningTask && runningTask.id ? runningTask : null,
+    sessionOpen: Boolean(partial.sessionOpen || partial.projectPath || partial.sourceDirectory),
     error: partial.error == null ? null : String(partial.error),
   };
+}
+
+function buildPendingEpisodeRow(episode = {}) {
+  const counts = episode.counts || {};
+  const inventory = episode.inventory || episode.contextIngestion || null;
+  return {
+    name: episode.name || pathBasename(episode.sourceDirectory),
+    sourceDirectory: episode.sourceDirectory,
+    origin: inventory?.detected || episode.hotingestDetected ? 'HotIngest' : '普通来源',
+    videoCount: counts.video || episode.videoCount || 0,
+    imageCount: counts.image || episode.imageCount || 0,
+    captionCount: Number(inventory?.items?.filter((item) => item.translations?.length)?.length || 0),
+    recognized: Boolean(episode.existingProject || inventory?.detected || episode.totalFileCount > 0),
+    existingProject: episode.existingProject || null,
+    latestTask: episode.latestTask || null,
+  };
+}
+
+function pathBasename(value) {
+  const text = String(value || '');
+  const parts = text.split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] || text || '未命名素材';
 }
 
   return {
@@ -308,9 +363,13 @@ function buildAppRouteState(partial = {}) {
     PROJECT_PAGES,
     ASSET_FILTERS,
     DEFAULT_ISSUE_FILTERS,
+    USER_STATUS_LABELS,
+    LEGACY_PAGE_MAP,
     buildCatalogProjectRow,
     buildWorkspaceHeader,
     buildAppRouteState,
+    buildPendingEpisodeRow,
     deriveNextStep,
+    deriveUserStatus,
   };
 }));

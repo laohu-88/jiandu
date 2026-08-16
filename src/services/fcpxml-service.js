@@ -616,6 +616,15 @@ function collectFcpTitles(analysis) {
       startSec,
       durationSec,
       text: item.subtitle.text.trim(),
+      position: typeof item.subtitle.position === 'string' ? item.subtitle.position : 'bottom-safe',
+      fontSize: Number.isFinite(Number(item.subtitle.fontSize))
+        ? Number(item.subtitle.fontSize)
+        : 46,
+      transform: item.subtitle.position === 'top-safe'
+        ? { x: 0, y: 360 }
+        : item.subtitle.position === 'center'
+          ? { x: 0, y: 0 }
+          : { x: 0, y: -360 },
     };
   }).filter((item) => item.durationSec > 0);
 }
@@ -1055,6 +1064,9 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     const clipEndSec = clipStartSec + planned.durationSec;
 
     for (const title of titleByShotId.get(shot.id) || []) {
+      const titleFontSize = Number.isFinite(Number(title.fontSize))
+        ? Number(title.fontSize)
+        : 46;
       const titleOffsetSec = stillTimeOffset + title.sourceTimeSec;
       const useExactManagedTimes = title.kind === 'managed_light_caption'
         && title.offsetFcpTime
@@ -1119,7 +1131,8 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
         + `              <text-style ref="ts-title-${title.index + 1}">${escapeXml(title.text)}</text-style>\n`
         + '            </text>\n'
         + `            <text-style-def id="ts-title-${title.index + 1}">\n`
-        + `              <text-style font="Helvetica" fontSize="${title.fontSize}" fontFace="Regular" fontColor="1 1 1 1" alignment="center"/>\n`
+        + `              <text-style font="Helvetica" fontSize="${titleFontSize}" fontFace="Regular"`
+        + ' fontColor="1 1 1 1" alignment="center" strokeColor="0 0 0 0.9" strokeWidth="-4"/>\n'
         + '            </text-style-def>\n'
         + noteChild
         + '          </title>',
@@ -1850,7 +1863,8 @@ async function writeFcpxml(outputPath, payload, options = {}) {
     fps: writePayload.analysis.timeline.fps,
     clipMediaUrls: writePayload.analysis.timeline.shots.map((shot) => {
       const mapping = assetMappings.find((item) => item.assetId === shot.assetId);
-      return mapping ? pathToFileURL(mapping.projectAbsolutePath).href.replace(/&/g, '&amp;') : null;
+      // Must match buildFcpxml's escapeXml(pathToFileURL(...).href), including &apos; for apostrophes.
+      return mapping ? escapeXml(pathToFileURL(mapping.projectAbsolutePath).href) : null;
     }),
   });
   if (!report.ok) {

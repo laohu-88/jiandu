@@ -239,6 +239,10 @@ function normalizeFlowSpec(value) {
     throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', 'HyperFrames 流程标题或收束文案过长。');
   }
   const visualKeys = ['drawInterface', 'drawResult', 'comfyInterface', 'comfyResult'];
+  const visualStyle = String(value.visualStyle || 'product-flow').trim();
+  if (!['product-flow', 'evidence-montage'].includes(visualStyle)) {
+    throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', 'HyperFrames visualStyle 无效。');
+  }
   let visuals = null;
   if (value.visuals != null) {
     if (typeof value.visuals !== 'object' || Array.isArray(value.visuals)) {
@@ -260,6 +264,7 @@ function normalizeFlowSpec(value) {
     closing,
     reason,
     insertAfterShotId,
+    visualStyle,
     visuals,
   };
 }
@@ -267,7 +272,12 @@ function normalizeFlowSpec(value) {
 function buildProcessFlowHtml(options) {
   const format = normalizeRenderOptions(options);
   const flow = normalizeFlowSpec(options.flow);
-  if (options.visualPaths) return buildProductFlowHtml({ format, flow, visualPaths: options.visualPaths });
+  if (options.visualPaths) {
+    if (flow.visualStyle === 'evidence-montage') {
+      return buildEvidenceMontageHtml({ format, flow, visualPaths: options.visualPaths });
+    }
+    return buildProductFlowHtml({ format, flow, visualPaths: options.visualPaths });
+  }
   const nodes = flow.nodes.map((label, index) => `
         <article id="node-${index}" class="node ${index < 3 ? 'draw' : 'comfy'}">
           <span class="step">${String(index + 1).padStart(2, '0')}</span>
@@ -330,6 +340,82 @@ function buildProcessFlowHtml(options) {
       const tl = gsap.timeline({ paused: true });
       tl.fromTo("#header", { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.32 }, 0.06);${timeline}
       tl.fromTo("#closing", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.3 }, ${closingAt});
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>
+`;
+}
+
+function buildEvidenceMontageHtml({ format, flow, visualPaths }) {
+  const required = ['drawInterface', 'drawResult', 'comfyInterface', 'comfyResult'];
+  if (required.some((key) => !visualPaths?.[key])) {
+    throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', '证据蒙太奇缺少已复制的视觉素材。');
+  }
+  const src = (key) => escapeHtml(visualPaths[key]);
+  const labels = [flow.nodes[1] || 'Codex', flow.nodes[2] || 'DeepSeek', flow.nodes[3] || 'Cursor'];
+  const evidenceKeys = ['drawResult', 'comfyInterface', 'comfyResult'];
+  const lanes = evidenceKeys.map((key, index) => `
+        <article id="lane-${index}" class="lane">
+          <img src="${src(key)}" alt="" />
+          <div class="label"><span>${String(index + 1).padStart(2, '0')}</span>${escapeHtml(labels[index])}</div>
+        </article>`).join('');
+  const stageEnd = Math.max(5.4, format.durationSec - 0.4);
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=${format.width}, height=${format.height}" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face { font-family: "Project CJK"; src: local("PingFang SC"); }
+      * { box-sizing: border-box; }
+      html, body { width: ${format.width}px; height: ${format.height}px; margin: 0; overflow: hidden; }
+      body { background: #05070a; color: #f4f7fb; font-family: "Project CJK", sans-serif; }
+      #root, #stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
+      #stage { background: #05070a; }
+      #overview, #grid { position: absolute; inset: 0; overflow: hidden; }
+      #overview { z-index: 2; background: #05070a; }
+      #overview img { width: 100%; height: 100%; object-fit: contain; transform-origin: 50% 38%; }
+      #overview::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 50% 42%, transparent 38%, rgba(5,7,10,.54) 100%); }
+      #grid { z-index: 3; display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; padding: 0 5px; opacity: 0; }
+      .lane { position: relative; min-width: 0; overflow: hidden; background: #0d1117; clip-path: inset(0 50% 0 50%); }
+      .lane img { width: 100%; height: 100%; display: block; object-fit: cover; object-position: 50% 50%; filter: saturate(.88) contrast(1.04); transform: scale(1.04); }
+      .lane::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 1px rgba(255,255,255,.1); pointer-events: none; }
+      .label { position: absolute; left: 30px; bottom: 28px; display: flex; align-items: center; gap: 14px; color: #f7f9fc; font-size: 26px; font-weight: 650; letter-spacing: -.01em; text-shadow: 0 3px 18px rgba(0,0,0,.9); opacity: 0; }
+      .label span { color: #8b96a7; font: 600 16px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+      #scan { position: absolute; z-index: 5; top: 0; bottom: 0; left: -18%; width: 14%; opacity: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.16), transparent); mix-blend-mode: screen; transform: skewX(-12deg); }
+      #closing { position: absolute; z-index: 6; left: 50%; top: 42px; transform: translateX(-50%); margin: 0; white-space: nowrap; color: #fff; font-size: 30px; font-weight: 620; letter-spacing: .015em; text-shadow: 0 5px 24px rgba(0,0,0,.95); opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <main id="root" data-composition-id="main" data-start="0"
+      data-duration="${format.durationSec}" data-width="${format.width}"
+      data-height="${format.height}" data-fps="${format.fps}">
+      <section id="stage" class="clip" data-start="0" data-duration="${format.durationSec}" data-track-index="0">
+        <div id="overview"><img src="${src('drawInterface')}" alt="" /></div>
+        <div id="grid">${lanes}</div>
+        <div id="scan"></div>
+        <p id="closing">${escapeHtml(flow.closing || '同题开发 · 实机核验 · 结果可追溯')}</p>
+      </section>
+    </main>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#overview img", { scale: 1.12, y: 32 }, { scale: 1, y: 0, duration: 1.25, ease: "power2.out" }, 0.02);
+      tl.to("#overview", { opacity: 0, scale: 1.04, duration: 0.46, ease: "power2.inOut" }, 1.16);
+      tl.set("#grid", { opacity: 1 }, 1.3);
+      tl.to("#lane-0", { clipPath: "inset(0 0% 0 0%)", duration: 0.58, ease: "power3.out" }, 1.3);
+      tl.to("#lane-0 img", { scale: 1, duration: 1.1, ease: "power2.out" }, 1.3);
+      tl.to("#lane-1", { clipPath: "inset(0 0% 0 0%)", duration: 0.58, ease: "power3.out" }, 2.14);
+      tl.to("#lane-1 img", { scale: 1, duration: 1.1, ease: "power2.out" }, 2.14);
+      tl.to("#lane-2", { clipPath: "inset(0 0% 0 0%)", duration: 0.58, ease: "power3.out" }, 2.98);
+      tl.to("#lane-2 img", { scale: 1, duration: 1.1, ease: "power2.out" }, 2.98);
+      tl.to(".label", { opacity: 1, y: -8, duration: 0.36, stagger: 0.12, ease: "power2.out" }, 3.58);
+      tl.fromTo("#scan", { opacity: 0, x: 0 }, { opacity: 1, x: ${format.width * 1.35}, duration: 1.15, ease: "power1.inOut" }, 4.05);
+      tl.to("#scan", { opacity: 0, duration: 0.2 }, 5.22);
+      tl.fromTo("#closing", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.42, ease: "power2.out" }, 5.12);
+      tl.to("#grid", { scale: 1.012, duration: ${Math.max(0.4, stageEnd - 5.1).toFixed(2)}, ease: "none" }, 5.1);
       window.__timelines["main"] = tl;
     </script>
   </body>

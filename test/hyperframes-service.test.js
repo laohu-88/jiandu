@@ -96,6 +96,43 @@ test('HyperFrames 产品流程演示使用真实视觉素材且不显示额外�
   assert.doesNotMatch(html, /class="node/);
 });
 
+test('HyperFrames 证据蒙太奇使用真实截图、动态分屏且不生成文本框或箭头', () => {
+  const html = buildProcessFlowHtml({
+    flow: {
+      nodes: ['同题开发', 'Codex', 'DeepSeek', 'Cursor'],
+      heading: '三模型实机核验',
+      closing: '同题开发 · 实机核验 · 结果可追溯',
+      reason: '用真实界面建立三模型并列证据。',
+      insertAfterShotId: 'shot-008',
+      visualStyle: 'evidence-montage',
+      visuals: {
+        drawInterface: 'overview-id',
+        drawResult: 'codex-id',
+        comfyInterface: 'deepseek-id',
+        comfyResult: 'cursor-id',
+      },
+    },
+    visualPaths: {
+      drawInterface: 'assets/overview.png',
+      drawResult: 'assets/codex.png',
+      comfyInterface: 'assets/deepseek.png',
+      comfyResult: 'assets/cursor.png',
+    },
+    width: 1920,
+    height: 1080,
+    fps: 30,
+    durationSec: 7.5,
+    quality: 'standard',
+  });
+  assert.match(html, /src="assets\/overview\.png"/);
+  assert.match(html, /id="lane-0"/);
+  assert.match(html, /clipPath: "inset\(0 0% 0 0%\)"/);
+  assert.match(html, /同题开发 · 实机核验 · 结果可追溯/);
+  assert.doesNotMatch(html, /class="node/);
+  assert.doesNotMatch(html, /class="arrow/);
+  assert.doesNotMatch(html, /→/);
+});
+
 test('HyperFrames 产品流程文件名包含输入指纹，避免 FCP 复用同名旧动画', () => {
   const analysis = { titles: { recommended: '同一个标题' } };
   const flow = {

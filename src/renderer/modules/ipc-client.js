@@ -52,6 +52,9 @@
       openProjectFcpxmlInFinalCut: (...args) => call(api, 'openProjectFcpxmlInFinalCut', args),
       runProjectArtifactAction: (...args) => call(api, 'runProjectArtifactAction', args),
       createHandoffTask: (...args) => call(api, 'createHandoffTask', args),
+      startEditHandoff: (...args) => call(api, 'startEditHandoff', args),
+      recognizeHandoffSource: (...args) => call(api, 'recognizeHandoffSource', args),
+      checkCursorAccessibility: (...args) => call(api, 'checkCursorAccessibility', args),
       launchCodexHandoff: (...args) => call(api, 'launchCodexHandoff', args),
       launchCursorHandoff: (...args) => call(api, 'launchCursorHandoff', args),
       loadHandoffSettings: (...args) => call(api, 'loadHandoffSettings', args),
@@ -59,7 +62,6 @@
       buildEditPreflight: (...args) => call(api, 'buildEditPreflight', args),
       createEditJob: (...args) => call(api, 'createEditJob', args),
       selectMaterialDirectory: (...args) => call(api, 'selectMaterialDirectory', args),
-      checkAiEnvironment: (...args) => call(api, 'checkAiEnvironment', args),
       analyzeDouyinShotTracking: (...args) => call(api, 'analyzeDouyinShotTracking', args),
       call: (method, ...args) => call(api, method, args),
     };

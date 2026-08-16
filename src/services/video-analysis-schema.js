@@ -692,8 +692,9 @@ function validateVideoAnalysis(analysis, manifest) {
           errors.push(`${field}.subtitle 必须是对象。`);
         } else {
           if (typeof subtitle.enabled !== 'boolean') errors.push(`${field}.subtitle.enabled 必须是布尔值。`);
-          if (!isNonEmptyString(subtitle.text, 30) || /[\r\n]/.test(subtitle.text || '')) {
-            errors.push(`${field}.subtitle.text 必须是一行 1 到 30 字的轻字幕。`);
+          const subtitleLines = String(subtitle.text || '').split(/\r?\n/).filter(Boolean);
+          if (!isNonEmptyString(subtitle.text, 200) || subtitleLines.length > 2) {
+            errors.push(`${field}.subtitle.text 必须是 1 到 200 字、最多两行的轻字幕。`);
           }
           if (!Number.isFinite(subtitle.durationSec) || subtitle.durationSec <= 0) {
             errors.push(`${field}.subtitle.durationSec 必须大于 0。`);

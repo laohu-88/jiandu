@@ -1,5 +1,4 @@
 const path = require('node:path');
-const { spawn } = require('node:child_process');
 
 const {
   CODEX_WORKSPACE_ROOT,
@@ -21,6 +20,9 @@ const {
   inspectAnalysisArtifacts,
   markAnalysisComplete,
 } = require('../services/cursor-agent-handoff-service');
+const { launchAndInjectCursor, checkAccessibilityPermission } = require('../services/cursor-automation-service');
+const { createAgentTask } = require('../services/agent-bridge-service');
+const { scanCanonicalInventory } = require('../services/hotingest-adapter');
 
 function registerHandoffIpc(ctx) {
   const {
@@ -58,7 +60,13 @@ function registerHandoffIpc(ctx) {
       },
       appWorkspace: CODEX_WORKSPACE_ROOT,
       hyperframesMode: args?.hyperframesMode || 'auto',
-      engine: args?.engine || 'codex',
+      engine: args?.engine || settings.defaultEngine || 'cursor_agent',
+      extraRequirements: args?.extraRequirements == null ? '' : String(args.extraRequirements),
+      platformMode: args?.platformMode === 'main' ? 'main' : 'douyin',
+      kind: args?.kind === 'revise' ? 'revise' : 'edit',
+      parentTaskId: args?.parentTaskId || null,
+      previousProjectPath: args?.previousProjectPath || null,
+      previousAnalysisPath: args?.previousAnalysisPath || null,
       autoOpenFcp: settings.autoOpenFcp,
     });
   });
@@ -76,7 +84,7 @@ function registerHandoffIpc(ctx) {
       await shell.openExternal(launching.codexDeepLink, { activate: true });
       return updateHandoffTask(task.taskFilePath, {
         status: 'awaiting_user_send',
-        stageMessage: 'Codex 已打开并预填提示词，等待用户按一次发送。',
+        stageMessage: 'Codex 已打开并预填提示词。',
       });
     } catch (error) {
       await updateHandoffTask(task.taskFilePath, {
@@ -91,37 +99,99 @@ function registerHandoffIpc(ctx) {
   ipcMain.handle('handoff:launch-cursor', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
     if (task.engine !== 'cursor_agent') {
-      throw new Error('当前任务不是 Cursor Agent 引擎任务。');
+      throw new Error('当前任务不是 Cursor 引擎任务。');
     }
     const plan = buildCursorLaunchPlan(task);
     await updateHandoffTask(task.taskFilePath, {
       status: 'launching_cursor',
-      stageMessage: '正在打开 Cursor，并准备正式任务提示词。',
+      stageMessage: '正在打开 Cursor，并放入正式任务提示词。',
     });
     try {
-      clipboard.writeText(plan.clipboardText || task.prompt);
-      await new Promise((resolve, reject) => {
-        const child = spawn('cursor', plan.openArgs, {
-          detached: true,
-          stdio: 'ignore',
-        });
-        child.on('error', reject);
-        child.unref();
-        // Opening the IDE is fire-and-forget; give spawn a brief chance to fail.
-        setTimeout(resolve, 300);
+      const inject = await launchAndInjectCursor({
+        openArgs: plan.openArgs,
+        prompt: task.prompt,
+        verifyNeedle: task.taskId,
+        clipboard,
+        inject: true,
       });
+      const message = inject.verified
+        ? 'Cursor 已打开，正式提示词已放入输入框。'
+        : inject.granted === false
+          ? inject.guidance || inject.message
+          : inject.message || plan.userInstruction;
       return updateHandoffTask(task.taskFilePath, {
         status: 'awaiting_user_send',
-        stageMessage: plan.userInstruction,
+        stageMessage: message,
+        cursorInject: {
+          launched: inject.launched === true,
+          injected: inject.injected === true,
+          verified: inject.verified === true,
+          code: inject.code || null,
+          message,
+          guidance: inject.guidance || null,
+        },
       });
     } catch (error) {
       await updateHandoffTask(task.taskFilePath, {
         status: 'launching_cursor',
-        stageMessage: `打开 Cursor 失败：${error.message}。提示词仍可复制后手动粘贴到 Cursor Agent。`,
+        stageMessage: `打开 Cursor 失败：${error.message}`,
         errors: [{ code: 'CURSOR_LAUNCH_FAILED', message: error.message, at: new Date().toISOString() }],
       });
       throw error;
     }
+  });
+
+  ipcMain.handle('handoff:check-accessibility', () => checkAccessibilityPermission());
+
+  ipcMain.handle('handoff:recognize-source', async (_event, sourceDirectory) => {
+    const payload = await scanHandoffsAndPending();
+    const sourcePath = path.resolve(String(sourceDirectory || ''));
+    const episode = payload.episodes.find((item) => item.sourceDirectory === sourcePath);
+    if (!episode) throw new Error('所选素材目录未通过待处理目录授权。');
+    const inventory = await scanCanonicalInventory(sourcePath);
+    return {
+      episode,
+      inventory,
+      recognized: true,
+      hotingest: inventory.detected,
+    };
+  });
+
+  ipcMain.handle('handoff:start-edit', async (_event, args) => {
+    const payload = await scanHandoffsAndPending();
+    const sourcePath = path.resolve(String(args?.sourceDirectory || ''));
+    const episode = payload.episodes.find((item) => item.sourceDirectory === sourcePath);
+    if (!episode) throw new Error('所选素材目录未通过待处理目录授权。');
+    if (episode.empty || episode.unreadable) throw new Error('空目录或无法读取目录不能启动生产。');
+    const settings = await loadHandoffSettings(app.getPath('userData'));
+    const task = await createAgentTask(app.getPath('userData'), {
+      pendingRoot: DEFAULT_PENDING_ROOT,
+      sourceDirectory: episode.sourceDirectory,
+      sourceSnapshot: episode.sourceSnapshot,
+      sourceSummary: {
+        name: episode.name,
+        counts: episode.counts,
+        totalFileCount: episode.totalFileCount,
+        totalVideoDurationSec: episode.totalVideoDurationSec,
+        totalSizeBytes: episode.totalSizeBytes,
+        warnings: episode.warnings,
+        chapters: episode.chapters,
+        briefFilesUsed: episode.briefFilesUsed,
+        durationPolicy: episode.durationPolicy,
+        allowChapterInterleave: episode.allowChapterInterleave,
+      },
+      appWorkspace: CODEX_WORKSPACE_ROOT,
+      hyperframesMode: args?.hyperframesMode || 'auto',
+      engine: args?.engine || settings.defaultEngine || 'cursor_agent',
+      extraRequirements: args?.extraRequirements == null ? '' : String(args.extraRequirements),
+      platformMode: args?.platformMode === 'main' ? 'main' : 'douyin',
+      kind: args?.kind === 'revise' ? 'revise' : 'edit',
+      parentTaskId: args?.parentTaskId || null,
+      previousProjectPath: args?.previousProjectPath || null,
+      previousAnalysisPath: args?.previousAnalysisPath || null,
+      autoOpenFcp: settings.autoOpenFcp,
+    });
+    return { task };
   });
 
   ipcMain.handle('handoff:read', async (_event, taskPath) => {
@@ -179,14 +249,12 @@ function registerHandoffIpc(ctx) {
   ipcMain.handle('handoff:activate-cursor', async (_event, taskPath) => {
     const task = await assertUserDataTask(app.getPath('userData'), taskPath);
     const plan = buildCursorLaunchPlan(task);
-    await new Promise((resolve, reject) => {
-      const child = spawn('cursor', ['--new-window', plan.workspace], {
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.on('error', reject);
-      child.unref();
-      setTimeout(resolve, 300);
+    await launchAndInjectCursor({
+      openArgs: plan.openArgs,
+      prompt: task.prompt,
+      verifyNeedle: task.taskId,
+      clipboard,
+      inject: false,
     });
     return { activated: true };
   });

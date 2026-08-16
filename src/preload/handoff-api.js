@@ -1,5 +1,12 @@
 module.exports = (ipcRenderer) => ({
-  createHandoffTask: (args) => ipcRenderer.invoke('handoff:create', args),
+  startEditHandoff: (args) => ipcRenderer.invoke('handoff:start-edit', args),
+  recognizeHandoffSource: (sourceDirectory) => ipcRenderer.invoke('handoff:recognize-source', sourceDirectory),
+  checkCursorAccessibility: () => ipcRenderer.invoke('handoff:check-accessibility'),
+  onHandoffProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('handoff:progress', listener);
+    return () => ipcRenderer.removeListener('handoff:progress', listener);
+  },
   launchCodexHandoff: (taskPath) => ipcRenderer.invoke('handoff:launch-codex', taskPath),
   launchCursorHandoff: (taskPath) => ipcRenderer.invoke('handoff:launch-cursor', taskPath),
   readHandoffTask: (taskPath) => ipcRenderer.invoke('handoff:read', taskPath),

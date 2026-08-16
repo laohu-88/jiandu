@@ -389,26 +389,26 @@ test('renderer 暴露新建剪辑任务、生成前检查与结果交接入口',
   const root = path.join(__dirname, '..');
   const preloadRoot = path.join(root, 'src/preload');
   const preloadFiles = await fs.readdir(preloadRoot);
-  const [html, pendingPage, preloadEntry, ...preloadModules] = await Promise.all([
+  const [html, pendingPage, editWorkspace, preloadEntry, ...preloadModules] = await Promise.all([
     fs.readFile(path.join(root, 'src/renderer/index.html'), 'utf8'),
     fs.readFile(path.join(root, 'src/renderer/modules/pending/pending-page.js'), 'utf8'),
+    fs.readFile(path.join(root, 'src/renderer/modules/workspace/edit-workspace.js'), 'utf8'),
     fs.readFile(path.join(root, 'src/preload.js'), 'utf8'),
     ...preloadFiles
       .filter((name) => name.endsWith('.js'))
       .map((name) => fs.readFile(path.join(preloadRoot, name), 'utf8')),
   ]);
   const preload = [preloadEntry, ...preloadModules].join('\n');
-  assert.match(html, /新建剪辑任务/);
-  assert.match(html, /生成前检查/);
-  assert.match(html, /交给 Cursor Agent 分析/);
-  assert.match(html, /交给 Codex 分析生成/);
-  assert.match(html, /打开审核文件/);
-  assert.match(html, /在 Final Cut Pro 中打开/);
-  assert.match(pendingPage, /startEditJob/);
-  assert.match(pendingPage, /buildEditPreflight/);
-  assert.match(pendingPage, /cursor_agent_handoff/);
-  assert.match(pendingPage, /createEditJob/);
-  assert.match(html, /completionShowReviewButton/);
+  assert.match(html, /pageBrief/);
+  assert.match(html, /pageResults/);
+  assert.match(pendingPage, /开始剪辑/);
+  assert.match(pendingPage, /openPendingEpisode/);
+  assert.match(editWorkspace, /开始 AI 剪辑/);
+  assert.match(editWorkspace, /在 Final Cut Pro 中打开/);
+  assert.match(editWorkspace, /startEditHandoff/);
+  assert.match(editWorkspace, /launchCursorHandoff/);
+  assert.doesNotMatch(html, /新建剪辑任务/);
+  assert.doesNotMatch(html, /交给 Codex 分析生成/);
   assert.match(preload, /buildEditPreflight/);
   assert.match(preload, /createEditJob/);
   assert.match(preload, /runEditJob/);

@@ -63,6 +63,12 @@
         completion: null,
       },
       aiEnvironment: null,
+      accessibility: null,
+      defaultEngine: 'cursor_agent',
+      currentEpisode: null,
+      sourceRecognition: null,
+      selectedVideoId: null,
+      selectedOutput: null,
       autoOpenFcp: false,
       error: null,
       loading: {
@@ -161,8 +167,11 @@
         result: data.projectResult,
         douyinVariant: data.douyinVariant,
         issueSummary: deriveIssueSummary(),
-        activePage: route.projectPage,
+        activePage: route.workspacePhase || route.projectPage,
         douyinWorkflow: deriveDouyinWorkflow(),
+        task: data.runningOverlays.handoffTask,
+        platformMode: route.platformMode,
+        engine: route.engine,
       });
     }
 
@@ -217,9 +226,11 @@
     async function openProject(projectPath) {
       if (!projectPath) return notify();
       routeStore.set({
-        nav: 'tasks',
+        nav: 'library',
+        sessionOpen: true,
         projectPath: String(projectPath),
-        projectPage: 'overview',
+        projectPage: 'results',
+        workspacePhase: 'results',
         douyinStage: 'plan',
         error: null,
       });
@@ -303,9 +314,12 @@
 
     function closeProject() {
       routeStore.set({
-        nav: 'library',
+        nav: routeStore.get().nav === 'pending' ? 'pending' : 'library',
+        sessionOpen: false,
         projectPath: null,
-        projectPage: 'overview',
+        sourceDirectory: null,
+        projectPage: 'brief',
+        workspacePhase: 'brief',
         douyinStage: 'plan',
         douyinVariantId: null,
       });
@@ -350,7 +364,8 @@
         });
       }
       if (data.catalogStatus && data.catalogStatus !== 'all') {
-        filtered = filtered.filter((row) => String(row.mainStatus) === data.catalogStatus
+        filtered = filtered.filter((row) => String(row.userStatus) === data.catalogStatus
+          || String(row.mainStatus) === data.catalogStatus
           || String(row.douyinStatus) === data.catalogStatus);
       }
       const sort = data.catalogSort || 'updatedAt';
@@ -370,6 +385,96 @@
       return filtered;
     }
 
+    async function recognizeSource(sourceDirectory) {
+      if (!sourceDirectory || !window.plannerApi?.recognizeHandoffSource) return notify();
+      try {
+        const recognition = await window.plannerApi.recognizeHandoffSource(sourceDirectory);
+        data.sourceRecognition = recognition;
+        data.currentEpisode = recognition.episode || data.currentEpisode;
+      } catch (error) {
+        data.error = getError(error);
+      }
+      return notify();
+    }
+
+    async function handleAgentReturn(task) {
+      if (!task) return notify();
+      data.runningOverlays.handoffTask = task;
+      const failed = task.status === 'failed';
+      const ready = task.status === 'completed' || task.status === 'completed_with_warnings';
+      const route = routeStore.get();
+      if (!route.sessionOpen && !failed && !ready && task.status !== 'analysis_complete') {
+        return notify();
+      }
+      if (task.resultProjectPath) {
+        routeStore.set({
+          nav: 'library',
+          sessionOpen: true,
+          projectPath: task.resultProjectPath,
+          sourceDirectory: task.sourceDirectory,
+          workspacePhase: 'results',
+          projectPage: 'results',
+          engine: task.engine || routeStore.get().engine,
+          platformMode: task.platformMode || 'douyin',
+          error: failed ? (task.errors?.[0]?.message || 'Agent 失败') : null,
+        });
+        await refreshProject(task.resultProjectPath);
+      } else {
+        routeStore.set({
+          sessionOpen: true,
+          sourceDirectory: task.sourceDirectory,
+          workspacePhase: failed ? 'results' : 'processing',
+          projectPage: failed ? 'results' : 'processing',
+          error: failed ? (task.errors?.[0]?.message || 'Agent 失败') : null,
+        });
+      }
+      if (ready) toast('AI 剪辑结果已就绪');
+      if (failed) toast(task.errors?.[0]?.message || 'AI 剪辑失败', true);
+      return notify();
+    }
+
+    function handleAgentProgress(payload) {
+      const task = payload?.task || payload;
+      if (!task) return notify();
+      data.runningOverlays.handoffTask = task;
+      if (routeStore.get().sessionOpen) {
+        const terminal = ['completed', 'completed_with_warnings', 'failed'].includes(task.status);
+        routeStore.set({
+          workspacePhase: terminal ? 'results' : 'processing',
+          projectPage: terminal ? 'results' : 'processing',
+        });
+      }
+      return notify();
+    }
+
+    async function recoverAgentSession() {
+      try {
+        const listed = await window.plannerApi.listHandoffTasks();
+        const tasks = listed?.tasks || [];
+        const active = tasks
+          .filter((task) => !['cancelled', 'draft', 'ready'].includes(task.status))
+          .sort((left, right) => Date.parse(right.updatedAt || 0) - Date.parse(left.updatedAt || 0))[0];
+        if (!active) return notify();
+        data.runningOverlays.handoffTask = active;
+        if (['completed', 'completed_with_warnings', 'failed'].includes(active.status)) {
+          return handleAgentReturn(active);
+        }
+        routeStore.set({
+          sessionOpen: true,
+          nav: 'library',
+          sourceDirectory: active.sourceDirectory,
+          projectPath: active.resultProjectPath || null,
+          workspacePhase: 'processing',
+          projectPage: 'processing',
+          engine: active.engine || 'cursor_agent',
+          platformMode: active.platformMode || 'douyin',
+        });
+      } catch (_error) {
+        // Recovery is best-effort on boot.
+      }
+      return notify();
+    }
+
     routeStore.subscribe(() => notify());
 
     return {
@@ -387,6 +492,10 @@
       setApprovedWarningIds,
       closeProject,
       getCatalogRows,
+      recognizeSource,
+      handleAgentReturn,
+      handleAgentProgress,
+      recoverAgentSession,
       routeStore,
       api,
       toast,

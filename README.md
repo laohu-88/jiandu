@@ -2,20 +2,16 @@
 
 Electron 视频项目管理与剪辑编排工具。当前新增的 Codex 视频工作流面向软件操作录屏、开发过程、功能前后对比、截图、测试证据和成品展示，不依赖口播、配音、全程字幕或固定分段模板。
 
-## Codex 视频工作流
+## Agent-first 视频工作流
 
 ```text
-v3 扫描待处理素材并显示交接摘要
-→ 用户选择 HyperFrames 模式并点击“打开 Codex 并开始”
-→ Codex 新会话在仓库工作目录中预填，用户只按一次发送
-→ Video Skill 探测媒体、抽帧并持续写入真实阶段状态
-→ Codex 查看实际画面、形成真实素材初剪并判断 HyperFrames
-→ v3 共享核心创建正式项目并登记素材
-→ 可选：HyperFrames 根据表达缺口生成并观看复核独立 MP4
-→ 独立素材组成的可编辑 FCPXML
-→ 粗剪预览 MP4
-→ 完整验证后自动回到 v3 完成页
-→ Final Cut Pro 精修
+素材进入待处理
+→ App 自动识别（含 HotIngest 伴随信息）
+→ 用户可填写「本次额外要求」
+→ 开始 AI 剪辑（默认 Cursor，可选 Codex；默认抖音）
+→ Agent 读取固定 Skill 与本次任务清单
+→ App 监控完成后自动回流到结果工作区
+→ 预览 / 让 AI 再调整 / 在 Final Cut Pro 中打开
 ```
 
 CLI 和 Electron IPC 调用同一组 `src/services`，不会复制项目创建、素材登记、FCPXML、预览或验证逻辑。CLI 不接入外部模型；主题、标题、素材判断和镜头顺序由当前 Codex 会话完成。
@@ -63,7 +59,7 @@ Marker 是建议和定位信息，FCP Title 才是画面中真正显示的可编
 
 “Finder 中显示 FCPXML”和“使用 Final Cut Pro 打开”是两个独立操作。后者优先执行 `open -b com.apple.FinalCutApp <FCPXML>`，失败时回退 `/Applications/Final Cut Pro Creator Studio.app` 的实际应用路径；所有调用使用参数数组，不拼接 shell 命令。
 
-原“素材筛选台”保留为另一个主视图，新建项目、打开已有项目、最近项目、素材预览、人工审核、评分、标签、备注和本地 AI 单素材分析仍可继续使用。旧项目在结果中心标记为“旧版项目”，并可进入素材筛选台。
+App 主导航只保留待处理、项目和设置。旧项目数据仍可读取，但不再提供旧版页面、旧版按钮或本地大模型产品入口。本地 ffmpeg / ffprobe 媒体处理能力保留。
 
 当前不提供历史版本系统，也不在原项目内重新生成 HyperFrames。结果中心只聚合已有结构化产物并提供只读操作。
 

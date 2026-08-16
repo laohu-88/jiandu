@@ -26,6 +26,7 @@ const REQUIRED_FILES = [
   'src/renderer/modules/assets/assets-page.js',
   'src/renderer/modules/outputs/outputs-page.js',
   'src/renderer/modules/pending/pending-page.js',
+  'src/renderer/modules/workspace/edit-workspace.js',
 ];
 
 function read(relPath) {

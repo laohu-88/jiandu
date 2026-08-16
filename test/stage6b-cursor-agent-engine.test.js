@@ -134,14 +134,14 @@ test('Cursor 交接包包含任务清单、路径、提示词、预期产物、�
   const task = await createCursorTask(paths);
   assert.equal(task.engine, 'cursor_agent');
   assert.ok(task.cursorPackagePath);
-  assert.match(task.prompt, /Cursor Agent/);
-  assert.match(task.prompt, /analysis_complete/);
+  assert.match(task.prompt, /执行视频剪辑任务/);
+  assert.match(task.prompt, /本次任务清单/);
   assert.equal(task.codexDeepLink, null);
 
   const packageDir = task.cursorPackagePath;
   const files = await fs.readdir(packageDir);
   for (const name of [
-    'TASK.md', 'prompt.md', 'paths.json', 'expected-artifacts.json', 'status.json', 'RECOVERY.md',
+    'TASK.md', 'TASK.json', 'prompt.md', 'paths.json', 'expected-artifacts.json', 'status.json', 'RECOVERY.md',
   ]) {
     assert.ok(files.includes(name), `missing ${name}`);
   }
@@ -154,7 +154,7 @@ test('Cursor 交接包包含任务清单、路径、提示词、预期产物、�
   const plan = buildCursorLaunchPlan(task);
   assert.equal(plan.engine, 'cursor_agent');
   assert.ok(plan.openArgs.includes('--new-window'));
-  assert.match(plan.userInstruction, /显式启动/);
+  assert.match(plan.userInstruction, /提示词/);
 });
 
 test('Codex 既有路径不回归：默认仍生成深链接提示词', async () => {
@@ -170,7 +170,7 @@ test('Codex 既有路径不回归：默认仍生成深链接提示词', async ()
   });
   assert.equal(task.engine, 'codex');
   assert.ok(task.codexDeepLink.startsWith('codex://'));
-  assert.match(task.prompt, /使用 \$video-cut-planner/);
+  assert.match(task.prompt, /执行视频剪辑任务/);
   assert.equal(task.cursorPackagePath, null);
   const prompt = buildAgentPrompt('codex', {
     sourceDirectory: paths.sourceDirectory,
@@ -178,7 +178,7 @@ test('Codex 既有路径不回归：默认仍生成深链接提示词', async ()
     taskFilePath: task.taskFilePath,
     hyperframesMode: 'auto',
   });
-  assert.match(prompt, /handoff-complete/);
+  assert.match(prompt, /执行视频剪辑任务/);
 });
 
 test('状态流转：等待 Agent → 执行中 → 分析完成 → 可恢复识别', async () => {

@@ -15,9 +15,8 @@
       : root.PlannerRouter;
     const vm = root.WorkspaceViewModel || root.PlannerViewModels || {};
     const navItems = vm.NAV_ITEMS || [
-      { id: 'pending', label: '待处理素材' },
-      { id: 'library', label: '项目库' },
-      { id: 'tasks', label: '当前任务' },
+      { id: 'pending', label: '待处理' },
+      { id: 'library', label: '项目' },
       { id: 'settings', label: '设置' },
     ];
 
@@ -26,7 +25,6 @@
     const views = {
       pending: rootEl.querySelector('#pendingView'),
       library: rootEl.querySelector('#libraryView'),
-      tasks: rootEl.querySelector('#tasksView'),
       settings: rootEl.querySelector('#settingsView'),
       workspace: rootEl.querySelector('#workspaceView'),
     };
@@ -48,7 +46,7 @@
         button.type = 'button';
         button.dataset.nav = item.id;
         button.addEventListener('click', () => {
-          data.routeStore.set({ nav: item.id });
+          data.routeStore.set({ nav: item.id, sessionOpen: false });
           if (item.id === 'library') data.refreshCatalog();
           if (item.id === 'pending') data.refreshPending();
         });
@@ -65,13 +63,13 @@
 
     function syncViews(snap) {
       const route = snap.route;
-      // Workspace only while 当前任务 has an open project.
-      const showWorkspace = Boolean(route.projectPath) && route.nav === 'tasks';
+      const showWorkspace = Boolean(route.sessionOpen && (route.projectPath || route.sourceDirectory))
+        && route.nav !== 'settings';
       const activeNav = route.nav;
 
       if (navSidebar) {
         navSidebar.querySelectorAll('.nav-item').forEach((button) => {
-          button.classList.toggle('active', button.dataset.nav === activeNav);
+          button.classList.toggle('active', button.dataset.nav === activeNav && !showWorkspace);
         });
       }
 
@@ -81,12 +79,7 @@
           el.classList.toggle('hidden', !showWorkspace);
           return;
         }
-        if (key === 'tasks') {
-          const showTasksHome = !showWorkspace && route.nav === 'tasks';
-          el.classList.toggle('hidden', !showTasksHome);
-          return;
-        }
-        el.classList.toggle('hidden', route.nav !== key);
+        el.classList.toggle('hidden', showWorkspace || route.nav !== key);
       });
 
       if (versionEl && snap.config?.version) {
@@ -97,15 +90,25 @@
       }
     }
 
-    // Mount feature pages once.
     root.PlannerLibraryPage?.mount?.({ data, root: rootEl, router });
     root.PlannerWorkspaceShell?.mount?.({ data, root: rootEl, router });
     root.PlannerPendingPage?.mount?.({ data, root: rootEl, router });
     root.PlannerSettingsPage?.mount?.({ data, root: rootEl, router });
-    root.PlannerTasksPage?.mount?.({ data, root: rootEl, router });
+    root.PlannerEditWorkspace?.mount?.({ data, root: rootEl, router });
 
     data.subscribe(syncViews);
     syncViews(data.get());
+
+    if (data.api?.onHandoffTerminal) {
+      data.api.onHandoffTerminal((task) => data.handleAgentReturn?.(task));
+    } else if (window.plannerApi?.onHandoffTerminal) {
+      window.plannerApi.onHandoffTerminal((task) => data.handleAgentReturn?.(task));
+    }
+    if (window.plannerApi?.onHandoffProgress) {
+      window.plannerApi.onHandoffProgress((payload) => data.handleAgentProgress?.(payload));
+    }
+
+    data.recoverAgentSession?.();
 
     return { syncViews, router };
   }

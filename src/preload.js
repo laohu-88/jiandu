@@ -16,7 +16,14 @@ const api = {
 }),
   // --- handoff-api.js ---
   ...({
-  createHandoffTask: (args) => ipcRenderer.invoke('handoff:create', args),
+  startEditHandoff: (args) => ipcRenderer.invoke('handoff:start-edit', args),
+  recognizeHandoffSource: (sourceDirectory) => ipcRenderer.invoke('handoff:recognize-source', sourceDirectory),
+  checkCursorAccessibility: () => ipcRenderer.invoke('handoff:check-accessibility'),
+  onHandoffProgress: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('handoff:progress', listener);
+    return () => ipcRenderer.removeListener('handoff:progress', listener);
+  },
   launchCodexHandoff: (taskPath) => ipcRenderer.invoke('handoff:launch-codex', taskPath),
   launchCursorHandoff: (taskPath) => ipcRenderer.invoke('handoff:launch-cursor', taskPath),
   readHandoffTask: (taskPath) => ipcRenderer.invoke('handoff:read', taskPath),
@@ -60,77 +67,6 @@ const api = {
     ipcRenderer.invoke('edit:open-project', projectPath),
   showEditEditorialReview: (projectPath) =>
     ipcRenderer.invoke('edit:show-editorial-review', projectPath),
-}),
-  // --- project-api.js ---
-  ...({
-  createProject: (args) => ipcRenderer.invoke('project:create', args),
-  chooseAndOpenProject: () => ipcRenderer.invoke('project:choose-open'),
-  openProjectPath: (projectPath) => ipcRenderer.invoke('project:open-path', projectPath),
-  ensureProjectDirs: (projectPath) => ipcRenderer.invoke('project:ensure-dirs', projectPath),
-}),
-  // --- assets-api.js ---
-  ...({
-  scanAssets: (projectPath) => ipcRenderer.invoke('assets:scan', projectPath),
-  loadAssetIndex: (projectPath) => ipcRenderer.invoke('assets:load-index', projectPath),
-  updateAssetReview: (args) => ipcRenderer.invoke('assets:update-review', args),
-  getAssetPreview: (args) => ipcRenderer.invoke('assets:get-preview', args),
-  readTextPreview: (args) => ipcRenderer.invoke('assets:read-text-preview', args),
-}),
-  // --- ai-api.js ---
-  ...({
-  loadAiAnalysis: (projectPath) => ipcRenderer.invoke('ai:load-analysis', projectPath),
-  updateAiAnalysis: (args) => ipcRenderer.invoke('ai:update-analysis', args),
-  loadAiSettings: () => ipcRenderer.invoke('ai:load-settings'),
-  saveAiSettings: (settings) => ipcRenderer.invoke('ai:save-settings', settings),
-  checkAiEnvironment: () => ipcRenderer.invoke('ai:check-environment'),
-  analyzeCurrentTextAsset: (args) =>
-    ipcRenderer.invoke('ai:analyze-current-text-asset', args),
-  analyzeCurrentImageAsset: (args) =>
-    ipcRenderer.invoke('ai:analyze-current-image-asset', args),
-  analyzeBatchAssets: (args) => ipcRenderer.invoke('ai:analyze-batch-assets', args),
-  onBatchAnalysisProgress: (callback) => {
-    const listener = (_event, progress) => callback(progress);
-    ipcRenderer.on('ai:batch-analysis-progress', listener);
-    return () => ipcRenderer.removeListener('ai:batch-analysis-progress', listener);
-  },
-  generateBrief: (projectPath) => ipcRenderer.invoke('brief:generate', projectPath),
-  generateAiMaterialReport: (projectPath) =>
-    ipcRenderer.invoke('ai:generate-material-report', projectPath),
-  generateEditSuggestion: (projectPath) =>
-    ipcRenderer.invoke('ai:generate-edit-suggestion', projectPath),
-}),
-  // --- stage-api.js ---
-  ...({
-  loadStage2State: (projectPath) => ipcRenderer.invoke('stage2:load', projectPath),
-  importVideoPlan: (args) => ipcRenderer.invoke('plan:import', args),
-  scanVoiceFiles: (projectPath) => ipcRenderer.invoke('voice:scan', projectPath),
-  loadStage3State: (projectPath) => ipcRenderer.invoke('stage3:load', projectPath),
-  saveAssignments: (args) => ipcRenderer.invoke('assignments:save', args),
-  addAssetToSegment: (args) => ipcRenderer.invoke('assignments:add-asset', args),
-  autoFitSegment: (args) => ipcRenderer.invoke('assignments:auto-fit', args),
-  syncSegmentPackages: (projectPath) => ipcRenderer.invoke('packages:sync', projectPath),
-  loadRoughcutStatus: (projectPath) => ipcRenderer.invoke('roughcut:load-status', projectPath),
-  generateRoughcut: (args) => ipcRenderer.invoke('roughcut:generate-one', args),
-  generateAllRoughcuts: (projectPath) => ipcRenderer.invoke('roughcut:generate-all', projectPath),
-  showRoughcutOutput: (args) => ipcRenderer.invoke('roughcut:show-output', args),
-  loadFinalRoughcutStatus: (projectPath) =>
-    ipcRenderer.invoke('final-roughcut:load-status', projectPath),
-  generateFinalRoughcut: (projectPath) =>
-    ipcRenderer.invoke('final-roughcut:generate', projectPath),
-  generateFcpHandoff: (projectPath) => ipcRenderer.invoke('fcp-handoff:generate', projectPath),
-  loadSubtitleState: (projectPath) => ipcRenderer.invoke('subtitle:load', projectPath),
-  saveSubtitleConfig: (args) => ipcRenderer.invoke('subtitle:save-config', args),
-  chooseSubtitleVideo: (projectPath) => ipcRenderer.invoke('subtitle:choose-video', projectPath),
-  generateSubtitlesFromVideo: (args) =>
-    ipcRenderer.invoke('subtitle:generate-from-video', args),
-  organizeExistingSrt: (projectPath) => ipcRenderer.invoke('subtitle:organize-existing', projectPath),
-  loadRecentProjects: () => ipcRenderer.invoke('recent-projects:load'),
-  detectEnvironment: (subtitleCommand) => ipcRenderer.invoke('environment:detect', subtitleCommand),
-  prepareCodexVideo: (args) => ipcRenderer.invoke('codex-video:prepare', args),
-  inspectCodexVideoRange: (args) => ipcRenderer.invoke('codex-video:inspect-range', args),
-  validateCodexVideoAnalysis: (args) => ipcRenderer.invoke('codex-video:validate-analysis', args),
-  buildCodexVideoProject: (args) => ipcRenderer.invoke('codex-video:build', args),
-  verifyCodexVideoProject: (projectPath) => ipcRenderer.invoke('codex-video:verify', projectPath),
 }),
   // --- catalog-api.js ---
   ...({
