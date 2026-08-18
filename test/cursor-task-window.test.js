@@ -12,6 +12,10 @@ const {
   windowLooksTechnical,
   windowLooksForbidden,
   composerHoldsUnsentPrompt,
+  focusedComposerLooksLikeAgent,
+  destroyCursorHandoffController,
+  getCursorHandoffController,
+  runCursorHandoffController,
 } = require('../src/services/cursor-automation-service');
 const {
   buildCursorLaunchPlan,
@@ -120,6 +124,13 @@ test('不把开发会话或内部 handoff 文件当作任务窗口', () => {
     preexisting: [leftover],
     allowWorkspace: true,
   }), true);
+  assert.equal(windowLooksForbidden('Cursor Agents', '视频剪辑编排器 · 任务', {
+    window: { name: 'Cursor Agents', position: [4, 148], size: [1281, 801] },
+    allowAgentManager: true,
+  }), false);
+  assert.equal(windowLooksForbidden('Cursor Agents', '视频剪辑编排器 · 任务', {
+    window: { name: 'Cursor Agents', position: [4, 148], size: [1281, 801] },
+  }), true);
   const automation = require('node:fs').readFileSync(
     path.join(ROOT, 'src/services/cursor-automation-service.js'),
     'utf8',
@@ -148,7 +159,44 @@ test('prompt verified injection 才算成功，injected 不能单独过关', () 
     role: 'AXStaticText',
     value: '执行视频剪辑任务 demo（attempt abc）。\n\n本次额外要求：\n留着\n\n完成后按任务清单写回结果和状态。',
   }, 'abc', '执行视频剪辑任务 demo（attempt abc）。\n\n本次额外要求：\n留着\n\n完成后按任务清单写回结果和状态。'), false);
+  assert.equal(focusedComposerLooksLikeAgent({ role: 'AXTextArea', description: 'Agent input' }), true);
+  assert.equal(focusedComposerLooksLikeAgent({ role: 'AXTextField', description: 'Agent input' }), true);
+  assert.equal(focusedComposerLooksLikeAgent({ role: 'AXTextField', description: 'Search files' }), false);
   assert.doesNotMatch(automation, /ok: last\?\.injected === true/);
+});
+
+test('同一 taskId + attemptId 严格 single-flight，running 后不再保留 UI 自动化', async () => {
+  let calls = 0;
+  const work = async () => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return { ok: true, submitted: true, windowName: '视频剪辑编排器 · 任务' };
+  };
+  const first = runCursorHandoffController({ taskId: 'task-1', attemptId: 'attempt-1' }, work);
+  const second = runCursorHandoffController({ taskId: 'task-1', attemptId: 'attempt-1' }, work);
+  const [left, right] = await Promise.all([first, second]);
+  assert.equal(calls, 1);
+  assert.deepEqual(left, right);
+  assert.equal(getCursorHandoffController('task-1', 'attempt-1').phase, 'running');
+  assert.equal(getCursorHandoffController('task-1', 'attempt-1').uiAutomationActive, false);
+  assert.equal(destroyCursorHandoffController('task-1', 'attempt-1', 'completed'), true);
+  assert.equal(getCursorHandoffController('task-1', 'attempt-1'), null);
+});
+
+test('handoff controller 失败后立即销毁，可由同一 attempt 显式重试', async () => {
+  await assert.rejects(
+    runCursorHandoffController({ taskId: 'task-2', attemptId: 'attempt-1' }, async () => {
+      throw new Error('inject failed');
+    }),
+    /inject failed/,
+  );
+  assert.equal(getCursorHandoffController('task-2', 'attempt-1'), null);
+  const result = await runCursorHandoffController(
+    { taskId: 'task-2', attemptId: 'attempt-1' },
+    async () => ({ ok: true, submitted: false }),
+  );
+  assert.equal(result.ok, true);
+  assert.equal(getCursorHandoffController('task-2', 'attempt-1'), null);
 });
 
 test('重试注入复用同一 attempt 窗口，不把 cursor-package 当工作区', async () => {

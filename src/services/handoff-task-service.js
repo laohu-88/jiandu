@@ -553,6 +553,18 @@ async function updateHandoffTask(taskPath, patch = {}) {
       // Package pointer sync is best-effort; task snapshot remains authoritative.
     }
   }
+  if (TERMINAL_STATUSES.has(nextStatus) || nextStatus === 'agent_disconnected') {
+    try {
+      const { destroyCursorHandoffController } = require('./cursor-automation-service');
+      destroyCursorHandoffController(
+        updated.taskId,
+        updated.currentAttempt?.attemptId,
+        nextStatus,
+      );
+    } catch {
+      // Lifecycle persistence must not depend on optional UI automation cleanup.
+    }
+  }
   return updated;
 }
 

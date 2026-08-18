@@ -41,6 +41,7 @@ const { registerIpc } = require('./ipc/register');
 let mainWindow;
 const terminalTaskVersions = new Map();
 const progressTaskVersions = new Map();
+const foregroundTaskVersions = new Map();
 let handoffWatcher = null;
 let handoffRefreshTimer = null;
 let livenessTimer = null;
@@ -90,7 +91,11 @@ async function focusPlannerOnTask(task, options = {}) {
   if (mainWindow.webContents.isLoadingMainFrame()) {
     await new Promise((resolve) => mainWindow.webContents.once('did-finish-load', resolve));
   }
-  if (options.activate !== false) {
+  const foregroundVersion = `${task.taskId}:${task.currentAttempt?.attemptId || ''}:${task.status}:${task.updatedAt}:${task.returnState?.requestedAt || ''}`;
+  const shouldActivate = options.activate !== false
+    && foregroundTaskVersions.get(task.taskId) !== foregroundVersion;
+  if (shouldActivate) {
+    foregroundTaskVersions.set(task.taskId, foregroundVersion);
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
     mainWindow.focus();

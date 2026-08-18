@@ -25,7 +25,76 @@ const TECHNICAL_WINDOW_MARKERS = Object.freeze([
 ]);
 
 const PROJECT_WORKSPACE_BASENAME = 'video-cut-planner-v3';
+const CURSOR_AGENT_MANAGER_WINDOW = 'Cursor Agents';
 const TASK_WINDOW_TITLE = '视频剪辑编排器 · 任务';
+
+// A handoff is a single-flight operation.  Keeping this in the main-process
+// module prevents two renderer clicks (or a retry racing the first launch)
+// from both opening Cursor before the task snapshot has recorded its session.
+const cursorHandoffControllers = new Map();
+
+function cursorHandoffKey(taskId, attemptId) {
+  const task = String(taskId || '').trim();
+  const attempt = String(attemptId || '').trim();
+  return task && attempt ? `${task}:${attempt}` : '';
+}
+
+function getCursorHandoffController(taskId, attemptId) {
+  const key = cursorHandoffKey(taskId, attemptId);
+  return key ? cursorHandoffControllers.get(key) || null : null;
+}
+
+function destroyCursorHandoffController(taskId, attemptId, reason = 'inactive') {
+  const key = cursorHandoffKey(taskId, attemptId);
+  if (!key) return false;
+  const controller = cursorHandoffControllers.get(key);
+  if (!controller) return false;
+  controller.uiAutomationActive = false;
+  controller.phase = 'stopped';
+  controller.closedReason = reason;
+  controller.closedAt = new Date().toISOString();
+  cursorHandoffControllers.delete(key);
+  return true;
+}
+
+async function runCursorHandoffController({ taskId, attemptId } = {}, work) {
+  const key = cursorHandoffKey(taskId, attemptId);
+  if (!key || typeof work !== 'function') return work();
+  const existing = cursorHandoffControllers.get(key);
+  if (existing) return existing.promise;
+
+  const controller = {
+    key,
+    taskId,
+    attemptId,
+    phase: 'launching',
+    uiAutomationActive: true,
+    createdAt: new Date().toISOString(),
+    promise: null,
+  };
+  controller.promise = (async () => {
+    try {
+      const result = await work(controller);
+      if (result?.submitted === true) {
+        // Once Agent is running, no Accessibility/AppleScript retry remains.
+        controller.phase = 'running';
+        controller.uiAutomationActive = false;
+      } else {
+        controller.phase = 'stopped';
+        controller.uiAutomationActive = false;
+        cursorHandoffControllers.delete(key);
+      }
+      return result;
+    } catch (error) {
+      controller.phase = 'stopped';
+      controller.uiAutomationActive = false;
+      cursorHandoffControllers.delete(key);
+      throw error;
+    }
+  })();
+  cursorHandoffControllers.set(key, controller);
+  return controller.promise;
+}
 
 function runOsascript(source, timeoutMs = 12_000) {
   return execFileAsync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', source], {
@@ -137,7 +206,13 @@ function pickTaskWindow(windows, options = {}) {
     if (!windowLooksLikeWorkspace(window.name, workspaceNeedle)) return false;
     return true;
   });
-  if (!candidates.length) return null;
+  if (!candidates.length) {
+    if (options.allowAgentManager === true) {
+      return list.find((window) => window.name === CURSOR_AGENT_MANAGER_WINDOW
+        && windowLooksLikeEditor(window)) || null;
+    }
+    return null;
+  }
   const preferred = candidates.filter((window) => !window.technical);
   const pool = preferred.length ? preferred : candidates;
   const bareWorkspace = pool.find((window) => window.name === workspaceNeedle);
@@ -159,7 +234,7 @@ function pickTargetWindowName(names, titleNeedle, options = {}) {
 function windowLooksForbidden(name, titleNeedle, options = {}) {
   const text = String(name || '');
   if (windowLooksTechnical(text)) return true;
-  if (text === 'Cursor Agents') return true;
+  if (text === CURSOR_AGENT_MANAGER_WINDOW) return options.allowAgentManager !== true;
   const window = normalizeWindow(options.window || {
     name: text,
     id: options.windowId,
@@ -322,6 +397,7 @@ async function waitForNewCursorWindow({
   session = null,
   attemptId = '',
   taskId = '',
+  allowAgentManager = false,
 } = {}) {
   const preexistingWindows = (before || []).map((item, index) => (
     typeof item === 'string' ? normalizeWindow({ name: item }, index) : item
@@ -360,11 +436,14 @@ async function waitForNewCursorWindow({
       preexisting,
       attemptId,
       taskId,
+      allowAgentManager,
     });
-    if (target && (grown || !beforeCount) && !preexisting.includes(target.fingerprint)) {
+    const modernAgentManager = target?.name === CURSOR_AGENT_MANAGER_WINDOW && allowAgentManager;
+    if (target && (modernAgentManager || ((grown || !beforeCount)
+      && !preexisting.includes(target.fingerprint)))) {
       return {
         ok: true,
-        reused: false,
+        reused: modernAgentManager,
         window: target,
         windowName: target.name,
         windowCount: listed.count,
@@ -459,12 +538,10 @@ async function focusAgentComposer(target) {
       delay(0.08);
       se.keyCode(53);
       delay(0.2);
-      se.keystroke("p", { using: ["command down", "shift down"] });
-      delay(0.45);
-      se.keystroke("composer.newAgentChat");
-      delay(0.35);
-      se.keyCode(36);
-      delay(0.9);
+      se.keystroke("l", { using: ["command down", "shift down"] });
+      delay(1.2);
+      se.keystroke("i", { using: ["command down"] });
+      delay(0.8);
       let front = "";
       try { front = String(windows[0].name() || ""); } catch (error) {}
       return JSON.stringify({ ok: true, focused: true, targetName: targetName, frontName: front, windowCount: windows.length });
@@ -491,27 +568,45 @@ async function readFocusedComposer(target) {
       ${raiseTargetScript(target)}
       let role = "";
       let value = "";
+      let description = "";
+      let title = "";
+      let help = "";
       try {
         const el = se.processes.whose({ name: "Cursor" })[0].focusedUIElement();
         try { role = String(el.role() || ""); } catch (error) {}
         try { value = String(el.value() || ""); } catch (error) {}
+        try { description = String(el.description() || ""); } catch (error) {}
+        try { title = String(el.title() || ""); } catch (error) {}
+        try { help = String(el.help() || ""); } catch (error) {}
         if (!value) {
           try { value = String(el.valueDescription() || ""); } catch (error) {}
         }
       } catch (error) {}
-      return JSON.stringify({ ok: true, role, value, targetName: targetName });
+      return JSON.stringify({ ok: true, role, value, description, title, help, targetName: targetName });
   `, 8000);
 }
 
 async function copyFocusedText(target) {
-  await runCursorKeys(`
+  const result = await runCursorKeys(`
       ${raiseTargetScript(target)}
       se.keystroke("a", { using: ["command down"] });
       delay(0.1);
       se.keystroke("c", { using: ["command down"] });
       delay(0.2);
-      return JSON.stringify({ ok: true, targetName: targetName });
+      let role = "";
+      let description = "";
+      let title = "";
+      let help = "";
+      try {
+        const el = se.processes.whose({ name: "Cursor" })[0].focusedUIElement();
+        try { role = String(el.role() || ""); } catch (error) {}
+        try { description = String(el.description() || ""); } catch (error) {}
+        try { title = String(el.title() || ""); } catch (error) {}
+        try { help = String(el.help() || ""); } catch (error) {}
+      } catch (error) {}
+      return JSON.stringify({ ok: true, role, description, title, help, targetName: targetName });
   `, 8000);
+  return result;
 }
 
 async function pasteIntoFocusedField(target) {
@@ -537,11 +632,17 @@ async function submitFocusedField(target) {
 }
 
 function composerHoldsUnsentPrompt(state, verifyNeedle, prompt) {
-  const role = String(state?.role || '');
+  if (!focusedComposerLooksLikeAgent(state)) return false;
   const value = String(state?.value || '');
-  const editable = /AXTextArea|AXTextField|AXComboBox/i.test(role) && !/StaticText/i.test(role);
-  if (!editable) return false;
   return copiedLooksLikePrompt(value, verifyNeedle, prompt);
+}
+
+function focusedComposerLooksLikeAgent(state) {
+  const role = String(state?.role || '');
+  const metadata = [state?.description, state?.title, state?.help].filter(Boolean).join(' ');
+  if (/StaticText/i.test(role)) return false;
+  if (role && !/AXTextArea|AXTextField|AXComboBox/i.test(role)) return false;
+  return !/(search files|quick open|command palette|filter|搜索文件|快速打开|命令面板|筛选)/i.test(metadata);
 }
 
 function copiedLooksLikePrompt(copied, verifyNeedle, prompt) {
@@ -587,11 +688,12 @@ async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) 
     }
     : await waitForCursorWindow(titleNeedle ? 20_000 : 14_000, titleNeedle, options);
   if (!windowReady.ok) return windowReady;
-  const target = windowReady.window || normalizeWindow({ name: windowReady.windowName });
+  let target = windowReady.window || normalizeWindow({ name: windowReady.windowName });
   if (target.technical || windowLooksForbidden(windowReady.windowName, titleNeedle, {
     session: options.session,
     preexisting: options.preexisting,
     allowWorkspace: true,
+    allowAgentManager: options.allowAgentManager === true,
     window: target,
   })) {
     return {
@@ -615,10 +717,29 @@ async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) 
         last = { ...focused, injected: false, verified: false };
         continue;
       }
+      if (target.name === CURSOR_AGENT_MANAGER_WINDOW && options.allowAgentManager === true) {
+        const taskWindow = await waitForCursorWindow(5_000, titleNeedle, {
+          ...options,
+          allowAgentManager: false,
+          preexisting: options.preexisting,
+        });
+        if (taskWindow.ok && taskWindow.window) target = taskWindow.window;
+      }
       if (options.clipboard && typeof options.clipboard.writeText === 'function') {
         options.clipboard.writeText('');
       }
-      await copyFocusedText(target);
+      const copiedField = await copyFocusedText(target);
+      if (!focusedComposerLooksLikeAgent(copiedField)) {
+        last = {
+          ok: false,
+          injected: false,
+          verified: false,
+          code: 'CURSOR_COMPOSER_NOT_FOUND',
+          message: '当前焦点不是 Cursor Agent 输入区，已拒绝写入搜索框或文件面板。',
+          windowName: target.name || focused.targetName || windowReady.windowName,
+        };
+        continue;
+      }
       const before = options.clipboard && typeof options.clipboard.readText === 'function'
         ? String(options.clipboard.readText() || '')
         : '';
@@ -634,7 +755,7 @@ async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) 
             code: 'CURSOR_WINDOW_FORBIDDEN',
             message: '复制到的是其它会话内容，不是当前任务的 Agent 输入框。已中止，避免写入当前开发会话。',
             preview: before.slice(0, 240),
-            windowName: focused.targetName || windowReady.windowName,
+            windowName: target.name || focused.targetName || windowReady.windowName,
           };
           continue;
         }
@@ -644,7 +765,18 @@ async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) 
           options.clipboard.writeText(String(prompt || ''));
         }
         await pasteIntoFocusedField(target);
-        await copyFocusedText(target);
+        const pastedField = await copyFocusedText(target);
+        if (!focusedComposerLooksLikeAgent(pastedField)) {
+          last = {
+            ok: false,
+            injected: false,
+            verified: false,
+            code: 'CURSOR_COMPOSER_NOT_FOUND',
+            message: '提示词未进入 Cursor Agent 输入区，已拒绝把内部交接内容写入其他面板。',
+            windowName: target.name || focused.targetName || windowReady.windowName,
+          };
+          continue;
+        }
       }
       const copied = alreadyOurs
         ? before
@@ -657,7 +789,7 @@ async function injectPromptViaAccessibility(prompt, verifyNeedle, options = {}) 
         injected: true,
         verified,
         preview: copied.slice(0, 800),
-        windowName: focused.targetName || windowReady.windowName,
+        windowName: target.name || focused.targetName || windowReady.windowName,
         windowCount: focused.windowCount || windowReady.windowCount,
         code: verified ? null : 'PROMPT_INJECT_UNVERIFIED',
         window: target,
@@ -788,7 +920,7 @@ function workspaceFromOpenArgs(openArgs, fallback = '') {
   return folder || fallback;
 }
 
-async function launchAndInjectCursor({
+async function performLaunchAndInjectCursor({
   openArgs,
   prompt,
   verifyNeedle,
@@ -800,6 +932,7 @@ async function launchAndInjectCursor({
   session = null,
   attemptId = '',
   taskId = '',
+  allowAgentManager = false,
 } = {}) {
   const resolvedWorkspace = workspaceFromOpenArgs(openArgs, workspace);
   const workspaceNeedle = windowTitleNeedle || TASK_WINDOW_TITLE;
@@ -817,10 +950,11 @@ async function launchAndInjectCursor({
     const appeared = await waitForNewCursorWindow({
       before: before.windows,
       workspaceNeedle,
-      timeoutMs: 20_000,
+      timeoutMs: 35_000,
       session,
       attemptId,
       taskId,
+      allowAgentManager,
     });
     if (!appeared.ok) {
       return {
@@ -895,6 +1029,7 @@ async function launchAndInjectCursor({
       attemptId,
       taskId,
       workspace: resolvedWorkspace,
+      allowAgentManager,
     })
   ));
   return {
@@ -913,6 +1048,14 @@ async function launchAndInjectCursor({
   };
 }
 
+async function launchAndInjectCursor(options = {}) {
+  if (options.inject !== false && options.controllerOwned !== true
+    && options.taskId && options.attemptId) {
+    return runCursorHandoffController(options, () => performLaunchAndInjectCursor(options));
+  }
+  return performLaunchAndInjectCursor(options);
+}
+
 module.exports = {
   ACCESSIBILITY_GUIDANCE,
   PROJECT_WORKSPACE_BASENAME,
@@ -921,8 +1064,11 @@ module.exports = {
   checkAccessibilityPermission,
   copiedLooksLikePrompt,
   composerHoldsUnsentPrompt,
+  focusedComposerLooksLikeAgent,
+  destroyCursorHandoffController,
   describeCursorWindows,
   findSessionWindow,
+  getCursorHandoffController,
   injectPromptViaAccessibility,
   isReusableCursorSession,
   launchAndInjectCursor,
@@ -932,6 +1078,7 @@ module.exports = {
   pickTaskWindow,
   sessionFromWindow,
   sessionMatchesWindow,
+  runCursorHandoffController,
   windowLooksLikeEditor,
   waitForCursorWindow,
   waitForNewCursorWindow,

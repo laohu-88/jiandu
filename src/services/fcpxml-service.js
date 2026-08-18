@@ -12,6 +12,13 @@ const BASIC_TITLE_EFFECT = Object.freeze({
   name: '基本字幕',
   uid: '.../Titles.localized/Bumper:Opener.localized/Basic Title.localized/Basic Title.moti',
 });
+const BASIC_TITLE_STYLE = Object.freeze({
+  threeDText: true,
+  surface: true,
+  outline: true,
+  glow: true,
+  dropShadow: true,
+});
 const GAUSSIAN_BLUR_EFFECT = Object.freeze({
   name: 'Gaussian',
   uid: '.../Effects.localized/Blur.localized/Gaussian.localized/Gaussian.moef',
@@ -600,6 +607,13 @@ function collectFcpTitles(analysis) {
       && subtitle.durationSec > 0
     ))
     .sort((left, right) => left.marker.timeSec - right.marker.timeSec);
+  const isVertical = analysis.timeline.orientation === 'vertical'
+    || Number(analysis.timeline.height) > Number(analysis.timeline.width);
+  const defaultTransformFor = (position) => {
+    if (position === 'center') return { x: 0, y: 0 };
+    if (position === 'top-safe') return { x: 0, y: isVertical ? 620 : 360 };
+    return { x: 0, y: isVertical ? -620 : -360 };
+  };
   return requested.map((item, index) => {
     const startSec = item.marker.timeSec;
     const nextStart = requested[index + 1]?.marker.timeSec ?? totalDuration;
@@ -620,11 +634,11 @@ function collectFcpTitles(analysis) {
       fontSize: Number.isFinite(Number(item.subtitle.fontSize))
         ? Number(item.subtitle.fontSize)
         : 46,
-      transform: item.subtitle.position === 'top-safe'
-        ? { x: 0, y: 360 }
-        : item.subtitle.position === 'center'
-          ? { x: 0, y: 0 }
-          : { x: 0, y: -360 },
+      // Marker subtitles have no free-form layout in the analysis contract;
+      // use the production safe-zone default while keeping managed/manual
+      // caption transforms untouched below.
+      transform: defaultTransformFor(item.subtitle.position),
+      defaultStyle: BASIC_TITLE_STYLE,
     };
   }).filter((item) => item.durationSec > 0);
 }
@@ -1121,7 +1135,10 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
         `          <title ref="${titleEffectId}" lane="1" offset="${offsetTime}"`
         + ` name="${escapeXml(`${title.text} - ${BASIC_TITLE_EFFECT.name}`)}"`
         + ` start="3600s" duration="${durationTime}">\n`
-        + '            <param name="展平" key="9999/999166631/999166633/2/351" value="1"/>\n'
+        // Basic Title's Flatten=0 is the native 3D-text mode.  The remaining
+        // switches are published by the installed Basic Title template and
+        // keep the Title editable in FCP's Text inspector.
+        + '            <param name="展平" key="9999/999166631/999166633/2/351" value="0"/>\n'
         + '            <param name="对齐" key="9999/999166631/999166633/2/354/999169573/401" value="1 (居中)"/>\n'
         + (title.transform
           ? `            <param name="位置" key="9999/999166631/999166633/1/100/101"`
@@ -1132,7 +1149,8 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
         + '            </text>\n'
         + `            <text-style-def id="ts-title-${title.index + 1}">\n`
         + `              <text-style font="Helvetica" fontSize="${titleFontSize}" fontFace="Regular"`
-        + ' fontColor="1 1 1 1" alignment="center" strokeColor="0 0 0 0.9" strokeWidth="-4"/>\n'
+        + ' fontColor="1 1 1 1" alignment="center" strokeColor="0 0 0 0.9" strokeWidth="-4"'
+        + ' shadowColor="0 0 0 0.85" shadowOffset="0 -6" shadowBlurRadius="12"/>\n'
         + '            </text-style-def>\n'
         + noteChild
         + '          </title>',
@@ -1923,6 +1941,7 @@ async function writeFcpxml(outputPath, payload, options = {}) {
 }
 
 module.exports = {
+  BASIC_TITLE_STYLE,
   BASIC_TITLE_EFFECT,
   GAUSSIAN_BLUR_EFFECT,
   FCPXML_DEFAULT_VERSION,

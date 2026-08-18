@@ -395,7 +395,7 @@ test('Cursor prompt 注入结果必须 verified 才算通过', () => {
     'utf8',
   );
   assert.match(automation, /copiedLooksLikePrompt/);
-  assert.match(automation, /composer\.newAgentChat/);
+  assert.match(automation, /keystroke\("l", \{ using: \["command down", "shift down"\] \}\)/);
   assert.match(automation, /CURSOR_WINDOW_FORBIDDEN/);
   assert.match(automation, /keyCode\(36, \{ using: \["command down"\] \}\)/);
   const planSource = require('node:fs').readFileSync(

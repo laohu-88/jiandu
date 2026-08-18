@@ -11,6 +11,7 @@ const {
   createHandoffTask,
   listHandoffTasks,
   loadHandoffSettings,
+  readHandoffTask,
   saveHandoffSettings,
   startAgentAttempt,
   updateHandoffTask,
@@ -24,7 +25,11 @@ const {
   sweepHandoffPackages,
   writeCursorWindowWorkspace,
 } = require('../services/cursor-agent-handoff-service');
-const { launchAndInjectCursor, checkAccessibilityPermission } = require('../services/cursor-automation-service');
+const {
+  checkAccessibilityPermission,
+  launchAndInjectCursor,
+  runCursorHandoffController,
+} = require('../services/cursor-automation-service');
 const {
   createAgentTask,
   processingViewModel,
@@ -60,7 +65,7 @@ async function launchCodexTask(shell, task) {
   }
 }
 
-async function launchCursorTask(clipboard, task, options = {}) {
+async function performLaunchCursorTask(clipboard, task, options = {}) {
   if (task.engine !== 'cursor_agent') {
     throw new Error('当前任务不是 Cursor 引擎任务。');
   }
@@ -85,6 +90,8 @@ async function launchCursorTask(clipboard, task, options = {}) {
       session: plan.session,
       attemptId,
       taskId: task.taskId,
+      controllerOwned: true,
+      allowAgentManager: true,
     });
     const verified = inject.verified === true;
     const submitted = inject.submitted === true;
@@ -131,6 +138,26 @@ async function launchCursorTask(clipboard, task, options = {}) {
     });
     throw error;
   }
+}
+
+async function launchCursorTask(clipboard, task, options = {}) {
+  const current = await readHandoffTask(task.taskFilePath);
+  const attemptId = task.currentAttempt?.attemptId;
+  if (current.currentAttempt?.attemptId !== attemptId) {
+    // A stale renderer event must never launch or inject an old attempt.
+    return current;
+  }
+  if (['scanning_media', 'extracting_metadata', 'extracting_frames', 'analyzing_media',
+    'planning_story', 'analysis_needs_correction', 'analysis_complete', 'deciding_hyperframes',
+    'designing_hyperframes', 'rendering_hyperframes', 'reviewing_hyperframes', 'building_project',
+    'rendering_preview', 'generating_fcpxml', 'verifying', 'completed', 'completed_with_warnings',
+    'failed', 'cancelled', 'agent_disconnected'].includes(current.status)) {
+    return current;
+  }
+  return runCursorHandoffController({
+    taskId: current.taskId,
+    attemptId,
+  }, () => performLaunchCursorTask(clipboard, current, options));
 }
 
 function registerHandoffIpc(ctx) {

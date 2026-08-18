@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   BASIC_TITLE_EFFECT,
+  BASIC_TITLE_STYLE,
   assetUid,
   buildFcpxml,
   fcpTime,
@@ -166,6 +167,16 @@ test('FCPXML 1.14 使用 FCP 12.3 基础标题生成独立可编辑 Title 且不
   assert.match(xml, /<text-style-def id="ts-title-1">/);
   assert.match(xml, /fontSize="46"/);
   assert.match(xml, /strokeColor="0 0 0 0\.9" strokeWidth="-4"/);
+  assert.match(xml, /<param name="展平"[^>]*value="0"\/>/);
+  assert.doesNotMatch(xml, /<param name="(?:3D文本|表面|外框|光晕|投影)"/);
+  assert.match(xml, /shadowColor="0 0 0 0\.85" shadowOffset="0 -6" shadowBlurRadius="12"/);
+  assert.deepEqual(BASIC_TITLE_STYLE, {
+    threeDText: true,
+    surface: true,
+    outline: true,
+    glow: true,
+    dropShadow: true,
+  });
   assert.match(xml, /<param name="位置"[^>]*value="0 -360"\/>/);
   assert.match(xml, /<marker [^>]*value="开始调整"\/>/);
   assert.ok(
@@ -173,6 +184,31 @@ test('FCPXML 1.14 使用 FCP 12.3 基础标题生成独立可编辑 Title 且不
     'FCPXML 1.14 DTD 要求锚定 Title 位于 Marker 之前',
   );
   assert.doesNotMatch(xml, /roughcut-preview/);
+});
+
+test('竖屏原生 Title 默认落在中下方安全区，仍水平居中', () => {
+  const verticalAnalysis = structuredClone(analysis);
+  verticalAnalysis.timeline = {
+    ...verticalAnalysis.timeline,
+    orientation: 'vertical',
+    width: 1080,
+    height: 1920,
+    markers: [{
+      id: 'vertical-title',
+      timeSec: 0,
+      text: '章节',
+      subtitle: {
+        enabled: true,
+        text: '竖屏字幕',
+        durationSec: 1,
+        position: 'bottom-safe',
+        purpose: '说明',
+        renderAsFcpTitle: true,
+      },
+    }],
+  };
+  const xml = buildFcpxml({ projectName: '竖屏字幕', analysis: verticalAnalysis, assetMappings: mappings });
+  assert.match(xml, /<param name="位置"[^>]*value="0 -620"\/>/);
 });
 
 test('原生标题支持居中位置', () => {
