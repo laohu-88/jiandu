@@ -21,7 +21,7 @@ const {
 } = require('../scripts/after-pack');
 
 test('electron-builder 使用正式身份、arm64 dir、ASAR、图标和 ad-hoc 签名', () => {
-  assert.equal(config.productName, '视频剪辑编排器 v3');
+  assert.equal(config.productName, '剪渡');
   assert.equal(config.appId, 'com.laohu.video-cut-planner-v3');
   assert.equal(config.asar, true);
   assert.equal(config.mac.category, 'public.app-category.video');
@@ -29,7 +29,7 @@ test('electron-builder 使用正式身份、arm64 dir、ASAR、图标和 ad-hoc 
   assert.equal(config.mac.hardenedRuntime, true);
   assert.equal(config.mac.icon, 'build/app-icon.icns');
   assert.deepEqual(config.mac.target, [{ target: 'dir', arch: ['arm64'] }]);
-  assert.equal(config.mac.protocols[0].name, '视频剪辑编排器 v3 交接回流');
+  assert.equal(config.mac.protocols[0].name, '剪渡交接回流');
   assert.deepEqual(config.mac.protocols[0].schemes, ['video-cut-planner']);
 });
 
@@ -70,7 +70,7 @@ test('afterPack 在签名前移除 Electron 默认的未使用权限说明', asy
   const result = await removeUnusedMacPermissionDescriptions({
     electronPlatformName: 'darwin',
     appOutDir: '/tmp/构建 输出',
-    packager: { appInfo: { productFilename: '视频剪辑编排器 v3' } },
+    packager: { appInfo: { productFilename: '剪渡' } },
   }, {
     runImpl: async (command, args) => {
       calls.push({ command, args });
@@ -96,7 +96,7 @@ test('构建与安装路径严格限定且支持中文和空格', () => {
     /名称无效/,
   );
   assert.throws(
-    () => assertExpectedAppPath('/tmp/视频剪辑编排器 v3.app', ['/Applications']),
+    () => assertExpectedAppPath('/tmp/剪渡.app', ['/Applications']),
     /不在允许目录/,
   );
 });
@@ -105,7 +105,7 @@ test('安装备份使用稳定 userData 子目录和无冒号时间戳', () => {
   const fixed = new Date('2026-07-23T12:34:56.789Z');
   assert.equal(timestamp(fixed), '2026-07-23T12-34-56-789Z');
   const backup = backupPathFor(fixed);
-  assert.match(backup, /视频剪辑编排器 v3\/install-backups\//);
+  assert.match(backup, /剪渡\/install-backups\//);
   assert.equal(path.extname(backup), '.app');
   assert.equal(backup.includes(':'), false);
   assert.equal(escapeRegExp('/Applications/a+b.app'), '/Applications/a\\+b\\.app');

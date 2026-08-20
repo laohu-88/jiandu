@@ -334,5 +334,5 @@ test('剪辑工作区展示素材识别与额外要求，不再展示旧交接�
   assert.match(html, /id="pageBrief"/);
   assert.match(pending, /开始剪辑/);
   assert.match(edit, /本次额外要求/);
-  assert.match(edit, /开始 AI 剪辑/);
+  assert.match(edit, /开始剪辑/);
 });

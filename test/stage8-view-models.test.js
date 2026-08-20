@@ -88,7 +88,7 @@ test('routing state merge keeps unique shape and defaults', () => {
   assert.equal(state.projectPath, null);
   assert.equal(state.projectPage, 'brief');
   assert.equal(state.platformMode, 'douyin');
-  assert.equal(state.engine, 'cursor_agent');
+  assert.equal(state.engine, 'codex');
   assert.equal(state.douyinStage, 'plan');
   assert.equal(state.assetFilter, 'all');
   assert.equal(state.error, null);

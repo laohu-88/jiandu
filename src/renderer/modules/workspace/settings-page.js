@@ -19,42 +19,17 @@
         text('p', '只保留日常需要的交接与诊断。', 'muted'),
       );
 
-      const engine = root.PlannerDom.createResultSection('Cursor / Codex 交接');
-      const engineSelect = document.createElement('select');
-      [['cursor_agent', 'Cursor'], ['codex', 'Codex']].forEach(([value, label]) => {
-        const option = text('option', label);
-        option.value = value;
-        option.selected = (snap.defaultEngine || snap.route.engine) === value;
-        engineSelect.appendChild(option);
-      });
-      engineSelect.addEventListener('change', async () => {
-        data.routeStore.set({ engine: engineSelect.value });
-        const settings = await window.plannerApi.saveHandoffSettings({ defaultEngine: engineSelect.value });
-        data.patch({ defaultEngine: settings.defaultEngine });
-      });
-      engine.append(text('p', '开始 AI 剪辑时默认使用的 Agent。', 'muted'), engineSelect);
+      const engine = root.PlannerDom.createResultSection('剪辑 Agent');
+      engine.append(text('p', 'Codex（唯一可执行 provider）', 'muted'));
       view.appendChild(engine);
 
-      const access = root.PlannerDom.createResultSection('Cursor 自动化权限');
-      const check = text('button', '检查辅助功能权限', 'button secondary');
-      check.type = 'button';
-      const accessStatus = text('p', snap.accessibility?.granted
-        ? '已授权，可以把提示词放入 Cursor。'
-        : '尚未检查。首次自动放入提示词时如果缺权限，会在这里给出一次性指引。', 'muted');
-      check.addEventListener('click', async () => {
-        try {
-          const result = await window.plannerApi.checkCursorAccessibility();
-          data.patch({ accessibility: result });
-          data.toast(result.granted ? '辅助功能已授权' : '尚未授权辅助功能', !result.granted);
-        } catch (error) {
-          data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
-        }
-      });
-      if (snap.accessibility && snap.accessibility.granted === false) {
-        access.append(text('pre', snap.accessibility.guidance || snap.accessibility.message || '', 'notice warning'));
-      }
-      access.append(accessStatus, check);
-      view.appendChild(access);
+      const grok = root.PlannerDom.createResultSection('Grok Build');
+      const grokStatus = snap.config?.providers?.providers?.grokBuild;
+      grok.append(text('p', grokStatus
+        ? `${grokStatus.installed ? '已安装' : '未安装'} · ${grokStatus.configured ? '已配置' : '未配置'} · ${grokStatus.available ? '可用' : '不可用'}`
+        : '正在检测…', 'muted'));
+      if (grokStatus?.reason) grok.append(text('p', grokStatus.reason, 'muted'));
+      view.appendChild(grok);
 
       const library = root.PlannerDom.createResultSection('素材库位置');
       library.appendChild(root.PlannerDom.createDefinitionGrid([
@@ -77,7 +52,11 @@
       fcp.appendChild(auto);
       view.appendChild(fcp);
 
-      const diag = root.PlannerDom.createResultSection('诊断信息');
+      const diag = document.createElement('details');
+      diag.className = 'result-section advanced-diagnostics';
+      const summary = document.createElement('summary');
+      summary.textContent = '高级诊断';
+      diag.appendChild(summary);
       const task = snap.runningOverlays?.handoffTask;
       const retention = task?.status === 'cancelled' || task?.status === 'completed' || task?.status === 'completed_with_warnings'
         ? '完成后可清理'
@@ -89,32 +68,8 @@
         ['工作区', snap.config?.workspace || '—'],
         ['FFmpeg', snap.config?.ffmpeg || '本地媒体处理可用'],
         ['当前任务', task?.taskId || '无'],
-        ['交接包策略', retention],
-        ['Agent 窗口', task?.cursorSession?.active ? '已关联当前 attempt' : '未关联活跃任务'],
+        ['任务记录', retention],
       ].filter((item) => item[1])));
-      if (task?.cursorPackagePath) {
-        const show = text('button', '在访达中显示内部交接包', 'button ghost');
-        show.type = 'button';
-        show.addEventListener('click', async () => {
-          try {
-            await window.plannerApi.showHandoffPackage(task.taskFilePath);
-          } catch (error) {
-            data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
-          }
-        });
-        diag.appendChild(show);
-      }
-      const sweep = text('button', '清理已完成临时交接包', 'button secondary');
-      sweep.type = 'button';
-      sweep.addEventListener('click', async () => {
-        try {
-          const result = await window.plannerApi.sweepHandoffPackages();
-          data.toast(`已清理 ${result?.swept?.length || 0} 个完成/取消临时包`);
-        } catch (error) {
-          data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
-        }
-      });
-      diag.appendChild(sweep);
       view.appendChild(diag);
     }
 

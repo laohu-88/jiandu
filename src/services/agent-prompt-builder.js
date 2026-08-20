@@ -77,7 +77,7 @@ function buildTaskManifest(task) {
     extraRequirements,
     hyperframesMode: task.hyperframesMode || 'auto',
     lifecycle: task.lifecycle || null,
-    packageDir: task.cursorPackagePath || null,
+    packageDir: task.agentPackagePath || null,
     reusableResults: reusable,
     previous: task.previousProjectPath || task.parentTaskId || reusable.skipFullRescan ? {
       taskId: task.parentTaskId || reusable.previousAttemptId || null,
@@ -89,8 +89,8 @@ function buildTaskManifest(task) {
       statusFile: task.taskFilePath,
       attemptId: attempt?.attemptId || null,
       analysisPath: reusable.analysisPath || artifacts.analysisOutputPath || artifacts.analysisPath || null,
-      packageDir: task.cursorPackagePath || null,
-      completeCommand: task.engine === 'cursor_agent' ? 'handoff-return' : 'handoff-complete',
+      packageDir: task.agentPackagePath || null,
+      completeCommand: task.engine === 'codex' ? 'handoff-return' : 'handoff-complete',
       returnCommand: 'handoff-return',
     },
   };

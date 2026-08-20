@@ -64,7 +64,7 @@
       },
       aiEnvironment: null,
       accessibility: null,
-      defaultEngine: 'cursor_agent',
+      defaultEngine: 'codex',
       currentEpisode: null,
       sourceRecognition: null,
       selectedVideoId: null,
@@ -509,7 +509,7 @@
           projectPath: active.resultProjectPath || null,
           workspacePhase: 'processing',
           projectPage: 'processing',
-          engine: active.engine || 'cursor_agent',
+          engine: 'codex',
           platformMode: active.platformMode || 'douyin',
         });
       } catch (_error) {

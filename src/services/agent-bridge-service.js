@@ -16,7 +16,7 @@ const {
 const {
   continueBuildFromAnalysis,
   inspectAnalysisArtifacts,
-} = require('./cursor-agent-handoff-service');
+} = require('./agent-handoff-service');
 const {
   LIFECYCLE,
   canCancel,
@@ -68,10 +68,7 @@ function matchTaskForSource(tasks, sourceDirectory) {
 }
 
 async function createAgentTask(userDataPath, input) {
-  const engine = input.engine || 'cursor_agent';
-  if (!AGENT_ENGINES[engine]) {
-    throw Object.assign(new Error(`不支持的剪辑引擎：${engine}`), { code: 'INVALID_AGENT_ENGINE' });
-  }
+  const engine = 'codex';
   const listed = await listHandoffTasks(userDataPath);
   const existing = matchTaskForSource(listed.tasks, input.sourceDirectory);
   if (existing && !isTerminalStatus(existing.status)) {
@@ -79,7 +76,7 @@ async function createAgentTask(userDataPath, input) {
     if (life === LIFECYCLE.agent_disconnected) {
       return startAgentAttempt(existing.taskFilePath, {
         engine,
-        reason: engine === existing.engine ? 'resume_after_disconnect' : 'switch_engine',
+        reason: 'resume_after_disconnect',
         extraRequirements: input.extraRequirements,
       });
     }
@@ -228,7 +225,7 @@ async function reconcileActiveTasks(userDataPath, options = {}) {
       return probe(task, { now, ...options.runtimeOptions });
     }
     const { probeAgentRuntime, attachResultEvidence, probeTaskWindow } = require('./agent-runtime-service');
-    const engine = task.engine === 'codex' ? 'codex' : 'cursor_agent';
+    const engine = 'codex';
     if (!engineRuntime.has(engine)) {
       engineRuntime.set(engine, probeAgentRuntime(engine, { now, ...options.runtimeOptions }));
     }
@@ -238,9 +235,7 @@ async function reconcileActiveTasks(userDataPath, options = {}) {
       ...(options.runtimeOptions || {}),
       processes: shared.processes,
     });
-    const sessionExists = engine === 'cursor_agent'
-      ? windowProbe.taskWindowExists === true
-      : withResults.processExists === true;
+    const sessionExists = withResults.processExists === true;
     return { ...withResults, ...windowProbe, sessionExists };
   }
   for (const listed of payload.tasks) {

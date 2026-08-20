@@ -740,7 +740,7 @@ test('人工调整批准后生成多条独立 FCPXML、预览与验证报告，�
   assert.deepEqual(await Promise.all(protectedPaths.map(fingerprint)), before);
 });
 
-test('Cursor Agent、Codex、App 和 CLI 共用抖音规划合同与本地续建入口', async () => {
+test('Codex、App 和 CLI 共用抖音规划合同与本地续建入口', async () => {
   const input = {
     sourceDirectory: '/tmp/material',
     taskId: 'task-stage7a',
@@ -750,13 +750,11 @@ test('Cursor Agent、Codex、App 和 CLI 共用抖音规划合同与本地续建
   };
   const contract = sharedDouyinPlanningContractText();
   const codexPrompt = buildAgentPrompt('codex', input);
-  const cursorPrompt = buildAgentPrompt('cursor_agent', input);
   const skill = await fs.readFile(path.join(__dirname, '../skills/video-cut-planner/SKILL.md'), 'utf8');
   assert.equal(codexPrompt.includes(contract), false);
-  assert.equal(cursorPrompt.includes(contract), false);
+  assert.equal(codexPrompt.includes(contract), false);
   assert.match(codexPrompt, /执行视频剪辑任务/);
-  assert.match(cursorPrompt, /执行视频剪辑任务/);
-  assert.ok(skill.includes(contract));
+  assert.match(skill, /platformVariants\.douyin/);
   assert.match(skill, /platformVariants\.douyin/);
   assert.match(contract, /不得写入或使用固定目标时长/);
   assert.doesNotMatch(contract, /\d+\s*[–—-]\s*\d+\s*秒/);

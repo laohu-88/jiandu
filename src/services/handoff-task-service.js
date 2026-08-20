@@ -28,18 +28,11 @@ const AGENT_ENGINES = Object.freeze({
     launchStatus: 'launching_codex',
     awaitingMessage: 'Codex 已打开并预填提示词。',
   }),
-  cursor_agent: Object.freeze({
-    id: 'cursor_agent',
-    label: 'Cursor',
-    launchStatus: 'launching_cursor',
-    awaitingMessage: 'Cursor 已打开，正式提示词已放入输入框。',
-  }),
 });
 const HANDOFF_STATUSES = Object.freeze([
   'draft',
   'ready',
   'launching_codex',
-  'launching_cursor',
   'awaiting_user_send',
   'scanning_media',
   'extracting_metadata',
@@ -67,7 +60,6 @@ const STAGE_LABELS = Object.freeze({
   draft: '准备交接',
   ready: '准备交接',
   launching_codex: '正在打开 Codex',
-  launching_cursor: '正在打开 Cursor',
   awaiting_user_send: '等待在 Agent 中启动',
   scanning_media: '正在扫描素材',
   extracting_metadata: '正在读取素材信息',
@@ -91,7 +83,7 @@ const STAGE_LABELS = Object.freeze({
   cancelled: '已取消',
 });
 const HYPERFRAMES_MODES = new Set(['auto', 'disabled', 'force-attempt']);
-const LAUNCH_STATUSES = new Set(['launching_codex', 'launching_cursor']);
+const LAUNCH_STATUSES = new Set(['launching_codex']);
 
 function isInside(rootPath, candidatePath) {
   const relative = path.relative(rootPath, candidatePath);
@@ -109,7 +101,7 @@ function taskFilePath(userDataPath, taskId) {
 function packageDirForTask(taskPath) {
   const resolved = path.resolve(String(taskPath || ''));
   const taskId = path.basename(resolved, '.json');
-  return path.join(path.dirname(resolved), `${taskId}.cursor-package`);
+  return path.join(path.dirname(resolved), `${taskId}.agent-state`);
 }
 
 function eventFilePath(taskPath) {
@@ -117,13 +109,9 @@ function eventFilePath(taskPath) {
 }
 
 function normalizeEngine(engine) {
-  const value = String(engine || 'codex');
-  if (!AGENT_ENGINES[value]) {
-    throw Object.assign(new Error(`不支持的剪辑引擎：${value}`), {
-      code: 'INVALID_AGENT_ENGINE',
-    });
-  }
-  return value;
+  // Historical Codex records are readable, but Codex is no longer an
+  // executable provider. Every new or resumed task is Codex-only.
+  return 'codex';
 }
 
 async function atomicWriteJson(filePath, value) {
@@ -191,7 +179,21 @@ async function readHandoffTask(taskPath) {
       code: 'HANDOFF_TASK_CORRUPT',
     });
   }
-  return hydrateAttempts(validateTaskShape(parsed, resolved));
+  const normalizedStatus = STATUS_SET.has(parsed.status) ? parsed.status : 'awaiting_user_send';
+  const normalized = {
+    ...parsed,
+    engine: 'codex',
+    status: normalizedStatus,
+    stage: normalizedStatus,
+    agentPackagePath: null,
+    agentSession: null,
+    agentInject: null,
+  };
+  if (normalized.currentAttempt) normalized.currentAttempt = { ...normalized.currentAttempt, engine: 'codex' };
+  if (Array.isArray(normalized.attempts)) {
+    normalized.attempts = normalized.attempts.map((attempt) => ({ ...attempt, engine: 'codex' }));
+  }
+  return hydrateAttempts(validateTaskShape(normalized, resolved));
 }
 
 async function appendEvent(taskPath, event) {
@@ -218,7 +220,7 @@ function buildCodexPrompt(input) {
   return buildCompactPromptFor(input);
 }
 
-function buildCursorAgentPrompt(input) {
+function buildCodexAgentPrompt(input) {
   return buildCompactPromptFor(input);
 }
 
@@ -242,8 +244,7 @@ function buildCompactPromptFor(input) {
 }
 
 function buildAgentPrompt(engine, input) {
-  const resolved = normalizeEngine(engine);
-  if (resolved === 'cursor_agent') return buildCursorAgentPrompt(input);
+  normalizeEngine(engine);
   return buildCodexPrompt(input);
 }
 
@@ -287,7 +288,7 @@ async function createHandoffTask(userDataPath, input) {
   if (!HYPERFRAMES_MODES.has(input.hyperframesMode)) {
     throw Object.assign(new Error('HyperFrames 模式无效。'), { code: 'INVALID_HYPERFRAMES_MODE' });
   }
-  const engine = normalizeEngine(input.engine || 'cursor_agent');
+  const engine = normalizeEngine(input.engine || 'codex');
   const source = await resolveSourceDirectory(input.pendingRoot, input.sourceDirectory);
   const taskId = crypto.randomUUID();
   const filePath = taskFilePath(userDataPath, taskId);
@@ -357,8 +358,8 @@ async function createHandoffTask(userDataPath, input) {
     taskManifestPath,
     skillPath: skillPathFor(input.appWorkspace),
     openedInFcpAt: null,
-    cursorInject: null,
-    cursorSession: null,
+    agentInject: null,
+    agentSession: null,
     lifecycle: LIFECYCLE.preparing,
     currentAttempt: attempt,
     attempts: [attempt],
@@ -366,7 +367,7 @@ async function createHandoffTask(userDataPath, input) {
     disconnectReason: null,
     reusableResults: null,
     codexDeepLink: deepLink,
-    cursorPackagePath: engine === 'cursor_agent' ? packageDir : null,
+    agentPackagePath: engine === 'codex' ? packageDir : null,
     resultProjectPath: null,
     resultProjectId: null,
     artifacts: {},
@@ -382,13 +383,13 @@ async function createHandoffTask(userDataPath, input) {
   await atomicWriteJson(filePath, task);
   await atomicWriteJson(taskManifestPath, buildTaskManifest(task));
   await appendEvent(filePath, task.eventHistory[0]);
-  if (engine === 'cursor_agent') {
-    const { writeCursorAgentPackage } = require('./cursor-agent-handoff-service');
-    const packageInfo = await writeCursorAgentPackage(task);
-    task.cursorPackagePath = packageInfo.packageDir;
+  if (engine === 'codex') {
+    const { writeCodexAgentPackage } = require('./agent-handoff-service');
+    const packageInfo = await writeCodexAgentPackage(task);
+    task.agentPackagePath = packageInfo.packageDir;
     task.artifacts = {
       ...task.artifacts,
-      cursorPackagePath: packageInfo.packageDir,
+      agentPackagePath: packageInfo.packageDir,
       analysisOutputPath: packageInfo.analysisOutputPath,
     };
     await atomicWriteJson(filePath, task);
@@ -442,7 +443,7 @@ async function updateHandoffTask(taskPath, patch = {}) {
     'stageMessage', 'hyperframesDecision', 'hyperframesReason', 'hyperframesGap',
     'hyperframesQualityReview', 'resultProjectPath', 'resultProjectId', 'artifacts',
     'verification', 'warnings', 'errors', 'returnState', 'autoOpenFcp',
-    'cursorInject', 'cursorSession', 'openedInFcpAt', 'extraRequirements',
+    'agentInject', 'agentSession', 'openedInFcpAt', 'extraRequirements',
     'disconnectReason', 'lastActiveStatus', 'reusableResults', 'validationIssues',
   ];
   const cleanPatch = {};
@@ -518,10 +519,10 @@ async function updateHandoffTask(taskPath, patch = {}) {
         : null
     ),
     completedAt: TERMINAL_STATUSES.has(nextStatus) ? (hydrated.completedAt || now) : null,
-    cursorSession: (() => {
-      const incoming = Object.hasOwn(cleanPatch, 'cursorSession')
-        ? cleanPatch.cursorSession
-        : hydrated.cursorSession;
+    agentSession: (() => {
+      const incoming = Object.hasOwn(cleanPatch, 'agentSession')
+        ? cleanPatch.agentSession
+        : hydrated.agentSession;
       if ((TERMINAL_STATUSES.has(nextStatus) || nextStatus === 'agent_disconnected') && incoming) {
         return {
           ...incoming,
@@ -545,24 +546,12 @@ async function updateHandoffTask(taskPath, patch = {}) {
       // Manifest sync is best-effort; the task snapshot remains authoritative.
     }
   }
-  if (updated.engine === 'cursor_agent' && updated.cursorPackagePath) {
+  if (updated.engine === 'codex' && updated.agentPackagePath) {
     try {
-      const { syncPackageStatusPointer } = require('./cursor-agent-handoff-service');
+      const { syncPackageStatusPointer } = require('./agent-handoff-service');
       await syncPackageStatusPointer(updated);
     } catch {
       // Package pointer sync is best-effort; task snapshot remains authoritative.
-    }
-  }
-  if (TERMINAL_STATUSES.has(nextStatus) || nextStatus === 'agent_disconnected') {
-    try {
-      const { destroyCursorHandoffController } = require('./cursor-automation-service');
-      destroyCursorHandoffController(
-        updated.taskId,
-        updated.currentAttempt?.attemptId,
-        nextStatus,
-      );
-    } catch {
-      // Lifecycle persistence must not depend on optional UI automation cleanup.
     }
   }
   return updated;
@@ -611,7 +600,7 @@ async function startAgentAttempt(taskPath, input = {}) {
       code: 'HANDOFF_TERMINAL_STATE',
     });
   }
-  const engine = normalizeEngine(input.engine || task.engine);
+  const engine = normalizeEngine(input.engine || task.engine || 'codex');
   const now = new Date().toISOString();
   const previous = task.currentAttempt || null;
   const endedPrevious = previous ? {
@@ -699,13 +688,13 @@ async function startAgentAttempt(taskPath, input = {}) {
     taskManifestPath,
     skillPath: skillPathFor(task.appWorkspace),
     codexDeepLink: engine === 'codex' ? buildCodexDeepLink(prompt, task.appWorkspace) : null,
-    cursorPackagePath: engine === 'cursor_agent'
-      ? (task.cursorPackagePath || packageDirForTask(task.taskFilePath))
-      : task.cursorPackagePath,
-    cursorInject: null,
-    cursorSession: task.cursorSession && (task.cursorSession.windowName || task.cursorSession.fingerprint || task.cursorSession.windowId != null)
+    agentPackagePath: engine === 'codex'
+      ? (task.agentPackagePath || packageDirForTask(task.taskFilePath))
+      : task.agentPackagePath,
+    agentInject: null,
+    agentSession: task.agentSession && (task.agentSession.windowName || task.agentSession.fingerprint || task.agentSession.windowId != null)
       ? {
-        ...task.cursorSession,
+        ...task.agentSession,
         active: true,
         taskId: task.taskId,
         attemptId: attempt.attemptId,
@@ -739,13 +728,13 @@ async function startAgentAttempt(taskPath, input = {}) {
   await atomicWriteJson(taskPath, updated);
   await atomicWriteJson(taskManifestPath, buildTaskManifest(updated));
   await appendEvent(taskPath, event);
-  if (engine === 'cursor_agent') {
-    const { writeCursorAgentPackage } = require('./cursor-agent-handoff-service');
-    const packageInfo = await writeCursorAgentPackage(updated);
-    updated.cursorPackagePath = packageInfo.packageDir;
+  if (engine === 'codex') {
+    const { writeCodexAgentPackage } = require('./agent-handoff-service');
+    const packageInfo = await writeCodexAgentPackage(updated);
+    updated.agentPackagePath = packageInfo.packageDir;
     updated.artifacts = {
       ...(updated.artifacts || {}),
-      cursorPackagePath: packageInfo.packageDir,
+      agentPackagePath: packageInfo.packageDir,
       analysisOutputPath: packageInfo.analysisOutputPath || updated.artifacts?.analysisOutputPath,
     };
     await atomicWriteJson(taskPath, updated);
@@ -786,7 +775,7 @@ async function assertUserDataTask(userDataPath, requestedPath) {
 async function loadHandoffSettings(userDataPath) {
   const filePath = path.join(path.resolve(String(userDataPath || '')), SETTINGS_FILENAME);
   const raw = JSON.parse(await fs.readFile(filePath, 'utf8').catch(() => 'null'));
-  const engine = raw?.defaultEngine === 'codex' ? 'codex' : 'cursor_agent';
+  const engine = 'codex';
   return {
     schemaVersion: 1,
     autoOpenFcp: raw?.schemaVersion === 1 && raw.autoOpenFcp === true,
@@ -800,7 +789,7 @@ async function saveHandoffSettings(userDataPath, input) {
   const settings = {
     schemaVersion: 1,
     autoOpenFcp: input?.autoOpenFcp == null ? current.autoOpenFcp : input.autoOpenFcp === true,
-    defaultEngine: input?.defaultEngine === 'codex' ? 'codex' : (input?.defaultEngine === 'cursor_agent' ? 'cursor_agent' : current.defaultEngine),
+    defaultEngine: 'codex',
     defaultPlatformMode: input?.defaultPlatformMode === 'main' ? 'main' : (input?.defaultPlatformMode === 'douyin' ? 'douyin' : current.defaultPlatformMode),
   };
   await atomicWriteJson(path.join(path.resolve(userDataPath), SETTINGS_FILENAME), settings);
@@ -822,7 +811,7 @@ module.exports = {
   buildAgentPrompt,
   buildCodexDeepLink,
   buildCodexPrompt,
-  buildCursorAgentPrompt,
+  buildCodexAgentPrompt,
   cancelHandoffTask,
   createHandoffTask,
   eventFilePath,

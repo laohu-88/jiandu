@@ -1,4 +1,4 @@
-# 视频剪辑编排器 v3
+# 剪渡（JianDu）
 
 Electron 视频项目管理与剪辑编排工具。当前新增的 Codex 视频工作流面向软件操作录屏、开发过程、功能前后对比、截图、测试证据和成品展示，不依赖口播、配音、全程字幕或固定分段模板。
 
@@ -8,7 +8,7 @@ Electron 视频项目管理与剪辑编排工具。当前新增的 Codex 视频�
 素材进入待处理
 → App 自动识别（含 HotIngest 伴随信息）
 → 用户可填写「本次额外要求」
-→ 开始 AI 剪辑（默认 Cursor，可选 Codex；默认抖音）
+→ 开始剪辑（Codex → FCPXML → Final Cut Pro）
 → Agent 读取固定 Skill 与本次任务清单
 → App 监控完成后自动回流到结果工作区
 → 预览 / 让 AI 再调整 / 在 Final Cut Pro 中打开
@@ -283,7 +283,7 @@ node bin/video-skill.js build \
 
 日常使用不再需要进入仓库或运行 `npm start`：
 
-1. 打开 `/Applications/视频剪辑编排器 v3.app`；
+1. 打开 `/Applications/剪渡.app`；
 2. 在“待处理素材”选择一期素材并交给 Codex；
 3. Codex 新任务会预填完整提示词，用户按一次发送；
 4. 生产完成后通过 `video-cut-planner://` 自动回到已安装 App；
@@ -292,7 +292,7 @@ node bin/video-skill.js build \
 正式 App 与开发模式明确共用固定数据目录：
 
 ```text
-~/Library/Application Support/视频剪辑编排器 v3
+~/Library/Application Support/剪渡
 ```
 
 历史 handoff、自动打开 FCP 设置和最近项目都保存在此目录。内部资源从
@@ -336,7 +336,7 @@ npm run verify:package
 Electron。`ffmpeg` 与 `ffprobe` 继续通过现有环境探测服务从配置、Finder
 继承的 PATH、`/opt/homebrew/bin`、`/usr/local/bin` 和系统目录解析，不启动
 login shell，也不安装第二套媒体工具。打包产物默认位于
-`dist/mac-arm64/视频剪辑编排器 v3.app`。
+`dist/mac-arm64/剪渡.app`。
 
 常见故障：
 

@@ -37,7 +37,7 @@
         projectPage: extras.projectPage || 'results',
         workspacePhase: extras.workspacePhase || 'results',
         platformMode: extras.platformMode || 'douyin',
-        engine: extras.engine || stateStore.get().engine || 'cursor_agent',
+        engine: 'codex',
         douyinStage: 'plan',
         error: null,
       });
@@ -52,7 +52,7 @@
         projectPage: extras.projectPage || 'brief',
         workspacePhase: extras.workspacePhase || 'brief',
         platformMode: extras.platformMode || 'douyin',
-        engine: extras.engine || 'cursor_agent',
+        engine: 'codex',
         extraRequirements: extras.extraRequirements || '',
         error: null,
       });

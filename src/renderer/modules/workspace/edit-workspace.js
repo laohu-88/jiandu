@@ -34,8 +34,8 @@
         }
         const created = await window.plannerApi.startEditHandoff({
           sourceDirectory,
-          engine: snap.route.engine || 'cursor_agent',
-          platformMode: snap.route.platformMode || 'douyin',
+          engine: 'codex',
+          platformMode: 'main',
           extraRequirements: extraRequirements == null ? '' : String(extraRequirements),
           kind,
           parentTaskId: current?.taskId || null,
@@ -52,19 +52,11 @@
           engine: task.engine || snap.route.engine,
           runningTask: { id: task.taskId, label: task.stageMessage },
         });
-        const launched = task.engine === 'codex'
-          ? await window.plannerApi.launchCodexHandoff(task.taskFilePath)
-          : await window.plannerApi.launchCursorHandoff(task.taskFilePath);
+        const launched = await window.plannerApi.launchCodexHandoff(task.taskFilePath);
         data.patch({
           runningOverlays: { ...data.get().runningOverlays, handoffTask: launched },
         });
-        if (launched.cursorInject?.granted === false) {
-          data.toast(launched.cursorInject.guidance || '需要辅助功能权限才能放入提示词', true);
-        } else if (launched.cursorInject && launched.cursorInject.verified !== true) {
-          data.toast(launched.cursorInject.message || '提示词未能验证放入 Cursor 输入框', true);
-        } else {
-          data.toast(task.engine === 'codex' ? '已打开 Codex' : '已打开 Cursor');
-        }
+        data.toast('已打开 Codex');
       } catch (error) {
         data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
       }
@@ -107,11 +99,7 @@
           engine,
           runningTask: { id: launched.taskId, label: launched.stageMessage },
         });
-        if (launched.cursorInject?.verified === false) {
-          data.toast(launched.cursorInject.message || '提示词未能验证放入 Cursor 输入框', true);
-        } else {
-          data.toast(engine === 'codex' ? '已改用 Codex' : '已改用 Cursor');
-        }
+        data.toast('已重新打开 Codex');
       } catch (error) {
         data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
       }
@@ -133,7 +121,7 @@
         ['字幕 / 翻译', String(inventory?.items?.filter((item) => item.translations?.length)?.length || 0)],
         ['识别', snap.sourceRecognition ? '已完成' : (snap.loading.pending ? '识别中' : '待识别')],
       ]));
-      const inspect = text('button', '查看素材', 'button ghost');
+      const inspect = text('button', '查看素材概况', 'button ghost');
       inspect.type = 'button';
       inspect.addEventListener('click', () => data.routeStore.set({
         workspacePhase: 'advanced',
@@ -146,7 +134,7 @@
       extras.className = 'extra-requirements';
       extras.append(
         text('strong', '本次额外要求'),
-        text('p', '可留空。填写内容会原样交给 Agent。', 'muted'),
+        text('p', '可留空。填写内容会原样交给 Codex。', 'muted'),
       );
       const textarea = document.createElement('textarea');
       textarea.rows = 8;
@@ -158,7 +146,7 @@
       extras.appendChild(textarea);
       brief.appendChild(extras);
 
-      const start = text('button', phase === 'revise' ? '让 AI 再调整' : '开始 AI 剪辑', 'button primary extra-start');
+      const start = text('button', phase === 'revise' ? '让 Codex 再改一次' : '开始剪辑', 'button primary extra-start');
       start.type = 'button';
       start.addEventListener('click', () => startAiEdit(textarea.value, phase === 'revise' ? 'revise' : 'edit'));
       brief.appendChild(start);
@@ -171,15 +159,15 @@
       const task = snap.runningOverlays?.handoffTask;
       const disconnected = task?.status === 'agent_disconnected' || task?.lifecycle === 'agent_disconnected';
       const correcting = task?.status === 'analysis_needs_correction' || task?.lifecycle === 'analysis_needs_correction';
-      const engine = task?.engine === 'codex' ? 'codex' : 'cursor_agent';
+      const engine = 'codex';
       const title = correcting
-        ? (engine === 'codex' ? 'Codex 正在修正分析' : 'Cursor 正在修正分析')
+        ? 'Codex 正在修正分析'
         : (disconnected
-        ? (engine === 'codex' ? 'Codex 已停止，任务未完成' : 'Cursor 已停止，任务未完成')
-        : (engine === 'codex' ? 'Codex 正在处理' : 'Cursor 正在处理'));
+        ? 'Codex 已停止，任务未完成'
+        : 'Codex 正在处理');
       processing.append(
         text('h3', title),
-        text('p', task?.stageMessage || (disconnected ? title : '已交接，等待 Agent 返回。'), 'muted'),
+        text('p', task?.stageMessage || (disconnected ? title : '已交接，等待 Codex 返回。'), 'muted'),
       );
       if (!disconnected) {
         const status = document.createElement('ol');
@@ -198,7 +186,7 @@
       const actions = document.createElement('div');
       actions.className = 'result-actions';
       if (disconnected) {
-        const continueSame = text('button', engine === 'codex' ? '继续使用 Codex' : '继续使用 Cursor', 'button primary');
+        const continueSame = text('button', '继续使用 Codex', 'button primary');
         continueSame.type = 'button';
         continueSame.addEventListener('click', () => takeoverTask(
           task,
@@ -206,25 +194,17 @@
           'resume_after_disconnect',
           snap.route.extraRequirements,
         ));
-        const switchEngine = text('button', engine === 'codex' ? '改用 Cursor' : '改用 Codex', 'button secondary');
-        switchEngine.type = 'button';
-        switchEngine.addEventListener('click', () => takeoverTask(
-          task,
-          engine === 'codex' ? 'cursor_agent' : 'codex',
-          'switch_engine',
-          snap.route.extraRequirements,
-        ));
         const cancel = text('button', '取消任务', 'button ghost');
         cancel.type = 'button';
         cancel.addEventListener('click', () => cancelTask(task));
-        actions.append(continueSame, switchEngine, cancel);
+        actions.append(continueSame, cancel);
       } else {
-        const reopen = text('button', engine === 'codex' ? '重新打开 Codex' : '重新打开 Agent', 'button secondary');
+        const reopen = text('button', '重新打开 Codex', 'button secondary');
         reopen.type = 'button';
         reopen.addEventListener('click', async () => {
           if (!task) return;
           if (task.engine === 'codex') await window.plannerApi.activateCodexHandoff(task.taskFilePath);
-          else await window.plannerApi.activateCursorHandoff(task.taskFilePath);
+          else await window.plannerApi.activateCodexHandoff(task.taskFilePath);
         });
         const cancel = text('button', '取消任务', 'button ghost');
         cancel.type = 'button';
@@ -250,8 +230,8 @@
         results.appendChild(banner);
         const actions = document.createElement('div');
         actions.className = 'result-actions';
-        const engine = task?.engine === 'codex' ? 'codex' : 'cursor_agent';
-        const retrySame = text('button', engine === 'codex' ? '重新使用 Codex' : '重新使用 Cursor', 'button primary');
+        const engine = 'codex';
+        const retrySame = text('button', '重新使用 Codex', 'button primary');
         retrySame.type = 'button';
         retrySame.addEventListener('click', () => takeoverTask(
           task,
@@ -259,18 +239,10 @@
           'resume_after_failure',
           snap.route.extraRequirements,
         ));
-        const switchEngine = text('button', engine === 'codex' ? '改用 Cursor' : '改用 Codex', 'button secondary');
-        switchEngine.type = 'button';
-        switchEngine.addEventListener('click', () => takeoverTask(
-          task,
-          engine === 'codex' ? 'cursor_agent' : 'codex',
-          'switch_engine',
-          snap.route.extraRequirements,
-        ));
         const diag = text('button', '详细诊断', 'button ghost');
         diag.type = 'button';
         diag.addEventListener('click', () => data.routeStore.set({ nav: 'settings' }));
-        actions.append(retrySame, switchEngine, diag);
+        actions.append(retrySame, diag);
         results.appendChild(actions);
         if (!snap.projectResult && !task?.resultProjectPath) return;
       }
@@ -359,7 +331,7 @@
           data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
         }
       });
-      const revise = text('button', '让 AI 再调整', 'button secondary');
+      const revise = text('button', '让 Codex 再改一次', 'button secondary');
       revise.type = 'button';
       revise.addEventListener('click', () => data.routeStore.set({
         workspacePhase: 'revise',
@@ -372,13 +344,7 @@
         projectPath: snap.route.projectPath,
         action: 'show-output-dir',
       }));
-      const advanced = text('button', '高级调整', 'button ghost');
-      advanced.type = 'button';
-      advanced.addEventListener('click', () => data.routeStore.set({
-        workspacePhase: 'advanced',
-        projectPage: 'advanced',
-      }));
-      bar.append(fcp, revise, folder, advanced);
+      bar.append(fcp, revise, folder);
       results.appendChild(bar);
     }
 

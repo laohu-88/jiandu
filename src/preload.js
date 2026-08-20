@@ -18,14 +18,12 @@ const api = {
   ...({
   startEditHandoff: (args) => ipcRenderer.invoke('handoff:start-edit', args),
   recognizeHandoffSource: (sourceDirectory) => ipcRenderer.invoke('handoff:recognize-source', sourceDirectory),
-  checkCursorAccessibility: () => ipcRenderer.invoke('handoff:check-accessibility'),
   onHandoffProgress: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('handoff:progress', listener);
     return () => ipcRenderer.removeListener('handoff:progress', listener);
   },
   launchCodexHandoff: (taskPath) => ipcRenderer.invoke('handoff:launch-codex', taskPath),
-  launchCursorHandoff: (taskPath) => ipcRenderer.invoke('handoff:launch-cursor', taskPath),
   readHandoffTask: (taskPath) => ipcRenderer.invoke('handoff:read', taskPath),
   classifyHandoffTask: (taskPath) => ipcRenderer.invoke('handoff:classify', taskPath),
   continueHandoffBuild: (args) => ipcRenderer.invoke('handoff:continue-build', args),
@@ -35,10 +33,7 @@ const api = {
   takeoverHandoffTask: (args) => ipcRenderer.invoke('handoff:takeover', args),
   reconcileHandoffTasks: () => ipcRenderer.invoke('handoff:reconcile'),
   activateCodexHandoff: (taskPath) => ipcRenderer.invoke('handoff:activate-codex', taskPath),
-  activateCursorHandoff: (taskPath) => ipcRenderer.invoke('handoff:activate-cursor', taskPath),
   copyHandoffPrompt: (taskPath) => ipcRenderer.invoke('handoff:copy-prompt', taskPath),
-  showHandoffPackage: (taskPath) => ipcRenderer.invoke('handoff:show-package', taskPath),
-  sweepHandoffPackages: () => ipcRenderer.invoke('handoff:sweep-packages'),
   loadHandoffSettings: () => ipcRenderer.invoke('handoff:settings-load'),
   saveHandoffSettings: (settings) => ipcRenderer.invoke('handoff:settings-save', settings),
   openHandoffResult: (taskPath) => ipcRenderer.invoke('handoff:open-result', taskPath),

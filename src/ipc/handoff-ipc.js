@@ -17,19 +17,11 @@ const {
   updateHandoffTask,
 } = require('../services/handoff-task-service');
 const {
-  buildCursorLaunchPlan,
   classifyAgentHandoffState,
   continueBuildFromAnalysis,
   inspectAnalysisArtifacts,
   markAnalysisComplete,
-  sweepHandoffPackages,
-  writeCursorWindowWorkspace,
-} = require('../services/cursor-agent-handoff-service');
-const {
-  checkAccessibilityPermission,
-  launchAndInjectCursor,
-  runCursorHandoffController,
-} = require('../services/cursor-automation-service');
+} = require('../services/agent-handoff-service');
 const {
   createAgentTask,
   processingViewModel,
@@ -65,107 +57,11 @@ async function launchCodexTask(shell, task) {
   }
 }
 
-async function performLaunchCursorTask(clipboard, task, options = {}) {
-  if (task.engine !== 'cursor_agent') {
-    throw new Error('当前任务不是 Cursor 引擎任务。');
-  }
-  const attemptId = task.currentAttempt?.attemptId;
-  await writeCursorWindowWorkspace(task);
-  const plan = buildCursorLaunchPlan(task);
-  await updateHandoffTask(task.taskFilePath, {
-    status: 'launching_cursor',
-    attemptId,
-    stageMessage: '正在打开 Cursor，并放入正式任务提示词。',
-  });
-  try {
-    const inject = await launchAndInjectCursor({
-      openArgs: plan.openArgs,
-      prompt: task.prompt,
-      verifyNeedle: attemptId || task.taskId,
-      clipboard,
-      inject: true,
-      submit: options.submit !== false,
-      windowTitleNeedle: plan.windowTitleNeedle,
-      workspace: plan.workspace,
-      session: plan.session,
-      attemptId,
-      taskId: task.taskId,
-      controllerOwned: true,
-      allowAgentManager: true,
-    });
-    const verified = inject.verified === true;
-    const submitted = inject.submitted === true;
-    const message = verified
-      ? (submitted
-        ? 'Cursor 已打开，正式提示词已放入输入框并已启动 Agent。'
-        : 'Cursor 已打开，正式提示词已放入输入框。')
-      : inject.granted === false
-        ? inject.guidance || inject.message
-        : inject.message || plan.userInstruction;
-    const cursorSession = inject.session
-      ? {
-        ...inject.session,
-        active: true,
-        taskId: task.taskId,
-        attemptId,
-        workspace: plan.workspace,
-      }
-      : (plan.session || null);
-    return updateHandoffTask(task.taskFilePath, {
-      status: verified && submitted ? 'scanning_media' : 'awaiting_user_send',
-      attemptId,
-      stageMessage: message,
-      cursorSession,
-      cursorInject: {
-        launched: inject.launched === true,
-        reused: inject.reused === true,
-        injected: inject.injected === true,
-        verified,
-        submitted,
-        code: inject.code || null,
-        message,
-        guidance: inject.guidance || null,
-        preview: inject.preview || null,
-        windowName: inject.windowName || cursorSession?.windowName || null,
-      },
-    });
-  } catch (error) {
-    await updateHandoffTask(task.taskFilePath, {
-      status: 'launching_cursor',
-      attemptId,
-      stageMessage: `打开 Cursor 失败：${error.message}`,
-      errors: [{ code: 'CURSOR_LAUNCH_FAILED', message: error.message, at: new Date().toISOString() }],
-    });
-    throw error;
-  }
-}
-
-async function launchCursorTask(clipboard, task, options = {}) {
-  const current = await readHandoffTask(task.taskFilePath);
-  const attemptId = task.currentAttempt?.attemptId;
-  if (current.currentAttempt?.attemptId !== attemptId) {
-    // A stale renderer event must never launch or inject an old attempt.
-    return current;
-  }
-  if (['scanning_media', 'extracting_metadata', 'extracting_frames', 'analyzing_media',
-    'planning_story', 'analysis_needs_correction', 'analysis_complete', 'deciding_hyperframes',
-    'designing_hyperframes', 'rendering_hyperframes', 'reviewing_hyperframes', 'building_project',
-    'rendering_preview', 'generating_fcpxml', 'verifying', 'completed', 'completed_with_warnings',
-    'failed', 'cancelled', 'agent_disconnected'].includes(current.status)) {
-    return current;
-  }
-  return runCursorHandoffController({
-    taskId: current.taskId,
-    attemptId,
-  }, () => performLaunchCursorTask(clipboard, current, options));
-}
-
 function registerHandoffIpc(ctx) {
   const {
     app,
     ipcMain,
     shell,
-    clipboard,
     authorizeProject,
     scanHandoffsAndPending,
     validateTerminalProject,
@@ -196,9 +92,9 @@ function registerHandoffIpc(ctx) {
       },
       appWorkspace: CODEX_WORKSPACE_ROOT,
       hyperframesMode: args?.hyperframesMode || 'auto',
-      engine: args?.engine || settings.defaultEngine || 'cursor_agent',
+      engine: 'codex',
       extraRequirements: args?.extraRequirements == null ? '' : String(args.extraRequirements),
-      platformMode: args?.platformMode === 'main' ? 'main' : 'douyin',
+      platformMode: 'main',
       kind: args?.kind === 'revise' ? 'revise' : 'edit',
       parentTaskId: args?.parentTaskId || null,
       previousProjectPath: args?.previousProjectPath || null,
@@ -212,12 +108,6 @@ function registerHandoffIpc(ctx) {
     return launchCodexTask(shell, task);
   });
 
-  ipcMain.handle('handoff:launch-cursor', async (_event, taskPath) => {
-    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
-    return launchCursorTask(clipboard, task);
-  });
-
-  ipcMain.handle('handoff:check-accessibility', () => checkAccessibilityPermission());
 
   ipcMain.handle('handoff:recognize-source', async (_event, sourceDirectory) => {
     const payload = await scanHandoffsAndPending();
@@ -258,9 +148,9 @@ function registerHandoffIpc(ctx) {
       },
       appWorkspace: CODEX_WORKSPACE_ROOT,
       hyperframesMode: args?.hyperframesMode || 'auto',
-      engine: args?.engine || settings.defaultEngine || 'cursor_agent',
+      engine: 'codex',
       extraRequirements: args?.extraRequirements == null ? '' : String(args.extraRequirements),
-      platformMode: args?.platformMode === 'main' ? 'main' : 'douyin',
+      platformMode: 'main',
       kind: args?.kind === 'revise' ? 'revise' : 'edit',
       parentTaskId: args?.parentTaskId || null,
       previousProjectPath: args?.previousProjectPath || null,
@@ -312,22 +202,19 @@ function registerHandoffIpc(ctx) {
 
   ipcMain.handle('handoff:takeover', async (_event, args) => {
     const task = await assertUserDataTask(app.getPath('userData'), args?.taskPath);
-    const engine = args?.engine === 'codex' ? 'codex' : 'cursor_agent';
+    const engine = 'codex';
     const updated = await startAgentAttempt(task.taskFilePath, {
       engine,
       reason: args?.reason || (engine === task.engine ? 'resume_after_disconnect' : 'switch_engine'),
       extraRequirements: args?.extraRequirements,
     });
-    if (updated.engine === 'codex') return launchCodexTask(shell, updated);
-    return launchCursorTask(clipboard, updated);
+    return launchCodexTask(shell, updated);
   });
 
   ipcMain.handle('handoff:reconcile', async () => {
     const payload = await reconcileActiveTasks(app.getPath('userData'));
-    const sweep = await sweepHandoffPackages(app.getPath('userData')).catch(() => null);
     return {
       ...payload,
-      sweep,
       views: payload.recovered.map((item) => ({
         task: item.task,
         action: item.action,
@@ -336,46 +223,10 @@ function registerHandoffIpc(ctx) {
     };
   });
 
-  ipcMain.handle('handoff:sweep-packages', async () => {
-    return sweepHandoffPackages(app.getPath('userData'));
-  });
-
   ipcMain.handle('handoff:activate-codex', async (_event, taskPath) => {
     await assertUserDataTask(app.getPath('userData'), taskPath);
     await shell.openExternal('codex://', { activate: true });
     return { activated: true };
-  });
-
-  ipcMain.handle('handoff:activate-cursor', async (_event, taskPath) => {
-    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
-    await writeCursorWindowWorkspace(task);
-    const plan = buildCursorLaunchPlan(task);
-    const result = await launchAndInjectCursor({
-      openArgs: plan.openArgs,
-      prompt: task.prompt,
-      verifyNeedle: task.currentAttempt?.attemptId || task.taskId,
-      clipboard,
-      inject: false,
-      windowTitleNeedle: plan.windowTitleNeedle,
-      workspace: plan.workspace,
-      session: plan.session,
-      attemptId: task.currentAttempt?.attemptId,
-      taskId: task.taskId,
-    });
-    if (result.session) {
-      await updateHandoffTask(task.taskFilePath, {
-        status: task.status,
-        attemptId: task.currentAttempt?.attemptId,
-        cursorSession: {
-          ...result.session,
-          active: task.cursorSession?.active !== false,
-          taskId: task.taskId,
-          attemptId: task.currentAttempt?.attemptId,
-          workspace: plan.workspace,
-        },
-      }).catch(() => {});
-    }
-    return { activated: true, reused: result.reused === true, launched: result.launched === true };
   });
 
   ipcMain.handle('handoff:copy-prompt', async (_event, taskPath) => {
@@ -384,12 +235,6 @@ function registerHandoffIpc(ctx) {
     return { copied: true };
   });
 
-  ipcMain.handle('handoff:show-package', async (_event, taskPath) => {
-    const task = await assertUserDataTask(app.getPath('userData'), taskPath);
-    if (!task.cursorPackagePath) throw new Error('当前任务没有 Cursor Agent 交接包。');
-    shell.showItemInFolder(task.cursorPackagePath);
-    return { shown: true, packageDir: task.cursorPackagePath };
-  });
 
   ipcMain.handle('handoff:settings-load', () => loadHandoffSettings(app.getPath('userData')));
   ipcMain.handle('handoff:settings-save', (_event, settings) =>
@@ -404,4 +249,4 @@ function registerHandoffIpc(ctx) {
   });
 }
 
-module.exports = { registerHandoffIpc, launchCodexTask, launchCursorTask };
+module.exports = { registerHandoffIpc, launchCodexTask };

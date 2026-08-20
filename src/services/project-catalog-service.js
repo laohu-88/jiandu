@@ -31,6 +31,8 @@ async function looksLikeProject(directoryPath) {
   for (const marker of markers) {
     if (await fs.stat(path.join(directoryPath, marker)).catch(() => null)) return true;
   }
+  const flatOutputs = await fs.readdir(directoryPath).catch(() => []);
+  if (flatOutputs.some((name) => /\.fcpxml$/i.test(name) || /\.mp4$/i.test(name))) return true;
   return false;
 }
 

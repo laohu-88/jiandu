@@ -15,6 +15,7 @@ const {
   CODEX_VIDEO_PREVIEW_DIR,
   CODEX_VIDEO_STATUS_FILE,
   CODEX_VIDEO_SUMMARY_FILE,
+  internalProjectRoot,
   PROJECT_FILE,
 } = require('../constants');
 const { createProject } = require('./project-service');
@@ -147,7 +148,7 @@ async function chooseDestinationName(assetsPath, item) {
   return `${item.assetId}-${preferred}`;
 }
 
-async function syncTimelineAssets(projectPath, manifest, analysis) {
+async function syncTimelineAssets(projectPath, manifest, analysis, options = {}) {
   const selectedIds = [...new Set(analysis.timeline.shots.map((shot) => shot.assetId))];
   const manifestById = new Map(manifest.items.map((item) => [item.assetId, item]));
   const analysisById = new Map(analysis.assets.map((item) => [item.assetId, item]));
@@ -156,15 +157,20 @@ async function syncTimelineAssets(projectPath, manifest, analysis) {
   for (const assetId of selectedIds) {
     const item = manifestById.get(assetId);
     if (!item) throw new Error(`素材清单中缺少 ${assetId}。`);
-    const projectFilename = await chooseDestinationName(assetsPath, item);
-    const projectAbsolutePath = path.join(assetsPath, projectFilename);
-    const existing = await fs.stat(projectAbsolutePath).catch(() => null);
-    if (!existing) await fs.copyFile(item.originalPath, projectAbsolutePath);
-    const copiedHash = await hashFile(projectAbsolutePath);
-    if (copiedHash !== item.sha256) {
-      throw Object.assign(new Error(`素材同步校验失败：${item.filename}`), {
-        code: 'ASSET_COPY_MISMATCH',
-      });
+    const copyAssets = options.copyAssets !== false;
+    const projectFilename = copyAssets
+      ? await chooseDestinationName(assetsPath, item)
+      : null;
+    const projectAbsolutePath = copyAssets ? path.join(assetsPath, projectFilename) : item.originalPath;
+    if (copyAssets) {
+      const existing = await fs.stat(projectAbsolutePath).catch(() => null);
+      if (!existing) await fs.copyFile(item.originalPath, projectAbsolutePath);
+      const copiedHash = await hashFile(projectAbsolutePath);
+      if (copiedHash !== item.sha256) {
+        throw Object.assign(new Error(`素材同步校验失败：${item.filename}`), {
+          code: 'ASSET_COPY_MISMATCH',
+        });
+      }
     }
     mappings.push({
       assetId,
@@ -172,13 +178,14 @@ async function syncTimelineAssets(projectPath, manifest, analysis) {
       sourceRelativePath: item.relativePath,
       sourceSha256: item.sha256,
       projectFilename,
-      projectRelativePath: path.join(ASSETS_DIR, projectFilename),
+      projectRelativePath: copyAssets ? path.join(ASSETS_DIR, projectFilename) : null,
       projectAbsolutePath,
       metadata: item.metadata,
       analysis: analysisById.get(assetId),
     });
   }
 
+  if (options.copyAssets === false) return mappings;
   const assetIndex = await scanAssets(projectPath);
   for (const mapping of mappings) {
     const registered = assetIndex.assets.find((item) => item.relativePath === mapping.projectRelativePath);
@@ -192,6 +199,14 @@ async function syncTimelineAssets(projectPath, manifest, analysis) {
     });
   }
   return mappings;
+}
+
+async function findArtifactRoot(projectPath) {
+  const resolved = path.resolve(projectPath);
+  const candidate = internalProjectRoot(resolved);
+  const statusPath = path.join(candidate, CODEX_VIDEO_STATUS_FILE);
+  const status = await fs.readFile(statusPath, 'utf8').then((text) => JSON.parse(text)).catch(() => null);
+  return status?.projectPath === resolved ? candidate : resolved;
 }
 
 async function registerHyperframesAsset(projectPath, rendered, analysis, flow = null) {
@@ -587,22 +602,29 @@ function buildHumanSummary({
   return `${lines.join('\n')}\n`;
 }
 
-async function verifyCodexVideoProject(projectPath) {
+async function verifyCodexVideoProject(projectPath, options = {}) {
   const resolved = path.resolve(projectPath);
+  const artifactRoot = options.artifactRoot
+    ? path.resolve(options.artifactRoot)
+    : await findArtifactRoot(resolved);
   const paths = {
     project: path.join(resolved, PROJECT_FILE),
     assets: path.join(resolved, ASSETS_FILE),
-    manifest: path.join(resolved, CODEX_VIDEO_MANIFEST_FILE),
-    analysis: path.join(resolved, CODEX_VIDEO_ANALYSIS_FILE),
-    status: path.join(resolved, CODEX_VIDEO_STATUS_FILE),
-    summary: path.join(resolved, CODEX_VIDEO_SUMMARY_FILE),
+    manifest: path.join(artifactRoot, CODEX_VIDEO_MANIFEST_FILE),
+    analysis: path.join(artifactRoot, CODEX_VIDEO_ANALYSIS_FILE),
+    status: path.join(artifactRoot, CODEX_VIDEO_STATUS_FILE),
+    summary: path.join(artifactRoot, CODEX_VIDEO_SUMMARY_FILE),
   };
-  const [project, manifest, analysis, status] = await Promise.all([
-    readJson(paths.project, 'project.json'),
+  const [projectFile, manifest, analysis, status] = await Promise.all([
+    fs.readFile(paths.project, 'utf8').then((text) => JSON.parse(text)).catch(() => ({
+      projectName: path.basename(resolved),
+      projectPath: resolved,
+    })),
     readJson(paths.manifest, 'Codex 视频素材清单'),
     readJson(paths.analysis, 'Codex 视频分析'),
     readJson(paths.status, 'Codex 视频状态'),
   ]);
+  const project = projectFile;
   validateVideoAnalysis(analysis, manifest);
   const effectiveAnalysis = status.effectiveAnalysis || analysis;
   const errors = [];
@@ -614,9 +636,11 @@ async function verifyCodexVideoProject(projectPath) {
   const sourceVerification = compareSourceSnapshots(manifest.sourceSnapshot, sourceCurrent);
   errors.push(...sourceVerification.errors);
 
-  const assetIndex = await loadAssetIndex(resolved);
+  const assetIndex = artifactRoot === resolved ? await loadAssetIndex(resolved) : { assets: [] };
   for (const mapping of status.assetMappings || []) {
-    const target = path.join(resolved, mapping.projectRelativePath);
+    const target = mapping.projectRelativePath
+      ? path.join(resolved, mapping.projectRelativePath)
+      : path.resolve(mapping.projectAbsolutePath || '');
     const stat = await fs.stat(target).catch(() => null);
     if (!stat?.isFile()) {
       errors.push(`正式项目缺少素材：${mapping.projectRelativePath}`);
@@ -625,7 +649,7 @@ async function verifyCodexVideoProject(projectPath) {
     if (await hashFile(target) !== mapping.sourceSha256) {
       errors.push(`正式项目素材哈希不一致：${mapping.projectRelativePath}`);
     }
-    if (!assetIndex.assets?.some((asset) => asset.stableId === mapping.projectStableId
+    if (mapping.projectRelativePath && !assetIndex.assets?.some((asset) => asset.stableId === mapping.projectStableId
       && asset.availability === 'available')) {
       errors.push(`assets.json 未登记素材：${mapping.projectRelativePath}`);
     }
@@ -668,9 +692,10 @@ async function verifyCodexVideoProject(projectPath) {
     xmlSyntax = { ok: false, message: error.message };
   }
 
-  const previewPath = path.join(resolved, status.artifacts.preview);
+  const previewPath = status.artifacts.preview ? path.join(resolved, status.artifacts.preview) : null;
   let previewMetadata = null;
   try {
+    if (!previewPath) throw Object.assign(new Error('默认未生成粗剪预览。'), { code: 'PREVIEW_DISABLED' });
     previewMetadata = await probeMedia(previewPath);
     const expectedDuration = timelineDuration(effectiveAnalysis.timeline.shots);
     if (!previewMetadata.hasVideo) errors.push('粗剪预览没有视频流。');
@@ -690,10 +715,14 @@ async function verifyCodexVideoProject(projectPath) {
       errors.push('粗剪预览帧率与独立预览设置不一致。');
     }
   } catch (error) {
+    if (!previewPath) {
+      warnings.push('默认未生成粗剪预览；结果页以 FCPXML 为主。');
+    } else {
     errors.push(`粗剪预览无法读取：${error.message}`);
+    }
   }
   if (!(await fs.stat(paths.summary).catch(() => null))?.isFile()) errors.push('缺少人类可读项目摘要。');
-  if (fcpxml.includes(status.artifacts.preview)) errors.push('FCPXML 错误地引用了粗剪预览作为时间线素材。');
+  if (status.artifacts.preview && fcpxml.includes(status.artifacts.preview)) errors.push('FCPXML 错误地引用了粗剪预览作为时间线素材。');
   let hyperframes = { enabled: false };
   if (status.hyperframes?.enabled) {
     const generated = status.assetMappings.find(
@@ -854,8 +883,12 @@ async function buildCodexVideoProject(options) {
     });
   }
 
-  const created = await createProject(target.root, target.name);
+  const internalRoot = options.internalRoot ? path.resolve(options.internalRoot) : null;
+  const created = await createProject(target.root, target.name, { flat: Boolean(internalRoot) });
   const projectPath = created.project.projectPath;
+  const artifactRoot = internalRoot || projectPath;
+  await fs.mkdir(artifactRoot, { recursive: true });
+  const artifactRelative = (fileName) => path.relative(projectPath, path.join(artifactRoot, fileName));
   let status = {
     schemaVersion: 1,
     status: 'building',
@@ -867,12 +900,14 @@ async function buildCodexVideoProject(options) {
     artifacts: {},
     error: null,
   };
-  await writeJson(path.join(projectPath, CODEX_VIDEO_STATUS_FILE), status);
+  await writeJson(path.join(artifactRoot, CODEX_VIDEO_STATUS_FILE), status);
   try {
-    const mappings = await syncTimelineAssets(projectPath, manifest, analysis);
+    const mappings = await syncTimelineAssets(projectPath, manifest, analysis, {
+      copyAssets: !internalRoot,
+    });
     await Promise.all([
-      writeJson(path.join(projectPath, CODEX_VIDEO_MANIFEST_FILE), manifest),
-      writeJson(path.join(projectPath, CODEX_VIDEO_ANALYSIS_FILE), analysis),
+      writeJson(path.join(artifactRoot, CODEX_VIDEO_MANIFEST_FILE), manifest),
+      writeJson(path.join(artifactRoot, CODEX_VIDEO_ANALYSIS_FILE), analysis),
     ]);
     let effectiveAnalysis = analysis;
     let hyperframes = null;
@@ -975,14 +1010,13 @@ async function buildCodexVideoProject(options) {
     await onStage('building_project', '正在登记独立素材并完成正式 v3 项目。');
     const outputBase = safeFilename(analysis.titles.recommended, target.name);
     const fcpxmlPath = path.join(projectPath, CODEX_VIDEO_FCPXML_DIR, `${outputBase}.fcpxml`);
-    const previewPath = path.join(projectPath, CODEX_VIDEO_PREVIEW_DIR, `${outputBase}-roughcut-preview.mp4`);
-    await onStage('rendering_preview', '正在按轻量预览规格生成粗剪。');
-    const previewResult = await generateRoughcutPreview(
-      previewPath,
-      effectiveAnalysis,
-      mappings,
-      formats.preview,
-    );
+    const previewPath = internalRoot ? null : path.join(projectPath, CODEX_VIDEO_PREVIEW_DIR, `${outputBase}-roughcut-preview.mp4`);
+    const previewResult = previewPath
+      ? await (async () => {
+        await onStage('rendering_preview', '正在按轻量预览规格生成粗剪。');
+        return generateRoughcutPreview(previewPath, effectiveAnalysis, mappings, formats.preview);
+      })()
+      : { metadata: null };
     await onStage('generating_fcpxml', '正在生成引用独立素材的 FCPXML。');
     const fcpxmlResult = await writeFcpxml(fcpxmlPath, {
       projectName: target.name,
@@ -996,7 +1030,7 @@ async function buildCodexVideoProject(options) {
         code: 'SOURCE_CHANGED_DURING_BUILD',
       });
     }
-    const summaryPath = path.join(projectPath, CODEX_VIDEO_SUMMARY_FILE);
+    const summaryPath = path.join(artifactRoot, CODEX_VIDEO_SUMMARY_FILE);
     await fs.writeFile(summaryPath, buildHumanSummary({
       projectPath,
       analysis,
@@ -1017,11 +1051,11 @@ async function buildCodexVideoProject(options) {
       effectiveAnalysis,
       hyperframes,
       artifacts: {
-        manifest: CODEX_VIDEO_MANIFEST_FILE,
-        analysis: CODEX_VIDEO_ANALYSIS_FILE,
-        summary: CODEX_VIDEO_SUMMARY_FILE,
+        manifest: artifactRelative(CODEX_VIDEO_MANIFEST_FILE),
+        analysis: artifactRelative(CODEX_VIDEO_ANALYSIS_FILE),
+        summary: artifactRelative(CODEX_VIDEO_SUMMARY_FILE),
         fcpxml: path.relative(projectPath, fcpxmlPath),
-        preview: path.relative(projectPath, previewPath),
+        preview: previewPath ? path.relative(projectPath, previewPath) : null,
         ...(hyperframes ? {
           hyperframesMp4: path.relative(projectPath, hyperframes.outputPath),
           hyperframesComposition: path.relative(projectPath, hyperframes.compositionDirectory),
@@ -1034,11 +1068,11 @@ async function buildCodexVideoProject(options) {
       formats,
       sourceVerification,
     };
-    await writeJson(path.join(projectPath, CODEX_VIDEO_STATUS_FILE), status);
+    await writeJson(path.join(artifactRoot, CODEX_VIDEO_STATUS_FILE), status);
     await onStage('verifying', '正在执行素材、预览、FCPXML 与源快照完整验证。');
-    const verification = await verifyCodexVideoProject(projectPath);
+    const verification = await verifyCodexVideoProject(projectPath, { artifactRoot });
     status = { ...status, status: 'verified', verifiedAt: verification.verifiedAt, verification };
-    await writeJson(path.join(projectPath, CODEX_VIDEO_STATUS_FILE), status);
+    await writeJson(path.join(artifactRoot, CODEX_VIDEO_STATUS_FILE), status);
     if (options.openFcpxml) await openFcpxml(fcpxmlPath);
     return {
       ok: true,
@@ -1052,7 +1086,7 @@ async function buildCodexVideoProject(options) {
         fcpxmlPath,
         previewPath,
         summaryPath,
-        statusPath: path.join(projectPath, CODEX_VIDEO_STATUS_FILE),
+        statusPath: path.join(artifactRoot, CODEX_VIDEO_STATUS_FILE),
         hyperframesMp4Path: hyperframes?.outputPath || null,
         hyperframesCompositionPath: hyperframes?.compositionDirectory || null,
       },
@@ -1066,7 +1100,7 @@ async function buildCodexVideoProject(options) {
       failedAt: new Date().toISOString(),
       error: { code: error.code || 'BUILD_FAILED', message: error.message },
     };
-    await writeJson(path.join(projectPath, CODEX_VIDEO_STATUS_FILE), status).catch(() => {});
+    await writeJson(path.join(artifactRoot, CODEX_VIDEO_STATUS_FILE), status).catch(() => {});
     throw error;
   }
 }

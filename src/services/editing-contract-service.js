@@ -1,12 +1,12 @@
 'use strict';
 
 /**
- * Shared editing contract for Cursor Agent and Codex.
+ * Shared editing contract for Codex Agent and Codex.
  * Keep both engines on the same material / audio / caption rules.
  */
 
 const SHARED_EDITING_RULES_LINES = Object.freeze([
-  '剪辑硬规则（Cursor Agent 与 Codex 共用，不得削弱）：',
+  '剪辑硬规则（Codex Agent 与 Codex 共用，不得削弱）：',
   '1. 放入「视频待处理」项目中的可用视觉素材，默认都需要进入时间线；每一项至少使用一次。',
   '2. 不得设置或推断默认成片目标时长、建议时长上限，也不得以“不要太长”为由压缩或淘汰普通素材。',
   '3. 不得为了缩短成片而跳过普通视频、图片或动画素材。',
@@ -17,7 +17,7 @@ const SHARED_EDITING_RULES_LINES = Object.freeze([
 ]);
 
 const SHARED_DOUYIN_RULES_LINES = Object.freeze([
-  '抖音平台变体规划合同（Cursor Agent 与 Codex 共用；不得替代或削弱默认主成片合同）：',
+  '抖音平台变体规划合同（Codex Agent 与 Codex 共用；不得替代或削弱默认主成片合同）：',
   '1. 默认主成片仍按上述完整素材、普通视频完整使用和原声保留规则生成；抖音规划只写入 analysis.platformVariants.douyin，修改抖音规划不得改写默认 timeline、来源素材、人工字幕或 editorial-review.json。',
   '2. 抖音可以主动选择部分素材，也可以规划一条或多条相互独立的成片；HotIngest 趣味素材与开发记录不强制拼接。',
   '3. 每项可用视觉素材必须记录 selected、separate 或 excluded 之一，并写明确原因；选材依据须覆盖画面吸引力、独立成立程度、主题一致性、手机适配、竖屏表现、上下文成本、视觉变化、原声价值和重复程度。',

@@ -58,8 +58,8 @@
         start.addEventListener('click', () => {
           router.openPendingEpisode(episode.sourceDirectory, {
             projectPath: episode.existingProject?.projectPath || null,
-            engine: snap.route.engine || 'cursor_agent',
-            platformMode: 'douyin',
+            engine: 'codex',
+            platformMode: 'main',
           });
           data.patch({ currentEpisode: episode });
           data.recognizeSource?.(episode.sourceDirectory);

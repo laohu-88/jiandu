@@ -99,7 +99,7 @@ test('HyperFrames 产品流程演示使用真实视觉素材且不显示额外�
 test('HyperFrames 证据蒙太奇使用真实截图、动态分屏且不生成文本框或箭头', () => {
   const html = buildProcessFlowHtml({
     flow: {
-      nodes: ['同题开发', 'Codex', 'DeepSeek', 'Cursor'],
+      nodes: ['同题开发', 'Codex', 'DeepSeek', '另一个工具'],
       heading: '三模型实机核验',
       closing: '同题开发 · 实机核验 · 结果可追溯',
       reason: '用真实界面建立三模型并列证据。',
@@ -109,14 +109,14 @@ test('HyperFrames 证据蒙太奇使用真实截图、动态分屏且不生成�
         drawInterface: 'overview-id',
         drawResult: 'codex-id',
         comfyInterface: 'deepseek-id',
-        comfyResult: 'cursor-id',
+        comfyResult: 'agent-id',
       },
     },
     visualPaths: {
       drawInterface: 'assets/overview.png',
       drawResult: 'assets/codex.png',
       comfyInterface: 'assets/deepseek.png',
-      comfyResult: 'assets/cursor.png',
+        comfyResult: 'assets/agent.png',
     },
     width: 1920,
     height: 1080,

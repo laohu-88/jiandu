@@ -24,10 +24,6 @@ const {
   createHandoffTask,
 } = require('../src/services/handoff-task-service');
 const {
-  checkAccessibilityPermission,
-  withClipboard,
-} = require('../src/services/cursor-automation-service');
-const {
   USER_STATUS,
   userFacingStatus,
   blockingErrors,
@@ -62,7 +58,7 @@ test('主导航只有待处理、项目、设置，无旧版入口文案', () =>
   assert.match(html, /开始 AI 剪辑|pageBrief/);
   const settings = fs.readFileSync(path.join(ROOT, 'src/renderer/modules/workspace/settings-page.js'), 'utf8');
   assert.doesNotMatch(settings, /检查 AI 环境|Ollama|mlxPythonPath|本地大模型/);
-  assert.match(settings, /Cursor \/ Codex/);
+  assert.match(settings, /Codex（唯一可执行 provider）/);
 });
 
 test('无本地 AI 产品 IPC / preload 能力', () => {
@@ -76,13 +72,13 @@ test('无本地 AI 产品 IPC / preload 能力', () => {
 test('抖音是默认工作区模式，高级调整不是主流程', () => {
   const state = buildAppRouteState({});
   assert.equal(state.platformMode, 'douyin');
-  assert.equal(state.engine, 'cursor_agent');
+  assert.equal(state.engine, 'codex');
   assert.deepEqual(PROJECT_PAGES.map((item) => item.id), ['brief', 'processing', 'results', 'advanced']);
   const edit = fs.readFileSync(path.join(ROOT, 'src/renderer/modules/workspace/edit-workspace.js'), 'utf8');
-  assert.match(edit, /开始 AI 剪辑/);
+  assert.match(edit, /开始剪辑/);
   assert.match(edit, /在 Final Cut Pro 中打开/);
-  assert.match(edit, /让 AI 再调整/);
-  assert.match(edit, /高级调整/);
+  assert.match(edit, /让 Codex 再改一次/);
+  assert.doesNotMatch(edit, /button', '高级调整/);
   assert.doesNotMatch(edit, /批准当前抖音方案/);
 });
 
@@ -108,7 +104,7 @@ test('本次额外要求原样进入精炼 prompt，且不重复固定规则', a
     sourceSummary: { name: '一期' },
     appWorkspace: ROOT,
     hyperframesMode: 'auto',
-    engine: 'cursor_agent',
+    engine: 'codex',
     extraRequirements: extra,
   });
   assert.equal(task.extraRequirements, extra);
@@ -120,40 +116,7 @@ test('本次额外要求原样进入精炼 prompt，且不重复固定规则', a
   assert.equal(manifest.skillPath, skillPathFor(ROOT));
 });
 
-test('Cursor 启动计划包含打开参数；权限检查失败时给出恢复说明', async () => {
-  const { buildCursorLaunchPlan } = require('../src/services/cursor-agent-handoff-service');
-  const plan = buildCursorLaunchPlan({
-    engine: 'cursor_agent',
-    appWorkspace: ROOT,
-    taskFilePath: '/tmp/handoffs/11111111-1111-4111-8111-111111111111.json',
-    cursorPackagePath: '/tmp/handoffs/11111111-1111-4111-8111-111111111111.cursor-package',
-    prompt: '执行视频剪辑任务 demo',
-  });
-  assert.ok(plan.openArgs.includes('--new-window'));
-  assert.equal(plan.workspace, ROOT);
-  assert.ok(plan.openArgs.some((arg) => String(arg).endsWith('.code-workspace')));
-  assert.equal(plan.openArgs.some((arg) => String(arg).endsWith('.cursor-package')), false);
-  assert.equal(plan.windowTitleNeedle, '视频剪辑编排器 · 任务');
-  assert.doesNotMatch(plan.openArgs.join(' '), /prompt\.md|TASK\.json|RECOVERY\.md/);
-  const permission = await checkAccessibilityPermission();
-  assert.equal(typeof permission.granted, 'boolean');
-  if (!permission.granted) {
-    assert.match(permission.guidance || permission.message, /辅助功能/);
-  }
-  const clipboard = {
-    stored: 'original',
-    readText() { return this.stored; },
-    writeText(value) { this.stored = value; },
-  };
-  const result = await withClipboard(clipboard, 'PROMPT', async () => {
-    assert.equal(clipboard.stored, 'PROMPT');
-    return { ok: true };
-  });
-  assert.equal(result.ok, true);
-  assert.equal(clipboard.stored, 'original');
-});
-
-test('Codex / Cursor 完成、失败、失联回流状态模型', () => {
+test('Codex 完成、失败、失联回流状态模型', () => {
   assert.equal(userFacingStatus({ status: 'awaiting_user_send' }).id, USER_STATUS.processing.id);
   assert.equal(userFacingStatus({ status: 'completed' }).id, USER_STATUS.results_ready.id);
   assert.equal(userFacingStatus({ status: 'completed', openedInFcpAt: 't' }).id, USER_STATUS.in_fcp.id);
@@ -185,7 +148,7 @@ test('让 AI 再调整创建 revise 任务且保留额外要求', async () => {
   assert.equal(manifest.previous.skipFullRescan, true);
 });
 
-test('HotIngest canonical inventory 读取 production nested metadata、翻译和原声', async () => {
+test('HotIngest canonical inventory 读取 production nested metadata、翻译和原声', { skip: !fs.existsSync(REAL_HOTINGEST) }, async () => {
   const raw = JSON.parse(fs.readFileSync(path.join(REAL_HOTINGEST, '.hotingest/items/001.json'), 'utf8'));
   const fields = parseMetadataFields(raw);
   assert.equal(fields.title, 'Bro lives in the future');
@@ -218,7 +181,7 @@ test('HotIngest canonical inventory 读取 production nested metadata、翻译�
   assert.equal((youtube.schemaDrift || []).length, 0);
 });
 
-test('HotIngest 绑定到 media inventory 后翻译不再丢失', async () => {
+test('HotIngest 绑定到 media inventory 后翻译不再丢失', { skip: !fs.existsSync(REAL_HOTINGEST) }, async () => {
   const files = [];
   async function walk(dir, prefix = '') {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

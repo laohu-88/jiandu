@@ -34,8 +34,8 @@
       const brand = document.createElement('div');
       brand.className = 'nav-brand';
       brand.append(
-        text('strong', '视频剪辑编排器'),
-        text('span', 'v3', 'nav-brand-version'),
+        text('strong', '剪渡'),
+        text('span', 'JianDu', 'nav-brand-version'),
       );
       navSidebar.appendChild(brand);
       const list = document.createElement('nav');
@@ -85,7 +85,7 @@
       if (versionEl && snap.config?.version) {
         versionEl.textContent = `v${snap.config.version}`;
       } else if (versionEl && !versionEl.dataset.ready) {
-        versionEl.textContent = '视频剪辑编排器';
+        versionEl.textContent = '剪渡';
         versionEl.dataset.ready = '1';
       }
     }

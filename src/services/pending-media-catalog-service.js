@@ -139,7 +139,7 @@ function classifyEpisode(item) {
     if (item.latestTask.status === 'awaiting_user_send'
       || item.latestTask.status === 'ready'
       || item.latestTask.status === 'launching_codex'
-      || item.latestTask.status === 'launching_cursor'
+      || item.latestTask.status === 'launching_codex'
       || item.latestTask.status === 'analysis_complete') return 'awaiting_user_send';
     if (!['draft', 'cancelled'].includes(item.latestTask.status)) return 'processing';
   }

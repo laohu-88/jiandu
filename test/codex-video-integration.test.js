@@ -213,6 +213,27 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
   assert.match(xml, /<sequence[^>]*format="r1"/);
   assert.match(xml, /<format id="r1" frameDuration="1\/30s" width="1920" height="1080"/);
 
+  const internalRoot = path.join(root, '应用支持', 'projects', '中文 项目 扁平状态');
+  const flatBuilt = await buildCodexVideoProject({
+    manifestPath: prepared.manifestPath,
+    analysisPath,
+    projectRoot,
+    projectName: '中文 项目 扁平状态',
+    internalRoot,
+    generatePreview: false,
+  });
+  assert.equal(flatBuilt.ok, true);
+  assert.equal(flatBuilt.verification.ok, true);
+  assert.deepEqual(
+    (await fs.readdir(flatBuilt.projectPath)).sort(),
+    [`${analysis.titles.recommended}.fcpxml`],
+  );
+  assert.equal(
+    await fs.stat(path.join(internalRoot, '00-项目总控', 'Codex视频状态.json')).then(() => true),
+    true,
+  );
+  assert.equal(flatBuilt.artifacts.previewPath, null);
+
   const protectedFiles = [
     path.join(built.projectPath, '00-项目总控/project.json'),
     path.join(built.projectPath, '00-项目总控/assets.json'),

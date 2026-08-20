@@ -32,7 +32,7 @@ async function correctionFixture() {
     sourceSummary: { name: '一期' },
     appWorkspace: path.resolve(__dirname, '..'),
     hyperframesMode: 'disabled',
-    engine: 'cursor_agent',
+    engine: 'codex',
   });
   const prepared = await preparePendingMedia(sourceDirectory, { cacheRoot: path.join(temp, 'cache') });
   return { temp, task, prepared };
@@ -135,7 +135,7 @@ test('首次 validate-analysis 失败后同一 attempt 修正并成功，不进�
     '--analysis', analysisPath, '--handoff-task', task.taskFilePath, '--attempt-id', task.currentAttempt.attemptId, '--json'], { encoding: 'utf8' });
   assert.equal(second.status, 0, second.stderr);
   persisted = await readHandoffTask(task.taskFilePath);
-  assert.equal(persisted.status, 'analysis_complete');
+  assert.equal(persisted.status, 'deciding_hyperframes');
   assert.equal(persisted.currentAttempt.attemptId, task.currentAttempt.attemptId);
   assert.deepEqual(persisted.validationIssues, []);
 });

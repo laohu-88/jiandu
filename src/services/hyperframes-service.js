@@ -353,7 +353,7 @@ function buildEvidenceMontageHtml({ format, flow, visualPaths }) {
     throw createHyperframesError('INVALID_HYPERFRAMES_FLOW', '证据蒙太奇缺少已复制的视觉素材。');
   }
   const src = (key) => escapeHtml(visualPaths[key]);
-  const labels = [flow.nodes[1] || 'Codex', flow.nodes[2] || 'DeepSeek', flow.nodes[3] || 'Cursor'];
+  const labels = [flow.nodes[1] || 'Codex', flow.nodes[2] || 'DeepSeek', flow.nodes[3] || 'Codex'];
   const evidenceKeys = ['drawResult', 'comfyInterface', 'comfyResult'];
   const lanes = evidenceKeys.map((key, index) => `
         <article id="lane-${index}" class="lane">

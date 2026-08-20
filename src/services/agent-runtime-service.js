@@ -3,23 +3,16 @@
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const fs = require('node:fs/promises');
-const path = require('node:path');
-
-const { HEARTBEAT_STALE_MS, isActiveLifecycle, lifecycleOf } = require('./agent-lifecycle-service');
+const { HEARTBEAT_STALE_MS } = require('./agent-lifecycle-service');
 
 const execFileAsync = promisify(execFile);
 
 const ENGINE_BUNDLES = Object.freeze({
-  codex: Object.freeze(['com.openai.codex']),
-  cursor_agent: Object.freeze([
-    'com.todesktop.230313mzl4w4u92',
-    'com.cursor.Cursor',
-  ]),
+  codex: Object.freeze(['com.openai.codex', 'com.todesktop.230313mzl4w4u92']),
 });
 
 const ENGINE_APP_PREFIXES = Object.freeze({
   codex: Object.freeze(['/Applications/Codex.app/Contents/MacOS/']),
-  cursor_agent: Object.freeze(['/Applications/Cursor.app/Contents/MacOS/']),
 });
 
 function normalizeProcessName(value) {
@@ -37,7 +30,7 @@ function matchesEngine(commandLine, engine) {
   if (prefixes.some((prefix) => text.includes(prefix))) return true;
   const name = normalizeProcessName(text);
   if (engine === 'codex') return name === 'codex';
-  return name === 'cursor';
+  return false;
 }
 
 async function listProcessCommands({ execFileImpl = execFileAsync } = {}) {
@@ -119,15 +112,15 @@ async function listAppWindowNames(appName, options = {}) {
 }
 
 function taskWindowNeedle(task) {
-  const session = task?.cursorSession;
+  const session = task?.agentSession;
   if (session?.active === true && (session.windowName || session.fingerprint || session.windowId != null)) {
     return session.windowName || session.fingerprint || String(session.windowId);
   }
   return '';
 }
 
-function cursorSessionIsActive(task) {
-  const session = task?.cursorSession;
+function agentSessionIsActive(task) {
+  const session = task?.agentSession;
   const attemptId = task?.currentAttempt?.attemptId || null;
   if (!session || session.active !== true) return false;
   if (attemptId && session.attemptId && session.attemptId !== attemptId) return false;
@@ -135,23 +128,10 @@ function cursorSessionIsActive(task) {
 }
 
 async function probeTaskWindow(task, options = {}) {
-  if ((task?.engine || 'codex') !== 'cursor_agent') {
+  if ((task?.engine || 'codex') !== 'codex') {
     return { taskWindowExists: null, windowProbeOk: false, windowNames: [] };
   }
-  if (!cursorSessionIsActive(task)) {
-    const packagePath = task?.cursorPackagePath || task?.artifacts?.cursorPackagePath || '';
-    const needle = path.basename(String(packagePath || ''));
-    if (isActiveLifecycle(lifecycleOf(task)) && /\.cursor-package$/i.test(needle) && !task?.cursorSession) {
-      const processes = options.processes || await listProcessCommands(options);
-      const hits = processes.filter((item) => String(item.command || '').includes(needle));
-      return {
-        taskWindowExists: hits.length > 0,
-        windowProbeOk: true,
-        windowNames: hits.map((item) => item.command),
-        sessionActive: false,
-        legacyPackageProbe: true,
-      };
-    }
+  if (!agentSessionIsActive(task)) {
     return {
       taskWindowExists: false,
       windowProbeOk: true,
@@ -159,32 +139,11 @@ async function probeTaskWindow(task, options = {}) {
       sessionActive: false,
     };
   }
-  const { listCursorWindows, findSessionWindow } = require('./cursor-automation-service');
-  try {
-    const listed = options.windows
-      ? { ok: true, windows: options.windows, names: options.windows.map((item) => item.name || item) }
-      : await listCursorWindows();
-    const windows = listed.windows || [];
-    const matched = findSessionWindow(windows, task.cursorSession);
-    return {
-      taskWindowExists: Boolean(matched),
-      windowProbeOk: true,
-      windowNames: matched ? [matched.name] : (listed.names || []),
-      sessionActive: true,
-      window: matched || null,
-    };
-  } catch {
-    return {
-      taskWindowExists: false,
-      windowProbeOk: false,
-      windowNames: [],
-      sessionActive: true,
-    };
-  }
+  return { taskWindowExists: false, windowProbeOk: true, windowNames: [], sessionActive: true };
 }
 
 async function probeAgentRuntime(engine, options = {}) {
-  const resolved = engine === 'codex' ? 'codex' : 'cursor_agent';
+  const resolved = engine === 'codex' ? 'codex' : 'codex';
   const bundleIds = ENGINE_BUNDLES[resolved] || [];
   let bundleRunning = false;
   for (const bundleId of bundleIds) {
@@ -196,7 +155,7 @@ async function probeAgentRuntime(engine, options = {}) {
   const processes = await listProcessCommands(options);
   const matched = processes.filter((item) => matchesEngine(item.command, resolved));
   const processExists = bundleRunning || matched.length > 0;
-  const appName = resolved === 'codex' ? 'Codex' : 'Cursor';
+  const appName = resolved === 'codex' ? 'Codex' : 'Codex';
   const windowCount = options.runOsascript
     ? await countAppWindows(appName, options)
     : null;
@@ -243,9 +202,7 @@ async function probeTaskRuntime(task, options = {}) {
   const runtime = await probeAgentRuntime(task?.engine, options);
   const withResults = await attachResultEvidence(task, runtime, options.now);
   const windowProbe = await probeTaskWindow(task, { ...options, processes: runtime.processes });
-  const sessionExists = (task?.engine || 'codex') === 'cursor_agent'
-    ? windowProbe.taskWindowExists === true
-    : withResults.processExists === true;
+  const sessionExists = withResults.processExists === true;
   return {
     ...withResults,
     ...windowProbe,
@@ -257,7 +214,7 @@ module.exports = {
   ENGINE_BUNDLES,
   attachResultEvidence,
   bundleIsRunning,
-  cursorSessionIsActive,
+  agentSessionIsActive,
   listAppWindowNames,
   matchesEngine,
   normalizeProcessName,

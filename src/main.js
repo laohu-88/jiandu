@@ -4,7 +4,7 @@ const { watch } = require('node:fs');
 const { app, BrowserWindow, clipboard, dialog, ipcMain, shell } = require('electron');
 
 if (!app) {
-  process.stderr.write('视频剪辑编排器 v3 需要在 Electron 主进程中启动。\n');
+  process.stderr.write('剪渡需要在 Electron 主进程中启动。\n');
   process.exit(1);
 }
 
@@ -18,6 +18,7 @@ const {
 } = require('./constants');
 const {
   getRuntimePaths,
+  migrateLegacyUserData,
   stableUserDataPath,
 } = require('./runtime-paths');
 const {
@@ -262,8 +263,10 @@ if (!hasSingleInstanceLock) {
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
+  await migrateLegacyUserData(app.getPath('appData')).catch((error) => {
+    process.stderr.write(`剪渡旧数据迁移失败，将继续以兼容读取模式启动：${error.message}\n`);
+  });
   appReady = true;
-  app.accessibilitySupportEnabled = true;
   app.setAppUserModelId?.(APP_ID);
   app.setAsDefaultProtocolClient(PROTOCOL_SCHEME);
   registerIpc({

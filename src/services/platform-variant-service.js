@@ -845,7 +845,7 @@ function orientationOf(item) {
 }
 
 function looksLikeScreenRecording(item, baseAsset) {
-  return item?.type === 'video' && /录屏|屏幕录制|screen.?record|cursor|ide|终端|terminal/i.test([
+  return item?.type === 'video' && /录屏|屏幕录制|screen.?record|ide|终端|terminal/i.test([
     item?.filename,
     baseAsset?.contentSummary,
     ...asArray(baseAsset?.semanticLabels),

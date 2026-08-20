@@ -1,13 +1,21 @@
+const os = require('node:os');
 const path = require('node:path');
 const { version: PACKAGE_VERSION } = require('../package.json');
 
-const APP_NAME = '视频剪辑编排器 v3';
-const INTERNAL_APP_NAME = 'Video Cut Planner V3';
+const APP_NAME = '剪渡';
+const INTERNAL_APP_NAME = 'JianDu';
 const APP_VERSION = `v${PACKAGE_VERSION}`;
 const APP_ID = 'com.laohu.video-cut-planner-v3';
 const USER_DATA_DIRNAME = APP_NAME;
+const LEGACY_USER_DATA_DIRNAME = '视频剪辑编排器 v3';
 const CODEX_WORKSPACE_ROOT = '/Users/example/Projects/video-cut-planner-v3';
-const DEFAULT_PROJECT_ROOT = '/Users/example/Desktop/视频素材库';
+const DEFAULT_PROJECT_ROOT = path.join(os.homedir(), 'Desktop', '视频素材库');
+const APPLICATION_SUPPORT_ROOT = path.join(os.homedir(), 'Library', 'Application Support', APP_NAME);
+const INTERNAL_PROJECTS_DIR = 'projects';
+
+function internalProjectRoot(projectPath) {
+  return path.join(APPLICATION_SUPPORT_ROOT, INTERNAL_PROJECTS_DIR, path.basename(path.resolve(projectPath)));
+}
 
 const PROJECT_DIRS = [
   '00-项目总控',
@@ -53,8 +61,10 @@ const EDITORIAL_REVIEW_FILE = path.join(CONTROL_DIR, 'editorial-review.json');
 const PLATFORM_VARIANTS_FILE = path.join(CONTROL_DIR, 'platform-variants.json');
 const PLATFORM_VARIANTS_DIR = path.join(EXPORT_DIR, '平台变体');
 const DOUYIN_PLATFORM_PROFILE_FILE = path.join('config', 'platforms', 'douyin.json');
-const CODEX_VIDEO_FCPXML_DIR = path.join(EXPORT_DIR, 'FCPXML');
-const CODEX_VIDEO_PREVIEW_DIR = path.join(EXPORT_DIR, '粗剪预览');
+// New projects keep only user-facing deliverables in the project root. These
+// names remain as relative legacy paths so old projects can still be read.
+const CODEX_VIDEO_FCPXML_DIR = '.';
+const CODEX_VIDEO_PREVIEW_DIR = '.';
 const BRIEF_FILE = path.join(CONTROL_DIR, '素材简报.md');
 const VIDEO_PLAN_FILE = path.join(CONTROL_DIR, 'video-plan.md');
 const SEGMENTS_FILE = path.join(CONTROL_DIR, 'segments.json');
@@ -83,8 +93,12 @@ module.exports = {
   APP_ID,
   PACKAGE_VERSION,
   USER_DATA_DIRNAME,
+  LEGACY_USER_DATA_DIRNAME,
   CODEX_WORKSPACE_ROOT,
   DEFAULT_PROJECT_ROOT,
+  APPLICATION_SUPPORT_ROOT,
+  INTERNAL_PROJECTS_DIR,
+  internalProjectRoot,
   PROJECT_DIRS,
   LEGACY_PROJECT_DIRS,
   CONTROL_DIR,

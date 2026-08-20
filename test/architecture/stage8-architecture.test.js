@@ -179,7 +179,7 @@ test('agent-first architecture keeps a single bridge and no local AI product sur
     'src/services/agent-prompt-builder.js',
     'src/services/agent-lifecycle-service.js',
     'src/services/agent-runtime-service.js',
-    'src/services/cursor-automation-service.js',
+    'src/services/agent-handoff-service.js',
     'src/services/hotingest-adapter.js',
     'src/renderer/modules/workspace/edit-workspace.js',
   ]) {

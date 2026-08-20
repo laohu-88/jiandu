@@ -3,7 +3,7 @@ const { removeUnusedMacPermissionDescriptions } = require('./scripts/after-pack'
 
 module.exports = {
   appId: 'com.laohu.video-cut-planner-v3',
-  productName: '视频剪辑编排器 v3',
+  productName: '剪渡',
   electronDist: path.join(__dirname, 'node_modules', 'electron', 'dist'),
   asar: true,
   directories: {
@@ -34,11 +34,11 @@ module.exports = {
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
     extendInfo: {
-      CFBundleDisplayName: '视频剪辑编排器 v3',
-      CFBundleName: '视频剪辑编排器 v3',
+      CFBundleDisplayName: '剪渡',
+      CFBundleName: 'JianDu',
     },
     protocols: [{
-      name: '视频剪辑编排器 v3 交接回流',
+      name: '剪渡交接回流',
       schemes: ['video-cut-planner'],
     }],
   },

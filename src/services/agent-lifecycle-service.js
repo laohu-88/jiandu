@@ -16,7 +16,6 @@ const LIFECYCLE = Object.freeze({
 const PREPARING_STATUSES = new Set(['draft', 'ready']);
 const HANDED_OFF_STATUSES = new Set([
   'launching_codex',
-  'launching_cursor',
   'awaiting_user_send',
 ]);
 const RUNNING_STATUSES = new Set([
@@ -99,7 +98,7 @@ function engineSelectionLocked(task) {
 }
 
 function engineLabel(engine) {
-  return engine === 'codex' ? 'Codex' : 'Cursor';
+  return 'Codex';
 }
 
 function disconnectedCopy(task) {
@@ -109,15 +108,10 @@ function disconnectedCopy(task) {
 function recoveryActions(task) {
   const lifecycle = lifecycleOf(task);
   if (lifecycle !== LIFECYCLE.agent_disconnected && lifecycle !== LIFECYCLE.failed) return [];
-  const engine = task?.engine === 'codex' ? 'codex' : 'cursor_agent';
-  const continueLabel = lifecycle === LIFECYCLE.failed
-    ? (engine === 'codex' ? '重新使用 Codex' : '重新使用 Cursor')
-    : (engine === 'codex' ? '继续使用 Codex' : '继续使用 Cursor');
-  const switchLabel = engine === 'codex' ? '改用 Cursor' : '改用 Codex';
-  const switchEngine = engine === 'codex' ? 'cursor_agent' : 'codex';
+  const engine = 'codex';
+  const continueLabel = lifecycle === LIFECYCLE.failed ? '重新使用 Codex' : '继续使用 Codex';
   const actions = [
-    { id: engine === 'codex' ? 'continue_codex' : 'continue_cursor', label: continueLabel, engine },
-    { id: engine === 'codex' ? 'switch_cursor' : 'switch_codex', label: switchLabel, engine: switchEngine },
+    { id: 'continue_codex', label: continueLabel, engine },
   ];
   if (lifecycle !== LIFECYCLE.failed) actions.push({ id: 'cancel', label: '取消任务' });
   return actions;
@@ -137,7 +131,7 @@ function createAttempt({
   now = new Date().toISOString(),
   status = LIFECYCLE.preparing,
 } = {}) {
-  const resolvedEngine = engine === 'codex' ? 'codex' : 'cursor_agent';
+  const resolvedEngine = 'codex';
   return {
     attemptId: createAttemptId(),
     engine: resolvedEngine,
@@ -166,7 +160,7 @@ function hydrateAttempts(task, now = new Date().toISOString()) {
   }
   const attempt = {
     attemptId: task.currentAttempt?.attemptId || task.taskId,
-    engine: task.engine === 'codex' ? 'codex' : (task.engine || 'cursor_agent'),
+    engine: 'codex',
     startedAt: task.launchedAt || task.startedAt || task.createdAt || now,
     lastActivityAt: task.lastHeartbeatAt || task.updatedAt || now,
     endedAt: isTerminalLifecycle(lifecycle) || lifecycle === LIFECYCLE.agent_disconnected
@@ -287,8 +281,7 @@ function evaluateLiveness(task, runtime = {}, now = Date.now()) {
   const processExists = runtime.processExists === true;
   const taskWindowExists = runtime.taskWindowExists === true;
   const windowProbeOk = runtime.windowProbeOk === true;
-  const sessionExists = runtime.sessionExists === true
-    || (hydrated.engine === 'cursor_agent' ? taskWindowExists : processExists);
+  const sessionExists = runtime.sessionExists === true || processExists;
   const resultUpdatedRecently = runtime.resultUpdatedRecently === true;
   const ageMs = lastActivityMs(hydrated, now);
   const evidence = [];
@@ -297,54 +290,12 @@ function evaluateLiveness(task, runtime = {}, now = Date.now()) {
   if (ageMs <= HEARTBEAT_STALE_MS) evidence.push('heartbeat');
   if (resultUpdatedRecently) evidence.push('result');
   if (runtime.launchAttempted === true || launchAttempted(hydrated)) evidence.push('launch');
-  const cursor = (hydrated.engine || runtime.engine) === 'cursor_agent';
-
   if (lifecycle === LIFECYCLE.handed_off) {
     if (hasLaunchFailure(hydrated) && ageMs >= LAUNCH_FAILURE_GRACE_MS) {
       return {
         live: false,
         disconnected: true,
         reason: 'launch_failed',
-        lifecycle,
-        evidence,
-        ageMs,
-      };
-    }
-    if (cursor) {
-      if (taskWindowExists) {
-        return {
-          live: true,
-          disconnected: false,
-          reason: 'task_window',
-          lifecycle,
-          evidence,
-          ageMs,
-        };
-      }
-      if (windowProbeOk && launchAttempted(hydrated) && ageMs >= LAUNCH_FAILURE_GRACE_MS) {
-        return {
-          live: false,
-          disconnected: true,
-          reason: 'window_missing',
-          lifecycle,
-          evidence,
-          ageMs,
-        };
-      }
-      if (!windowProbeOk && ageMs > HEARTBEAT_STALE_MS) {
-        return {
-          live: false,
-          disconnected: true,
-          reason: 'heartbeat_stale',
-          lifecycle,
-          evidence,
-          ageMs,
-        };
-      }
-      return {
-        live: true,
-        disconnected: false,
-        reason: 'preparing_launch',
         lifecycle,
         evidence,
         ageMs,
@@ -380,47 +331,6 @@ function evaluateLiveness(task, runtime = {}, now = Date.now()) {
     };
   }
 
-  // running: a leftover task window is not proof the Agent is still working.
-  if (cursor) {
-    if (resultUpdatedRecently || ageMs <= HEARTBEAT_STALE_MS) {
-      return {
-        live: true,
-        disconnected: false,
-        reason: resultUpdatedRecently ? 'result' : (taskWindowExists ? 'task_window' : 'heartbeat'),
-        lifecycle,
-        evidence,
-        ageMs,
-      };
-    }
-    if (taskWindowExists) {
-      return {
-        live: false,
-        disconnected: true,
-        reason: 'heartbeat_stale',
-        lifecycle,
-        evidence,
-        ageMs,
-      };
-    }
-    if (windowProbeOk) {
-      return {
-        live: false,
-        disconnected: true,
-        reason: 'window_missing',
-        lifecycle,
-        evidence,
-        ageMs,
-      };
-    }
-    return {
-      live: false,
-      disconnected: true,
-      reason: 'heartbeat_stale',
-      lifecycle,
-      evidence,
-      ageMs,
-    };
-  }
   if (!sessionExists) {
     return {
       live: false,
@@ -487,7 +397,7 @@ function reusableResultsFrom(task) {
 function processingViewModel(task) {
   const hydrated = hydrateAttempts(task);
   const lifecycle = lifecycleOf(hydrated);
-  const engine = hydrated.engine === 'codex' ? 'codex' : 'cursor_agent';
+  const engine = 'codex';
   const disconnected = lifecycle === LIFECYCLE.agent_disconnected;
   const correcting = lifecycle === LIFECYCLE.analysis_needs_correction;
   return {
@@ -498,7 +408,7 @@ function processingViewModel(task) {
       ? `${engineLabel(engine)} 正在修正分析`
       : (disconnected
       ? disconnectedCopy(hydrated)
-      : (engine === 'codex' ? 'Codex 正在处理' : 'Cursor 正在处理')),
+      : 'Codex 正在处理'),
     message: correcting
       ? (hydrated.stageMessage || '分析合同待修正，等待 Agent 写回并再次校验。')
       : (disconnected

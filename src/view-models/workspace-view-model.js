@@ -122,7 +122,7 @@ function deriveUserStatus({
     return task.openedInFcpAt ? 'in_fcp' : 'results_ready';
   }
   const processing = [
-    'launching_codex', 'launching_cursor', 'awaiting_user_send',
+    'launching_codex', 'awaiting_user_send',
     'scanning_media', 'extracting_metadata', 'extracting_frames',
     'analyzing_media', 'planning_story', 'analysis_needs_correction', 'analysis_complete',
     'deciding_hyperframes', 'designing_hyperframes', 'rendering_hyperframes',
@@ -251,7 +251,7 @@ function buildWorkspaceHeader({
   douyinWorkflow = null,
   task = null,
   platformMode = 'douyin',
-  engine = 'cursor_agent',
+  engine = 'codex',
 } = {}) {
   const project = result?.project || {};
   const variant = pickDouyinVariant(result, douyinVariant);
@@ -276,8 +276,8 @@ function buildWorkspaceHeader({
     platformStatus: variant?.status || (result?.platformVariants == null ? 'unavailable' : 'none'),
     platformMode: platformMode === 'main' ? 'main' : 'douyin',
     platformModeLabel: platformMode === 'main' ? '完整成片' : '抖音',
-    engine: engine === 'codex' ? 'codex' : 'cursor_agent',
-    engineLabel: engine === 'codex' ? 'Codex' : 'Cursor',
+    engine: 'codex',
+    engineLabel: 'Codex',
     lastOperation: variant?.generatedAt
       || variant?.updatedAt
       || project.verifiedAt
@@ -311,7 +311,7 @@ function buildAppRouteState(partial = {}) {
   const douyinStage = stageIds.has(partial.douyinStage) ? partial.douyinStage : 'plan';
   const assetFilter = assetFilters.has(partial.assetFilter) ? partial.assetFilter : 'all';
   const platformMode = partial.platformMode === 'main' ? 'main' : 'douyin';
-  const engine = partial.engine === 'codex' ? 'codex' : 'cursor_agent';
+  const engine = 'codex';
   const workspacePhase = ['brief', 'processing', 'results', 'revise', 'advanced'].includes(partial.workspacePhase)
     ? partial.workspacePhase
     : projectPage;

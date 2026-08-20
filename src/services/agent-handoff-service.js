@@ -9,13 +9,12 @@ const {
   STAGE_LABELS,
   TERMINAL_STATUSES,
   atomicWriteJson,
-  buildCursorAgentPrompt,
+  buildCodexAgentPrompt,
   listHandoffTasks,
   packageDirForTask,
   readHandoffTask,
   updateHandoffTask,
 } = require('./handoff-task-service');
-const { isReusableCursorSession, TASK_WINDOW_TITLE } = require('./cursor-automation-service');
 const { lifecycleOf, LIFECYCLE } = require('./agent-lifecycle-service');
 
 const PACKAGE_SWEEP_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -54,22 +53,31 @@ function engineLabel(engine) {
   return AGENT_ENGINES[engine]?.label || engine || 'Agent';
 }
 
-function cursorWorkspaceFor(task) {
+function agentWorkspaceFor(task) {
   return path.resolve(task?.appWorkspace || CODEX_WORKSPACE_ROOT);
 }
 
-function cursorWindowsDirFor(task) {
-  const packageDir = path.resolve(task.cursorPackagePath || packageDirForTask(task.taskFilePath));
-  return path.join(path.dirname(packageDir), 'cursor-windows');
+const TASK_WINDOW_TITLE = '剪渡 Codex 任务';
+
+function isReusableCodexSession(session, { attemptId, taskId } = {}) {
+  if (!session || session.active !== true) return false;
+  if (taskId && session.taskId && session.taskId !== taskId) return false;
+  if (attemptId && session.attemptId && session.attemptId !== attemptId) return false;
+  return true;
 }
 
-function cursorWindowWorkspacePath(task) {
+function agentWindowsDirFor(task) {
+  const packageDir = path.resolve(task.agentPackagePath || packageDirForTask(task.taskFilePath));
+  return path.join(path.dirname(packageDir), 'agent-windows');
+}
+
+function agentWindowWorkspacePath(task) {
   const attemptId = task.currentAttempt?.attemptId || task.attemptId || 'task';
-  return path.join(cursorWindowsDirFor(task), `cursor-window-${attemptId}.code-workspace`);
+  return path.join(agentWindowsDirFor(task), `agent-window-${attemptId}.code-workspace`);
 }
 
-function buildCursorWindowWorkspace(task) {
-  const workspace = cursorWorkspaceFor(task);
+function buildCodexWindowWorkspace(task) {
+  const workspace = agentWorkspaceFor(task);
   const title = path.basename(workspace);
   return {
     folders: [
@@ -85,14 +93,14 @@ function buildCursorWindowWorkspace(task) {
   };
 }
 
-async function writeCursorWindowWorkspace(task) {
-  const filePath = cursorWindowWorkspacePath(task);
+async function writeCodexWindowWorkspace(task) {
+  const filePath = agentWindowWorkspacePath(task);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(buildCursorWindowWorkspace(task), null, 2)}\n`, 'utf8');
+  await fs.writeFile(filePath, `${JSON.stringify(buildCodexWindowWorkspace(task), null, 2)}\n`, 'utf8');
   return filePath;
 }
 
-function deactivateCursorSession(session, reason = 'inactive') {
+function deactivateCodexSession(session, reason = 'inactive') {
   if (!session) return null;
   return {
     ...session,
@@ -112,18 +120,18 @@ function packageRetentionOf(task) {
   return PACKAGE_RETENTION.retain;
 }
 
-function buildCursorLaunchPlan(task) {
-  const packageDir = path.resolve(task.cursorPackagePath || packageDirForTask(task.taskFilePath));
-  const workspace = cursorWorkspaceFor(task);
+function buildCodexLaunchPlan(task) {
+  const packageDir = path.resolve(task.agentPackagePath || packageDirForTask(task.taskFilePath));
+  const workspace = agentWorkspaceFor(task);
   const attemptId = task.currentAttempt?.attemptId || null;
-  const session = task.cursorSession || null;
-  const reuseSession = isReusableCursorSession(session, {
+  const session = task.agentSession || null;
+  const reuseSession = isReusableCodexSession(session, {
     attemptId,
     taskId: task.taskId,
   });
-  const windowWorkspacePath = cursorWindowWorkspacePath(task);
+  const windowWorkspacePath = agentWindowWorkspacePath(task);
   return {
-    engine: 'cursor_agent',
+    engine: 'codex',
     workspace,
     packageDir,
     windowWorkspacePath,
@@ -138,7 +146,7 @@ function buildCursorLaunchPlan(task) {
     session: reuseSession ? session : null,
     clipboardText: task.prompt,
     restoreClipboard: true,
-    userInstruction: 'Cursor 已打开项目窗口，App 会把正式提示词放入 Agent 输入框。',
+    userInstruction: 'Codex 已打开项目窗口，App 会把正式提示词放入 Agent 输入框。',
   };
 }
 
@@ -152,13 +160,13 @@ async function pathExists(filePath) {
   }
 }
 
-async function writeCursorAgentPackage(task) {
+async function writeCodexAgentPackage(task) {
   const packageDir = packageDirForTask(task.taskFilePath);
   await fs.mkdir(packageDir, { recursive: true });
   const analysisOutputPath = path.join(packageDir, 'analysis.json');
   const paths = {
     taskId: task.taskId,
-    engine: 'cursor_agent',
+    engine: 'codex',
     sourceDirectory: task.sourceDirectory,
     sourceDirectoryRealPath: task.sourceDirectoryRealPath,
     taskFilePath: task.taskFilePath,
@@ -177,17 +185,17 @@ async function writeCursorAgentPackage(task) {
       suggestedPath: item.id === 'analysis' ? analysisOutputPath : null,
     })),
     afterAppBuild: [
-      '正式 v3 项目目录',
-      'Codex视频分析.json / Codex视频素材清单.json / Codex视频状态.json',
-      '粗剪预览 MP4',
+      '正式项目目录',
+      'Application Support 内部分析、素材清单和状态记录',
+      '按需生成的成片 MP4',
       'FCPXML',
       '结果中心可读结构化结果',
     ],
   };
   const checklist = [
-    '# Cursor Agent 剪辑任务清单',
+    '# Codex Agent 剪辑任务清单',
     '',
-    `- 引擎：Cursor Agent`,
+    `- 引擎：Codex Agent`,
     `- 任务 ID：\`${task.taskId}\``,
     `- 素材目录：\`${task.sourceDirectoryRealPath}\``,
     `- 状态文件：\`${task.taskFilePath}\``,
@@ -195,12 +203,12 @@ async function writeCursorAgentPackage(task) {
     '',
     '## 必做步骤',
     '',
-    '1. 在 Cursor Agent 中读取任务清单绝对路径并启动正式任务提示词（App 不会打开 prompt.md 或交接包窗口）',
+    '1. 在 Codex Agent 中读取任务清单绝对路径并启动正式任务提示词（App 不会打开 prompt.md 或交接包窗口）',
     '2. 使用 `video-skill prepare` 扫描素材、元数据与抽帧',
     '3. 按现有分析数据合同写出 `analysis.json`，并包含独立的 `platformVariants.douyin` 规划',
     '4. 使用 `validate-analysis` 校验',
     '5. 将交接状态更新为 `analysis_complete` 并执行 `handoff-return`',
-    '6. 回到「视频剪辑编排器 v3」继续 build / verify / 结果交接 / 打开 FCP',
+    '6. 回到「剪渡」继续 build / verify / 结果交接 / 打开 FCP',
     '',
     '## 禁止事项',
     '',
@@ -214,8 +222,8 @@ async function writeCursorAgentPackage(task) {
   const recovery = [
     '# 错误与恢复',
     '',
-    '- App 或 Cursor 中途关闭后，重新打开 App 即可继续；交接包仅作内部恢复，不会作为 Cursor 工作区打开。',
-    '- 状态为 `awaiting_user_send`：重新复制提示词，在 Cursor Agent 中启动。',
+    '- App 或 Codex 中途关闭后，重新打开 App 即可继续；交接包仅作内部恢复，不会作为 Codex 工作区打开。',
+    '- 状态为 `awaiting_user_send`：重新复制提示词，在 Codex Agent 中启动。',
     '- 状态为 `analysis_complete`：App 会自动继续构建与验证；不要重复分析覆盖成功结果。',
     '- 状态为 `failed`：不得显示为成功；修复后可新建独立任务，不得原地覆盖成功项目。',
     '- 产物不完整：检查交接包与 prepare 缓存中的 manifest/analysis 是否齐全且通过 validate-analysis。',
@@ -237,14 +245,14 @@ async function writeCursorAgentPackage(task) {
       status: task.status,
       stage: task.stage,
       stageMessage: task.stageMessage,
-      engine: 'cursor_agent',
+      engine: 'codex',
       updatedAt: task.updatedAt,
       note: '权威状态以 taskFilePath 指向的交接任务快照为准；本文件仅便于 Agent 快速定位。',
     }),
   ]);
-  const windowWorkspacePath = await writeCursorWindowWorkspace({
+  const windowWorkspacePath = await writeCodexWindowWorkspace({
     ...task,
-    cursorPackagePath: packageDir,
+    agentPackagePath: packageDir,
   });
 
   return {
@@ -261,8 +269,8 @@ async function writeCursorAgentPackage(task) {
 }
 
 async function syncPackageStatusPointer(task) {
-  if (!task.cursorPackagePath) return null;
-  const statusPath = path.join(task.cursorPackagePath, 'status.json');
+  if (!task.agentPackagePath) return null;
+  const statusPath = path.join(task.agentPackagePath, 'status.json');
   await atomicWriteJson(statusPath, {
     schemaVersion: 1,
     taskId: task.taskId,
@@ -270,7 +278,7 @@ async function syncPackageStatusPointer(task) {
     status: task.status,
     stage: task.stage,
     stageMessage: task.stageMessage,
-    engine: task.engine || 'cursor_agent',
+    engine: task.engine || 'codex',
     updatedAt: task.updatedAt,
     artifacts: task.artifacts || {},
     errors: task.errors || [],
@@ -362,7 +370,7 @@ function classifyAgentHandoffState(task) {
       engine,
     };
   }
-  if (['draft', 'ready', 'launching_codex', 'launching_cursor', 'awaiting_user_send'].includes(status)) {
+  if (['draft', 'ready', 'launching_codex', 'awaiting_user_send'].includes(status)) {
     return {
       state: status === 'awaiting_user_send' || status === 'ready' || status === 'draft'
         ? 'awaiting_agent'
@@ -449,7 +457,7 @@ async function markAnalysisComplete(taskPath, input = {}) {
     status: 'analysis_complete',
     attemptId: task.currentAttempt?.attemptId,
     stageMessage: input.stageMessage
-      || 'Cursor Agent 分析已通过协议校验，等待 App 继续构建与验证。',
+      || 'Codex Agent 分析已通过协议校验，等待 App 继续构建与验证。',
     artifacts: {
       ...(task.artifacts || {}),
       manifestPath: validated.manifestPath,
@@ -459,7 +467,7 @@ async function markAnalysisComplete(taskPath, input = {}) {
     },
     hyperframesDecision: task.hyperframesDecision || 'disabled',
     hyperframesReason: task.hyperframesReason
-      || 'Stage 6B 默认由 App 继续构建；HyperFrames 保持关闭，除非后续显式启用。',
+      || '默认由 App 继续构建；HyperFrames 保持关闭，除非后续显式启用。',
     hyperframesGap: task.hyperframesGap || '无',
   });
   await syncPackageStatusPointer(updated);
@@ -536,7 +544,7 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
   let building = await updateHandoffTask(taskPath, {
     status: 'building_project',
     attemptId: task.currentAttempt?.attemptId,
-    stageMessage: 'App 正在基于 Cursor Agent 分析结果创建正式项目。',
+    stageMessage: 'App 正在基于 Codex Agent 分析结果创建正式项目。',
   });
   await syncPackageStatusPointer(building);
 
@@ -546,6 +554,8 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
       analysisPath: task.artifacts.analysisPath,
       projectRoot,
       projectName,
+      internalRoot: path.join(path.dirname(path.dirname(task.taskFilePath)), 'projects', projectName),
+      generatePreview: false,
       timelineFormat: inspection.validation.formats?.timeline,
       previewFormat: inspection.validation.formats?.preview,
       hyperframes: { enabled: false },
@@ -571,7 +581,7 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
       resultProjectId: built.project?.projectId || built.project?.projectName || projectName,
       artifacts: {
         ...task.artifacts,
-        previewPath: built.artifacts.previewPath,
+        previewPath: built.artifacts.previewPath || null,
         fcpxmlPath: built.artifacts.fcpxmlPath,
         summaryPath: built.artifacts.summaryPath,
       },
@@ -606,8 +616,8 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
       status,
       attemptId,
       stageMessage: warnings.length
-        ? 'Cursor Agent 分析后由 App 完成构建与验证，但存在警告。'
-        : 'Cursor Agent 分析后由 App 完成构建、验证与结果交接准备。',
+        ? 'Codex Agent 分析后由 App 完成构建与验证，但存在警告。'
+        : 'Codex Agent 分析后由 App 完成构建、验证与结果交接准备。',
       resultProjectPath: result.project.path,
       resultProjectId: result.project.name,
       artifacts: {
@@ -629,7 +639,7 @@ async function continueBuildFromAnalysis(taskPath, options = {}) {
       warnings,
       hyperframesDecision: task.hyperframesDecision || 'disabled',
       hyperframesReason: task.hyperframesReason
-        || 'Stage 6B App 续建默认关闭 HyperFrames。',
+        || 'App 续建默认关闭 HyperFrames。',
     });
     await syncPackageStatusPointer(completed);
     return completed;
@@ -662,7 +672,7 @@ async function sweepHandoffPackages(userDataPath, options = {}) {
   const retained = [];
   for (const task of payload.tasks) {
     const retention = packageRetentionOf(task);
-    const packageDir = task.cursorPackagePath || packageDirForTask(task.taskFilePath);
+    const packageDir = task.agentPackagePath || packageDirForTask(task.taskFilePath);
     if (!packageDir) {
       retained.push({ taskId: task.taskId, retention, reason: 'no_package' });
       continue;
@@ -698,13 +708,13 @@ async function sweepHandoffPackages(userDataPath, options = {}) {
       });
       continue;
     }
-    const windowsDir = path.join(path.dirname(packageDir), 'cursor-windows');
+    const windowsDir = path.join(path.dirname(packageDir), 'agent-windows');
     const attemptIds = new Set([
       task.currentAttempt?.attemptId,
       ...(Array.isArray(task.attempts) ? task.attempts.map((item) => item.attemptId) : []),
     ].filter(Boolean));
     for (const attemptId of attemptIds) {
-      await fs.rm(path.join(windowsDir, `cursor-window-${attemptId}.code-workspace`), { force: true });
+      await fs.rm(path.join(windowsDir, `agent-window-${attemptId}.code-workspace`), { force: true });
     }
     await fs.rm(packageDir, { recursive: true, force: true });
     swept.push({
@@ -726,19 +736,19 @@ module.exports = {
   EXPECTED_ANALYSIS_ARTIFACTS,
   PACKAGE_RETENTION,
   PACKAGE_SWEEP_AGE_MS,
-  buildCursorAgentPrompt,
-  buildCursorLaunchPlan,
-  buildCursorWindowWorkspace,
+  buildCodexAgentPrompt,
+  buildCodexLaunchPlan,
+  buildCodexWindowWorkspace,
   classifyAgentHandoffState,
   continueBuildFromAnalysis,
-  cursorWindowWorkspacePath,
-  cursorWorkspaceFor,
-  writeCursorWindowWorkspace,
-  deactivateCursorSession,
+  agentWindowWorkspacePath,
+  agentWorkspaceFor,
+  writeCodexWindowWorkspace,
+  deactivateCodexSession,
   inspectAnalysisArtifacts,
   markAnalysisComplete,
   packageRetentionOf,
   sweepHandoffPackages,
   syncPackageStatusPointer,
-  writeCursorAgentPackage,
+  writeCodexAgentPackage,
 };

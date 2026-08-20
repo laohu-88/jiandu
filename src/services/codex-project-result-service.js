@@ -11,6 +11,7 @@ const {
   CONTROL_DIR,
   EXPORT_DIR,
   PROJECT_FILE,
+  internalProjectRoot,
 } = require('../constants');
 const { readJsonFile } = require('./project-json-service');
 const { verifyCodexVideoProject } = require('./codex-video-service');
@@ -132,14 +133,22 @@ async function readCodexProjectResult(projectPath) {
     throw Object.assign(new Error('项目目录不存在。'), { code: 'PROJECT_NOT_FOUND' });
   }
 
+  const candidateRoot = internalProjectRoot(resolved);
+  const candidateStatus = await fs.stat(path.join(candidateRoot, CODEX_VIDEO_STATUS_FILE)).catch(() => null);
+  const artifactRoot = candidateStatus ? candidateRoot : resolved;
   const [projectFile, assetsFile, manifestFile, analysisFile, statusFile] = await Promise.all([
     optionalJson(resolved, PROJECT_FILE, 'project.json'),
-    optionalJson(resolved, ASSETS_FILE, 'assets.json'),
-    optionalJson(resolved, CODEX_VIDEO_MANIFEST_FILE, 'Codex 视频素材清单'),
-    optionalJson(resolved, CODEX_VIDEO_ANALYSIS_FILE, 'Codex 视频分析'),
-    optionalJson(resolved, CODEX_VIDEO_STATUS_FILE, 'Codex 视频状态'),
+    optionalJson(artifactRoot, ASSETS_FILE, 'assets.json'),
+    optionalJson(artifactRoot, CODEX_VIDEO_MANIFEST_FILE, 'Codex 视频素材清单'),
+    optionalJson(artifactRoot, CODEX_VIDEO_ANALYSIS_FILE, 'Codex 视频分析'),
+    optionalJson(artifactRoot, CODEX_VIDEO_STATUS_FILE, 'Codex 视频状态'),
   ]);
-  const project = projectFile.value;
+  const project = projectFile.value || {
+    projectName: path.basename(resolved),
+    projectPath: resolved,
+    createdAt: statusFile.value?.createdAt || null,
+    generatedAt: statusFile.value?.generatedAt || null,
+  };
   const assetsIndex = assetsFile.value;
   const manifest = manifestFile.value;
   const baseAnalysis = analysisFile.value;
@@ -185,9 +194,9 @@ async function readCodexProjectResult(projectPath) {
     controlDirectory: await makeArtifact(resolved, CONTROL_DIR, 'directory'),
     fcpxml: await makeArtifact(resolved, artifactsSpec.fcpxml || null),
     preview: await makeArtifact(resolved, artifactsSpec.preview || null),
-    analysis: await makeArtifact(resolved, CODEX_VIDEO_ANALYSIS_FILE),
-    status: await makeArtifact(resolved, CODEX_VIDEO_STATUS_FILE),
-    manifest: await makeArtifact(resolved, CODEX_VIDEO_MANIFEST_FILE),
+    analysis: await makeArtifact(artifactRoot, CODEX_VIDEO_ANALYSIS_FILE),
+    status: await makeArtifact(artifactRoot, CODEX_VIDEO_STATUS_FILE),
+    manifest: await makeArtifact(artifactRoot, CODEX_VIDEO_MANIFEST_FILE),
     hyperframesMp4: await makeArtifact(resolved, artifactsSpec.hyperframesMp4 || null),
   };
 

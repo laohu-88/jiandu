@@ -68,7 +68,7 @@ async function writeProjectState(projectPath, options = {}) {
   return state;
 }
 
-async function createProject(rootPath, projectName) {
+async function createProject(rootPath, projectName, options = {}) {
   const cleanRoot = String(rootPath || '').trim();
   if (!cleanRoot) {
     throw new Error('请选择项目根目录。');
@@ -79,11 +79,20 @@ async function createProject(rootPath, projectName) {
 
   const projectPath = path.join(cleanRoot, cleanName);
   await fs.mkdir(projectPath, { recursive: true });
-  for (const dir of PROJECT_DIRS) {
-    await fs.mkdir(path.join(projectPath, dir), { recursive: true });
-  }
-
-  const project = await writeProjectState(projectPath, { projectName: cleanName });
+  const project = options.flat
+    ? {
+      projectName: cleanName,
+      projectPath,
+      version: APP_VERSION,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    : await (async () => {
+      for (const dir of PROJECT_DIRS) {
+        await fs.mkdir(path.join(projectPath, dir), { recursive: true });
+      }
+      return writeProjectState(projectPath, { projectName: cleanName });
+    })();
   return {
     project,
     missingDirs: [],

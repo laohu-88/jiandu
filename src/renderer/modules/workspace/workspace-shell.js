@@ -34,25 +34,12 @@
       left.append(text('h2', info?.name || snap.currentEpisode?.name || '剪辑工作区'));
       const meta = document.createElement('div');
       meta.className = 'workspace-header-meta';
-      const mode = text('button', info?.platformModeLabel || (snap.route.platformMode === 'main' ? '完整成片' : '抖音'), 'status-pill');
-      mode.type = 'button';
-      mode.addEventListener('click', () => {
-        const next = snap.route.platformMode === 'main' ? 'douyin' : 'main';
-        data.routeStore.set({ platformMode: next });
-      });
-      const engine = text('button', info?.engineLabel || (snap.route.engine === 'codex' ? 'Codex' : 'Cursor'), 'status-pill');
+      const engine = text('span', 'Codex', 'status-pill');
       engine.type = 'button';
       const task = snap.runningOverlays?.handoffTask;
       const locked = ['handed_off', 'running'].includes(task?.lifecycle);
       engine.disabled = Boolean(locked);
-      if (locked) engine.title = '处理中不可切换 Agent，请先取消任务';
-      engine.addEventListener('click', () => {
-        if (engine.disabled) return;
-        const next = snap.route.engine === 'codex' ? 'cursor_agent' : 'codex';
-        data.routeStore.set({ engine: next });
-      });
       meta.append(
-        mode,
         engine,
         text('span', info?.status || '准备开始', 'status-pill'),
       );
@@ -73,7 +60,7 @@
       }
       Object.entries(pages).forEach(([id, el]) => {
         if (!el) return;
-        el.classList.toggle('hidden', id !== phase && !(phase === 'revise' && id === 'brief'));
+        el.classList.toggle('hidden', id === 'advanced' || (id !== phase && !(phase === 'revise' && id === 'brief')));
       });
       renderHeader(snap);
     }
