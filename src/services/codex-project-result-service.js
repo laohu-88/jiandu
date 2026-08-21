@@ -10,14 +10,19 @@ const {
   CODEX_VIDEO_STATUS_FILE,
   CONTROL_DIR,
   EXPORT_DIR,
+  INTERNAL_ASSETS_FILE,
+  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
+  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
+  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_PROJECT_FILE,
   PROJECT_FILE,
-  internalProjectRoot,
 } = require('../constants');
 const { readJsonFile } = require('./project-json-service');
 const { verifyCodexVideoProject } = require('./codex-video-service');
 const { createMarkerViewModel } = require('./marker-view-model');
 const { buildEditorialReviewModel } = require('./editorial-review-service');
 const { readPlatformVariants } = require('./platform-variant-service');
+const { internalArtifactRoot, resolveProjectArtifactRoot } = require('./project-artifact-paths');
 
 const PROJECT_RESULT_STATUS = Object.freeze({
   VERIFIED: 'verified',
@@ -76,6 +81,22 @@ async function resolveProjectPath(projectPath, candidate, options = {}) {
 
 async function makeArtifact(projectPath, relativePath, kind = 'file') {
   if (!relativePath) return null;
+  if (path.isAbsolute(String(relativePath))) {
+    const absolute = path.resolve(String(relativePath));
+    const stat = await fs.stat(absolute).catch(() => null);
+    if (kind === 'file' && stat && !stat.isFile()) {
+      throw Object.assign(new Error(`项目产物不是文件：${absolute}`), { code: 'INVALID_ARTIFACT_TYPE' });
+    }
+    if (kind === 'directory' && stat && !stat.isDirectory()) {
+      throw Object.assign(new Error(`项目产物不是目录：${absolute}`), { code: 'INVALID_ARTIFACT_TYPE' });
+    }
+    return {
+      relativePath: absolute,
+      path: absolute,
+      exists: Boolean(stat),
+      fileUrl: stat?.isFile() && kind === 'file' ? pathToFileURL(absolute).href : null,
+    };
+  }
   const resolved = await resolveProjectPath(projectPath, relativePath, { kind });
   return {
     relativePath,
@@ -133,15 +154,28 @@ async function readCodexProjectResult(projectPath) {
     throw Object.assign(new Error('项目目录不存在。'), { code: 'PROJECT_NOT_FOUND' });
   }
 
-  const candidateRoot = internalProjectRoot(resolved);
-  const candidateStatus = await fs.stat(path.join(candidateRoot, CODEX_VIDEO_STATUS_FILE)).catch(() => null);
-  const artifactRoot = candidateStatus ? candidateRoot : resolved;
+  const artifactRoot = await resolveProjectArtifactRoot(resolved);
+  const internal = artifactRoot !== resolved
+    && path.resolve(artifactRoot) !== path.resolve(path.join(resolved, '00-项目总控'));
+  const names = internal ? {
+    project: INTERNAL_PROJECT_FILE,
+    assets: INTERNAL_ASSETS_FILE,
+    manifest: INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
+    analysis: INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
+    status: INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  } : {
+    project: path.basename(PROJECT_FILE),
+    assets: path.basename(ASSETS_FILE),
+    manifest: path.basename(CODEX_VIDEO_MANIFEST_FILE),
+    analysis: path.basename(CODEX_VIDEO_ANALYSIS_FILE),
+    status: path.basename(CODEX_VIDEO_STATUS_FILE),
+  };
   const [projectFile, assetsFile, manifestFile, analysisFile, statusFile] = await Promise.all([
-    optionalJson(resolved, PROJECT_FILE, 'project.json'),
-    optionalJson(artifactRoot, ASSETS_FILE, 'assets.json'),
-    optionalJson(artifactRoot, CODEX_VIDEO_MANIFEST_FILE, 'Codex 视频素材清单'),
-    optionalJson(artifactRoot, CODEX_VIDEO_ANALYSIS_FILE, 'Codex 视频分析'),
-    optionalJson(artifactRoot, CODEX_VIDEO_STATUS_FILE, 'Codex 视频状态'),
+    optionalJson(artifactRoot, names.project, 'project.json'),
+    optionalJson(artifactRoot, names.assets, 'assets.json'),
+    optionalJson(artifactRoot, names.manifest, 'Codex 视频素材清单'),
+    optionalJson(artifactRoot, names.analysis, 'Codex 视频分析'),
+    optionalJson(artifactRoot, names.status, 'Codex 视频状态'),
   ]);
   const project = projectFile.value || {
     projectName: path.basename(resolved),
@@ -189,15 +223,25 @@ async function readCodexProjectResult(projectPath) {
   const artifactsSpec = status?.artifacts || {};
   const artifacts = {
     projectRoot: { path: resolved, relativePath: '.', exists: true },
-    selectedAssets: await makeArtifact(resolved, ASSETS_DIR, 'directory'),
+    selectedAssets: internal ? null : await makeArtifact(resolved, ASSETS_DIR, 'directory'),
     exportDirectory: await makeArtifact(resolved, EXPORT_DIR, 'directory'),
-    controlDirectory: await makeArtifact(resolved, CONTROL_DIR, 'directory'),
-    fcpxml: await makeArtifact(resolved, artifactsSpec.fcpxml || null),
-    preview: await makeArtifact(resolved, artifactsSpec.preview || null),
-    analysis: await makeArtifact(artifactRoot, CODEX_VIDEO_ANALYSIS_FILE),
-    status: await makeArtifact(artifactRoot, CODEX_VIDEO_STATUS_FILE),
-    manifest: await makeArtifact(artifactRoot, CODEX_VIDEO_MANIFEST_FILE),
-    hyperframesMp4: await makeArtifact(resolved, artifactsSpec.hyperframesMp4 || null),
+    controlDirectory: internal ? null : await makeArtifact(resolved, CONTROL_DIR, 'directory'),
+    fcpxml: artifactsSpec.fcpxml
+      ? await makeArtifact(resolved, artifactsSpec.fcpxml)
+      : null,
+    preview: artifactsSpec.preview
+      ? (path.isAbsolute(artifactsSpec.preview)
+        ? { path: artifactsSpec.preview, relativePath: null, exists: Boolean(await fs.stat(artifactsSpec.preview).catch(() => null)) }
+        : await makeArtifact(resolved, artifactsSpec.preview))
+      : null,
+    analysis: await makeArtifact(artifactRoot, names.analysis),
+    status: await makeArtifact(artifactRoot, names.status),
+    manifest: await makeArtifact(artifactRoot, names.manifest),
+    hyperframesMp4: artifactsSpec.hyperframesMp4
+      ? (path.isAbsolute(artifactsSpec.hyperframesMp4)
+        ? { path: artifactsSpec.hyperframesMp4, relativePath: null, exists: Boolean(await fs.stat(artifactsSpec.hyperframesMp4).catch(() => null)) }
+        : await makeArtifact(resolved, artifactsSpec.hyperframesMp4))
+      : null,
   };
 
   const timelineFormat = status?.formats?.timeline || (analysis?.timeline ? {

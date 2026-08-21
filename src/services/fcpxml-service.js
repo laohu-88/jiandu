@@ -34,6 +34,41 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
+// Final Cut Pro names are a separate concern from XML escaping. Keep CJK and
+// emoji, but normalize path/control characters before they ever reach XML.
+function sanitizeFcpFilename(value, fallback = '未命名项目') {
+  const clean = String(value || fallback)
+    .replace(/[\\/:*?"'<>|]/g, '·')
+    .replace(/[\u0000-\u001f\u007f\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^\.+|\.+$/g, '')
+    .trim()
+    .slice(0, 180)
+    .trim();
+  return clean && clean !== '.' && clean !== '..' ? clean : fallback;
+}
+
+function sanitizeFcpName(value, fallback = '未命名项目') {
+  return sanitizeFcpFilename(value, fallback).replace(/&/g, '·');
+}
+
+function normalizeFcpNames({ filename, eventName, projectName } = {}) {
+  return {
+    filename: sanitizeFcpFilename(filename, '未命名素材'),
+    eventName: sanitizeFcpName(eventName, '未命名事件'),
+    projectName: sanitizeFcpName(projectName, '未命名项目'),
+  };
+}
+
+function isLegalFcpName(value) {
+  const name = String(value || '');
+  return Boolean(name.trim())
+    && name !== '.'
+    && name !== '..'
+    && !/[\\/:*?"'<>|\u0000-\u001f\u007f\r\n]/.test(name)
+    && !/^\.+|\.+$/.test(name);
+}
+
 function gcd(left, right) {
   let a = Math.abs(Math.round(left));
   let b = Math.abs(Math.round(right));
@@ -934,6 +969,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
   const assets = [];
   const assetResourceById = new Map();
   for (const mapping of assetMappings) {
+    const names = normalizeFcpNames({ filename: mapping.projectFilename });
     const metadata = mapping.metadata || {};
     const formatId = mapping.type === 'video'
       ? addFormat(
@@ -949,7 +985,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
       );
     const resourceId = `r${nextResourceId++}`;
     assetResourceById.set(mapping.assetId, resourceId);
-    assets.push({ ...mapping, formatId, resourceId });
+    assets.push({ ...mapping, projectFilename: names.filename, formatId, resourceId });
   }
   const titleEffectId = fcpTitles.length > 0 ? `r${nextResourceId++}` : null;
   const blurEffectId = analysis.timeline.shots.some(
@@ -1056,6 +1092,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     const mapping = planned.mapping || mappingById.get(shot.assetId);
     const resourceId = assetResourceById.get(shot.assetId);
     if (!mapping || !resourceId) throw new Error(`FCPXML 缺少镜头素材映射：${shot.assetId}`);
+    const safeMappingName = sanitizeFcpFilename(mapping.projectFilename, '未命名素材');
     const layout = normalizeShotLayout(shot);
     const intrinsicItems = [];
     const anchorItems = [];
@@ -1181,7 +1218,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     if (layout.blurredBackground) {
       const foregroundTag = mapping.type === 'image' ? 'video' : 'asset-clip';
       anchorItems.push(
-        `          <${foregroundTag} name="${escapeXml(`${mapping.projectFilename} · 完整横屏卡片`)}"`
+        `          <${foregroundTag} name="${escapeXml(`${safeMappingName} · 完整横屏卡片`)}"`
         + ` ref="${resourceId}" lane="1" offset="${startTime}" start="${startTime}"`
         + ` duration="${planned.durationTime}">\n`
         + `${shotLayoutAdjustments({ ...layout, conform: 'fit', blurredBackground: false }, '            ').join('\n')}\n`
@@ -1192,7 +1229,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
     if (screenLayers) {
       const secondaryTag = mapping.type === 'image' ? 'video' : 'asset-clip';
       anchorItems.push(
-        `          <${secondaryTag} name="${escapeXml(`${mapping.projectFilename} · 上下双层录屏 · 关键区域`)}"`
+        `          <${secondaryTag} name="${escapeXml(`${safeMappingName} · 上下双层录屏 · 关键区域`)}"`
         + ` ref="${resourceId}" lane="1" offset="${startTime}" start="${startTime}"`
         + ` duration="${planned.durationTime}">\n`
         + `${shotLayoutAdjustments(screenLayers.bottom, '            ').join('\n')}\n`
@@ -1209,7 +1246,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
       ...markerItems,
       ...videoFilterItems,
     ];
-    const clip = `        <${clipElement} name="${escapeXml(mapping.projectFilename)}" ref="${resourceId}"`
+    const clip = `        <${clipElement} name="${escapeXml(safeMappingName)}" ref="${resourceId}"`
       + ` offset="${planned.offsetTime}" start="${startTime}"`
       + ` duration="${planned.durationTime}"${audioRole}>\n`
       + `${nested.join('\n')}\n`
@@ -1224,6 +1261,10 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
   const fcpxmlVersion = fcpTitles.length > 0 || hasTransformKeyframes
     ? FCPXML_TITLE_VERSION
     : FCPXML_DEFAULT_VERSION;
+  const names = normalizeFcpNames({
+    eventName: projectName,
+    projectName: analysis.titles.recommended,
+  });
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE fcpxml>
 <fcpxml version="${fcpxmlVersion}">
@@ -1231,8 +1272,8 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
 ${resourcesXml}
   </resources>
   <library>
-    <event name="${escapeXml(projectName)}">
-      <project name="${escapeXml(analysis.titles.recommended)}">
+    <event name="${escapeXml(names.eventName)}">
+      <project name="${escapeXml(names.projectName)}">
         <sequence duration="${timelinePlan.totalDurationTime}" format="${sequenceFormatId}" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
           <spine>
 ${clipsXml}
@@ -1396,6 +1437,12 @@ function validateFcpxmlContainerOrder(xml) {
 
 function validateFcpxmlStructure(xml, expected = {}) {
   const errors = [];
+  if (!/^<\?xml[^>]*encoding="UTF-8"[^>]*\?>/i.test(xml)) {
+    errors.push('FCPXML 缺少 UTF-8 XML 声明。');
+  }
+  // Keep this explicit even when xmllint is unavailable; Final Cut refuses
+  // several otherwise well-formed documents without the FCPXML doctype.
+  if (!/<!DOCTYPE\s+fcpxml\s*>/i.test(xml)) errors.push('FCPXML 缺少 <!DOCTYPE fcpxml>。');
   const version = xml.match(/<fcpxml\s+version="([^"]+)">/)?.[1] || null;
   if (![FCPXML_DEFAULT_VERSION, FCPXML_TITLE_VERSION].includes(version)) {
     errors.push('缺少受支持的 FCPXML 1.10/1.14 根节点。');
@@ -1455,6 +1502,18 @@ function validateFcpxmlStructure(xml, expected = {}) {
     })(),
   }));
   const mediaRepresentations = [...xml.matchAll(/<media-rep\s+[^>]*src="([^"]+)"/g)];
+  const namedElements = [
+    ...[...xml.matchAll(/<(event|project|asset|asset-clip|video)\s+([^>]+)>/g)].map((match) => ({
+      kind: match[1],
+      value: match[2].match(/\bname="([^"]*)"/)?.[1] || '',
+    })),
+  ];
+  for (const named of namedElements) {
+    const name = unescapeXmlText(named.value);
+    if (!isLegalFcpName(name)) {
+      errors.push(`${named.kind} name 非法，不能包含路径分隔符、&、单双引号、尖括号或换行：${name || '空名称'}`);
+    }
+  }
   const resourceMediaById = new Map(
     [...xml.matchAll(/<asset\s+id="([^"]+)"[\s\S]*?<media-rep\s+[^>]*src="([^"]+)"/g)]
       .map((match) => [match[1], match[2]]),
@@ -1477,7 +1536,9 @@ function validateFcpxmlStructure(xml, expected = {}) {
     if (!assetIds.has(clip[1])) errors.push(`时间线镜头引用了不存在的资源 ${clip[1]}。`);
   }
   for (const media of mediaRepresentations) {
-    if (!media[1].startsWith('file://')) errors.push('素材资源不是 file URL。');
+    if (!media[1].startsWith('file://') || /[\u0000-\u001f\u007f\r\n]/.test(media[1])) {
+      errors.push('素材资源不是合法 file URL。');
+    }
   }
   const managedTitleKeys = [];
   const sequenceDurationMatch = xml.match(/<sequence\b[^>]*\bduration="([^"]+)"/);
@@ -1915,7 +1976,14 @@ async function writeFcpxml(outputPath, payload, options = {}) {
   try {
     await fs.writeFile(tempPath, xml, { encoding: 'utf8', flag: 'wx' });
     if (options.backupExisting === true && existing != null) {
-      const backupPath = path.join(directory, `.${path.basename(outputPath)}.prev`);
+      const backupDirectory = options.backupDirectory
+        ? path.resolve(options.backupDirectory)
+        : directory;
+      await fs.mkdir(backupDirectory, { recursive: true });
+      const backupPath = path.join(
+        backupDirectory,
+        `${path.basename(outputPath)}.${Date.now()}.prev`,
+      );
       await fs.writeFile(backupPath, existing, 'utf8');
     }
     await fs.rename(tempPath, outputPath);
@@ -1952,6 +2020,7 @@ module.exports = {
   buildFcpxml,
   collectFcpTitles,
   escapeXml,
+  isLegalFcpName,
   extractManagedCaptionTitles,
   extractTopLevelSpineClips,
   fcpTime,
@@ -1962,6 +2031,9 @@ module.exports = {
   formatFcpRational,
   isRationalMultiple,
   normalizeManagedCaptionTitles,
+  normalizeFcpNames,
+  sanitizeFcpFilename,
+  sanitizeFcpName,
   parseFcpTimeRational,
   parseFrameRateRational,
   planFrameAlignedTimeline,

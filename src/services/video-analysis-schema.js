@@ -376,7 +376,7 @@ function validateStoryUnitAnalysis(analysis, manifest, errors, analysisById) {
     });
     validateStringList(unit.warnings, `${field}.warnings`, errors, {
       maximum: 20,
-      itemMaxLength: 500,
+      itemMaxLength: 600,
     });
     for (const warning of expected?.warnings || []) {
       if (!(unit.warnings || []).includes(warning)) {
@@ -409,7 +409,7 @@ function validateStoryUnitAnalysis(analysis, manifest, errors, analysisById) {
     });
     validateStringList(asset.warnings, `素材 ${item.assetId}.warnings`, errors, {
       maximum: 20,
-      itemMaxLength: 500,
+      itemMaxLength: 600,
     });
     validateEvidenceDecision(asset.evidence, `素材 ${item.assetId}.evidence`, errors);
     for (const conflict of item.semanticProfile?.conflicts || []) {

@@ -186,6 +186,41 @@ test('FCPXML 1.14 使用 FCP 12.3 基础标题生成独立可编辑 Title 且不
   assert.doesNotMatch(xml, /roughcut-preview/);
 });
 
+test('FCPXML 导入时清洗事件和项目名称中的非法路径分隔符', () => {
+  const xml = buildFcpxml({
+    projectName: 'HotIgest · 抖音 · 猫是液体/猫咪脑洞',
+    analysis: { ...analysis, titles: { recommended: '猫咪暴怒/动物医院反应' } },
+    assetMappings: mappings,
+  });
+  assert.match(xml, /<event name="HotIgest · 抖音 · 猫是液体·猫咪脑洞">/);
+  assert.match(xml, /<project name="猫咪暴怒·动物医院反应">/);
+  assert.doesNotMatch(xml, /<event name="[^"]*\//);
+  assert.doesNotMatch(xml, /<project name="[^"]*\//);
+});
+
+test('FCPXML 名称入口分别处理文件名合法化与 XML 转义', () => {
+  const xml = buildFcpxml({
+    projectName: '事件/&< >"\'\n🐱',
+    analysis: { ...analysis, titles: { recommended: '项目:&< >"\'\n🎬' } },
+    assetMappings: [{
+      ...mappings[0],
+      projectFilename: '片段 & <猫> "引号".mov',
+    }, mappings[1]],
+  });
+  assert.match(xml, /<event name="事件··· ··· 🐱">/);
+  assert.match(xml, /<project name="项目··· ··· 🎬">/);
+  assert.match(xml, /name="片段 &amp; ·猫· ·引号·\.mov"/);
+  assert.match(xml, /src="file:\/\/\/tmp\/%E4%B8%AD%E6%96%87%20%E8%B7%AF%E5%BE%84\/%E5%B1%8F%E5%B9%95%20%E5%BD%95%E5%88%B6\.mov"/);
+  assert.equal(validateFcpxmlStructure(xml, {
+    shotCount: analysis.timeline.shots.length,
+    assetCount: mappings.length,
+    markerCount: analysis.timeline.markers.length,
+    width: analysis.timeline.width,
+    height: analysis.timeline.height,
+    fps: analysis.timeline.fps,
+  }).ok, true);
+});
+
 test('竖屏原生 Title 默认落在中下方安全区，仍水平居中', () => {
   const verticalAnalysis = structuredClone(analysis);
   verticalAnalysis.timeline = {

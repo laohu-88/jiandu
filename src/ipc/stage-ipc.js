@@ -4,6 +4,8 @@ const fs = require('node:fs/promises');
 const {
   FCP_EXPORT_DIR,
   RAW_SRT_FILE,
+  DEFAULT_PROJECT_ROOT,
+  internalProjectRoot,
 } = require('../constants');
 const {
   loadStage2State,
@@ -158,8 +160,17 @@ function registerStageIpc(ctx) {
   ipcMain.handle('codex-video:validate-analysis', (_event, args) =>
     validateAnalysisFile(args.manifestPath, args.analysisPath));
 
-  ipcMain.handle('codex-video:build', (_event, args) =>
-    buildCodexVideoProject(args));
+  ipcMain.handle('codex-video:build', (_event, args) => {
+    const projectRoot = args?.projectRoot || DEFAULT_PROJECT_ROOT;
+    const projectName = args?.projectName || '未命名项目';
+    return buildCodexVideoProject({
+      ...args,
+      projectRoot,
+      projectName,
+      internalRoot: args?.internalRoot || internalProjectRoot(path.join(projectRoot, projectName)),
+      generatePreview: args?.generatePreview === true,
+    });
+  });
 
   ipcMain.handle('codex-video:verify', (_event, projectPath) =>
     verifyCodexVideoProject(projectPath));

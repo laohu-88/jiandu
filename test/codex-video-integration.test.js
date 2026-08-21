@@ -229,10 +229,17 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
     [`${analysis.titles.recommended}.fcpxml`],
   );
   assert.equal(
-    await fs.stat(path.join(internalRoot, '00-项目总控', 'Codex视频状态.json')).then(() => true),
+    await fs.stat(path.join(internalRoot, 'Codex视频状态.json')).then(() => true),
     true,
   );
   assert.equal(flatBuilt.artifacts.previewPath, null);
+  assert.equal(flatBuilt.assetMappings.every((mapping) => (
+    mapping.projectRelativePath === null
+    && mapping.projectAbsolutePath === prepared.items.find((item) => item.assetId === mapping.assetId)?.originalPath
+  )), true);
+  assert.equal(await fs.stat(path.join(flatBuilt.projectPath, '01-精选素材')).then(() => true).catch(() => false), false);
+  assert.equal(await fs.stat(path.join(flatBuilt.projectPath, '00-项目总控')).then(() => true).catch(() => false), false);
+  assert.equal(flatBuilt.verification.dtd.ok, true);
 
   const protectedFiles = [
     path.join(built.projectPath, '00-项目总控/project.json'),

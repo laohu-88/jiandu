@@ -1,6 +1,6 @@
 ---
 name: video-cut-planner
-description: Analyze a folder of screen recordings, screenshots, images, and project-result media with Codex vision; create a formal 视频剪辑编排器 v3 project; register selected source assets; generate an editable independent-clip FCPXML timeline, restrained marker suggestions, a rough-cut MP4 preview, and an integrity report. Use when the user says “使用视频 Skill，处理这期素材”, “把这个素材文件夹整理成 v3 项目”, “分析这些录屏并生成 FCP 粗剪”, “用视频剪辑编排器处理本期素材”, or otherwise asks to turn one no-voiceover material folder into a v3/FCP rough cut.
+description: Analyze media from ~/Desktop/视频待处理 and create one flat user-facing project under ~/Desktop/视频素材库 with editable FCPXML timelines. Machine state, manifests, revisions, validation, handoff records, platform variants, caches and temporary previews live in 剪渡 Application Support; MP4 is never a default deliverable.
 ---
 
 # Video Cut Planner
@@ -12,6 +12,8 @@ Use Codex's current-session image understanding for semantic decisions and the v
 - CLI: `/Users/example/Projects/video-cut-planner-v3/bin/video-skill.js`
 - Default pending root: `/Users/example/Desktop/视频待处理/`
 - Default v3 project root: `/Users/example/Desktop/视频素材库/`
+- Internal state root: `~/Library/Application Support/剪渡/projects/<本期项目名>/`
+- User project root contains only independently editable `.fcpxml` deliverables; never create stage subdirectories or copy source media.
 - Protocol: [references/analysis-protocol.md](references/analysis-protocol.md)
 
 If the CLI path is missing, stop and report that the v3 repository is unavailable. Do not recreate the project system inside the Skill.
@@ -94,11 +96,11 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
 
 ## Workflow
 
-1. Resolve one explicit issue folder. If only the pending root is given and multiple subfolders exist, list them and ask which issue to process. Never rename, move, delete, overwrite, or edit source files.
+1. Resolve one explicit issue folder beneath `~/Desktop/视频待处理`. If only the pending root is given and multiple subfolders exist, list them and ask which issue to process. Never copy, rename, move, delete, overwrite, or edit source files.
 2. Run:
 
    ```bash
-   node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js prepare --source "<一期素材目录>" --json
+   node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js prepare --source "$HOME/Desktop/视频待处理/<一期素材目录>" --json
    ```
 
 3. Read `analysisRequestPath` and `manifestPath`, including `projectBrief`, `contextDocuments`, `contextIngestion`, `storyUnits`, `contextBudget`, `analysisBudget`, `chapters`, `narrative.durationPolicy`, and every asset's `relativePath`, `chapterId`, `subchapterId`, optional `semanticProfile`, and optional HotIngest `context`. View every image preview and every available video storyboard with `view_image`. Use individual scene/timed frames when the storyboard is unclear. Treat bound title/body/translation/source data as contextual evidence, never as proof of what is visibly present or as OCR. Do not infer content from filenames alone.
@@ -139,7 +141,7 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
    light-caption suggestions into Markers or FCP Titles. After build, human
    review of explanations and light captions happens in the App Results Center
    (“解释与轻字幕”); Stage 5D stores decisions in
-   `00-项目总控/editorial-review.json` and must not silently overwrite locked
+   剪渡 Application Support and must not silently overwrite locked
    human approvals on re-analysis. Stage 5E exports only `approved` /
    `edited_approved` captions into FCP native Titles via an explicit Result
    Center action (“生成或更新 FCP 轻字幕”); never auto-write on save or open.
@@ -156,10 +158,10 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
     node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js validate-analysis --manifest "<manifest.json>" --analysis "<analysis.json>" --json
     ```
 
-13. Fix every validation error. Then create the formal v3 project:
+13. Fix every validation error. Then create the formal flat v3 project. The CLI writes all machine files to Application Support, writes no MP4 by default, and places each generated FCPXML directly in the user project root:
 
     ```bash
-    node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js build --manifest "<manifest.json>" --analysis "<analysis.json>" --project-root "/Users/example/Desktop/视频素材库" --project-name "<项目名>" --json
+    node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js build --manifest "<manifest.json>" --analysis "<analysis.json>" --project-root "$HOME/Desktop/视频素材库" --project-name "<项目名>" --json
     ```
 
 14. When the user explicitly requests HyperFrames, or a handoff task uses `force-attempt`, first run
@@ -172,7 +174,7 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
     `visuals` may additionally name four already-adopted image asset IDs:
     `drawInterface`, `drawResult`, `comfyInterface`, and `comfyResult`; use only
     screenshots whose visible content supports the stated relationship. The generated
-    MP4 is inserted at that exact narrative boundary and only later markers move. In
+    MP4 is an internal cache asset inserted at that exact narrative boundary and only later markers move. In
     either mode, register it as an independent v3 asset and FCPXML clip. Do not treat missing Docker,
     transcription, TTS, or BGM tools as a local-render failure.
     For handoff `auto`, first make a real-media-only timeline and compare ordinary
@@ -181,17 +183,20 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
     independent MP4 and check clarity, continuity, easing, layout, black frames,
     distortion, jitter, typography, and the transitions to adjacent real shots.
     Revise and re-render if needed; reject it if it still does not improve the film.
-15. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs full verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`.
+15. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs machine verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`; this does not replace importing every generated FCPXML into Final Cut Pro.
 16. When a release refinement must preserve an already accepted HyperFrames render, use `--reuse-hyperframes-project "<已验收 v3 项目>"` instead of rendering HyperFrames again. The source project is read-only; the build copies and registers its independent MP4, composition, and records into a new non-empty-safe project target.
 
 ## Completion rules
 
-- Require a real v3 project, registered/copied independent assets, valid FCPXML, readable preview MP4, project summary, and passing integrity verification.
+- Require a real flat project, valid FCPXML, internal project state, and passing integrity verification. Source media must remain in place and be referenced directly; do not copy it into the user project.
+- Generate one or more independent FCPXML files directly in the project root. Revision updates the current root FCPXML and stores history under Application Support.
+- The user project must not contain `00-项目总控`, `01-精选素材`, `02-配音字幕`, `03-导出`, `FCP时间线`, `最终成片`, analysis/manifest/status/platform/validation JSON or Markdown, cache, logs, or preview MP4.
+- Default delivery is FCPXML. A temporary MP4 may exist only in Application Support/cache and must never be reported as the final film.
 - Confirm source file collection, hashes, sizes, and mtimes are unchanged.
 - When HyperFrames is enabled, report its pinned version, check result, independent
   MP4 path/hash/metadata, v3 registration, and FCPXML clip count.
-- Treat the preview as a review artifact only; FCPXML must reference independent managed source assets.
-- Treat timeline and preview formats independently: the formal FCPXML uses the production timeline format from the analysis, while the rough-cut preview defaults to 640×360.
+- Treat any internal preview as a review artifact only; FCPXML references unchanged original media by file URL.
+- Treat timeline and any optional preview formats independently: the formal FCPXML uses the production timeline format from the analysis; preview generation is opt-in.
 - Report theme, title candidates/recommendation, adopted/rejected assets, video ranges and confidence, shot order, markers, artifact paths, and verification result.
 - Distinguish generated/xmllint-validated FCPXML from an actual manual Final Cut Pro import. Never claim FCP import success unless it was performed.
 - When editable light subtitles are explicitly enabled, report Marker and native FCP Title counts separately; do not export SRT or burn text into the rough-cut preview.

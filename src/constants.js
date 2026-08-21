@@ -10,6 +10,7 @@ const USER_DATA_DIRNAME = APP_NAME;
 const LEGACY_USER_DATA_DIRNAME = '视频剪辑编排器 v3';
 const CODEX_WORKSPACE_ROOT = '/Users/example/Projects/video-cut-planner-v3';
 const DEFAULT_PROJECT_ROOT = path.join(os.homedir(), 'Desktop', '视频素材库');
+const DEFAULT_PENDING_ROOT = path.join(os.homedir(), 'Desktop', '视频待处理');
 const APPLICATION_SUPPORT_ROOT = path.join(os.homedir(), 'Library', 'Application Support', APP_NAME);
 const INTERNAL_PROJECTS_DIR = 'projects';
 
@@ -65,6 +66,23 @@ const DOUYIN_PLATFORM_PROFILE_FILE = path.join('config', 'platforms', 'douyin.js
 // names remain as relative legacy paths so old projects can still be read.
 const CODEX_VIDEO_FCPXML_DIR = '.';
 const CODEX_VIDEO_PREVIEW_DIR = '.';
+// New projects keep machine state outside the visible project directory. The
+// legacy relative constants above remain readable by old-project adapters.
+const INTERNAL_PROJECT_FILE = 'project.json';
+const INTERNAL_ASSETS_FILE = 'assets.json';
+const INTERNAL_CODEX_VIDEO_MANIFEST_FILE = 'Codex视频素材清单.json';
+const INTERNAL_CODEX_VIDEO_ANALYSIS_FILE = 'Codex视频分析.json';
+const INTERNAL_CODEX_VIDEO_STATUS_FILE = 'Codex视频状态.json';
+const INTERNAL_CODEX_VIDEO_SUMMARY_FILE = 'Codex视频项目摘要.md';
+const INTERNAL_EDITORIAL_REVIEW_FILE = 'editorial-review.json';
+const INTERNAL_PLATFORM_VARIANTS_FILE = 'platform-variants.json';
+const INTERNAL_ARTIFACT_DIRS = Object.freeze({
+  cache: 'cache',
+  logs: 'logs',
+  revisions: 'revisions',
+  previews: 'cache/previews',
+  variants: 'variants',
+});
 const BRIEF_FILE = path.join(CONTROL_DIR, '素材简报.md');
 const VIDEO_PLAN_FILE = path.join(CONTROL_DIR, 'video-plan.md');
 const SEGMENTS_FILE = path.join(CONTROL_DIR, 'segments.json');
@@ -96,6 +114,7 @@ module.exports = {
   LEGACY_USER_DATA_DIRNAME,
   CODEX_WORKSPACE_ROOT,
   DEFAULT_PROJECT_ROOT,
+  DEFAULT_PENDING_ROOT,
   APPLICATION_SUPPORT_ROOT,
   INTERNAL_PROJECTS_DIR,
   internalProjectRoot,
@@ -128,6 +147,15 @@ module.exports = {
   DOUYIN_PLATFORM_PROFILE_FILE,
   CODEX_VIDEO_FCPXML_DIR,
   CODEX_VIDEO_PREVIEW_DIR,
+  INTERNAL_PROJECT_FILE,
+  INTERNAL_ASSETS_FILE,
+  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
+  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
+  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_CODEX_VIDEO_SUMMARY_FILE,
+  INTERNAL_EDITORIAL_REVIEW_FILE,
+  INTERNAL_PLATFORM_VARIANTS_FILE,
+  INTERNAL_ARTIFACT_DIRS,
   BRIEF_FILE,
   VIDEO_PLAN_FILE,
   SEGMENTS_FILE,

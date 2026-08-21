@@ -4,9 +4,15 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const {
+  DEFAULT_PENDING_ROOT,
+  internalProjectRoot,
+} = require('../src/constants');
+
+const {
   buildCodexVideoProject,
   validateAnalysisFile,
   verifyCodexVideoProject,
+  safeFilename,
 } = require('../src/services/codex-video-service');
 const {
   inspectVideoRange,
@@ -70,6 +76,18 @@ function required(options, key) {
     throw Object.assign(new Error(`缺少必填参数 --${key}。`), { code: 'MISSING_ARGUMENT' });
   }
   return value;
+}
+
+function assertPendingSource(sourcePath) {
+  const root = path.resolve(DEFAULT_PENDING_ROOT);
+  const source = path.resolve(String(sourcePath || '').trim());
+  const relative = path.relative(root, source);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw Object.assign(new Error(`素材输入必须位于唯一入口：${root}`), {
+      code: 'INVALID_SOURCE_DIRECTORY',
+    });
+  }
+  return source;
 }
 
 function optionalJson(value, label) {
@@ -160,7 +178,7 @@ function helpText() {
   video-skill handoff-complete --handoff-task <task.json> [--attempt-id <attemptId>] --project <v3 正式项目目录> [--json]
   video-skill handoff-return --handoff-task <task.json> [--json]
 
-CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。正式时间线默认使用生产规格，粗剪预览默认保持 640×360。由 v3 发起时，把 --handoff-task 传给 prepare、validate-analysis、build 和 verify。
+CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。用户项目根目录只写 FCPXML，默认不生成 MP4；机器文件和可选预览写入剪渡 Application Support。由 v3 发起时，把 --handoff-task 传给 prepare、validate-analysis、build 和 verify。
 `;
 }
 
@@ -188,9 +206,9 @@ function humanOutput(command, result) {
       `主题：${result.theme.summary}`,
       `建议标题：${result.titles.recommended}`,
       `FCPXML：${result.artifacts.fcpxmlPath}`,
-      `粗剪预览：${result.artifacts.previewPath}`,
+      `粗剪预览：${result.artifacts.previewPath || '未生成（默认交付 FCPXML）'}`,
       `正式时间线：${result.formats.timeline.width}×${result.formats.timeline.height} ${result.formats.timeline.fps}fps`,
-      `粗剪预览规格：${result.formats.preview.width}×${result.formats.preview.height} ${result.formats.preview.fps}fps`,
+      ...(result.artifacts.previewPath ? [`粗剪预览规格：${result.formats.preview.width}×${result.formats.preview.height} ${result.formats.preview.fps}fps`] : []),
       `摘要：${result.artifacts.summaryPath}`,
       '原始素材未变化：是',
     ];
@@ -250,7 +268,7 @@ async function execute(argv) {
 
   if (command === 'prepare') {
     const report = handoffReporter(options);
-    const result = await preparePendingMedia(required(options, 'source'), {
+    const result = await preparePendingMedia(assertPendingSource(required(options, 'source')), {
       cacheRoot: options['cache-root'],
       onStage: report,
     });
@@ -358,6 +376,11 @@ async function execute(argv) {
       analysisPath: required(options, 'analysis'),
       projectRoot: required(options, 'project-root'),
       projectName: required(options, 'project-name'),
+      internalRoot: internalProjectRoot(path.join(
+        required(options, 'project-root'),
+        safeFilename(required(options, 'project-name')),
+      )),
+      generatePreview: false,
       openFcpxml: options['open-fcpxml'] === true,
       timelineFormat: formatOptions(options).timeline,
       previewFormat: formatOptions(options).preview,
@@ -443,6 +466,7 @@ async function execute(argv) {
     const result = await buildDouyinVariant(
       required(options, 'project'),
       options['variant-id'] || 'douyin',
+      { generatePreview: false },
     );
     return { command, options, result };
   }

@@ -6,6 +6,7 @@ const {
   EDITORIAL_REVIEW_FILE,
 } = require('../constants');
 const { assertCatalogProject } = require('../services/project-catalog-service');
+const { resolveProjectArtifactRoot } = require('../services/project-artifact-paths');
 const {
   assertUserDataEditJob,
   buildEditPreflight,
@@ -70,7 +71,10 @@ function registerEditIpc(ctx) {
   ipcMain.handle('edit:show-editorial-review', async (_event, projectPath) => {
     const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, projectPath);
     authorizeProject(validated);
-    const reviewPath = path.join(validated, EDITORIAL_REVIEW_FILE);
+    const artifactRoot = await resolveProjectArtifactRoot(validated);
+    const reviewPath = path.basename(artifactRoot) === '00-项目总控'
+      ? path.join(artifactRoot, path.basename(EDITORIAL_REVIEW_FILE))
+      : path.join(artifactRoot, 'editorial-review.json');
     const stat = await fs.stat(reviewPath).catch(() => null);
     if (!stat?.isFile()) throw new Error('editorial-review.json 不存在。');
     shell.showItemInFolder(reviewPath);

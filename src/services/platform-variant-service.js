@@ -12,9 +12,15 @@ const {
   CODEX_VIDEO_STATUS_FILE,
   DOUYIN_PLATFORM_PROFILE_FILE,
   EDITORIAL_REVIEW_FILE,
+  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
+  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
+  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_PLATFORM_VARIANTS_FILE,
+  INTERNAL_ARTIFACT_DIRS,
   PLATFORM_VARIANTS_DIR,
   PLATFORM_VARIANTS_FILE,
 } = require('../constants');
+const { internalArtifactRoot, resolveProjectArtifactRoot } = require('./project-artifact-paths');
 const {
   assetNeedsLightCaption,
   listEligibleVisualItems,
@@ -25,6 +31,7 @@ const {
 } = require('./editorial-review-service');
 const {
   frameDuration,
+  sanitizeFcpFilename,
   validateFcpxmlStructure,
   writeFcpxml,
 } = require('./fcpxml-service');
@@ -216,15 +223,28 @@ async function loadDouyinProfile(options = {}) {
 
 async function loadProjectBundle(projectPath, options = {}) {
   const resolved = await assertProjectDirectory(projectPath);
+  const artifactRoot = await resolveProjectArtifactRoot(resolved);
+  const internal = artifactRoot !== resolved
+    && path.resolve(artifactRoot) !== path.resolve(path.join(resolved, '00-项目总控'));
+  const names = internal ? {
+    analysis: INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
+    manifest: INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
+    status: INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  } : {
+    analysis: path.basename(CODEX_VIDEO_ANALYSIS_FILE),
+    manifest: path.basename(CODEX_VIDEO_MANIFEST_FILE),
+    status: path.basename(CODEX_VIDEO_STATUS_FILE),
+  };
   const [manifest, analysis, status, profileRecord] = await Promise.all([
-    readJson(path.join(resolved, CODEX_VIDEO_MANIFEST_FILE), 'Codex 视频素材清单'),
-    readJson(path.join(resolved, CODEX_VIDEO_ANALYSIS_FILE), 'Codex 视频分析'),
-    readJson(path.join(resolved, CODEX_VIDEO_STATUS_FILE), 'Codex 视频状态'),
+    readJson(path.join(artifactRoot, names.manifest), 'Codex 视频素材清单'),
+    readJson(path.join(artifactRoot, names.analysis), 'Codex 视频分析'),
+    readJson(path.join(artifactRoot, names.status), 'Codex 视频状态'),
     loadDouyinProfile(options),
   ]);
   const mappings = asArray(status.assetMappings).filter((item) => item?.origin !== 'hyperframes');
   return {
     projectPath: resolved,
+    artifactRoot,
     manifest,
     analysis,
     status,
@@ -277,7 +297,9 @@ function validateRegistry(registry, projectPath) {
 
 async function readPlatformVariants(projectPath) {
   const resolved = await assertProjectDirectory(projectPath);
-  const filePath = path.join(resolved, PLATFORM_VARIANTS_FILE);
+  const artifactRoot = await resolveProjectArtifactRoot(resolved);
+  const internal = artifactRoot === internalArtifactRoot(resolved);
+  const filePath = path.join(artifactRoot, internal ? INTERNAL_PLATFORM_VARIANTS_FILE : PLATFORM_VARIANTS_FILE);
   const stat = await fs.stat(filePath).catch(() => null);
   if (!stat?.isFile()) return defaultRegistry(resolved);
   return validateRegistry(await readJson(filePath, 'platform-variants.json'), resolved);
@@ -285,12 +307,14 @@ async function readPlatformVariants(projectPath) {
 
 async function writeRegistry(projectPath, registry) {
   const resolved = await assertProjectDirectory(projectPath);
+  const artifactRoot = await resolveProjectArtifactRoot(resolved);
+  const internal = artifactRoot === internalArtifactRoot(resolved);
   const payload = validateRegistry({
     ...registry,
     projectPath: resolved,
     updatedAt: new Date().toISOString(),
   }, resolved);
-  await atomicWriteJson(path.join(resolved, PLATFORM_VARIANTS_FILE), payload);
+  await atomicWriteJson(path.join(artifactRoot, internal ? INTERNAL_PLATFORM_VARIANTS_FILE : PLATFORM_VARIANTS_FILE), payload);
   return payload;
 }
 
@@ -1924,8 +1948,9 @@ async function validateGeneratedCut({
       await fs.rm(temporaryDtdPath, { force: true }).catch(() => {});
     }
   }
-  if (previewResult.metadata.displayWidth !== 1080
-    || previewResult.metadata.displayHeight !== 1920) {
+  if (previewResult?.metadata
+    && (previewResult.metadata.displayWidth !== 1080
+      || previewResult.metadata.displayHeight !== 1920)) {
     errors.push('抖音预览分辨率不是 1080×1920。');
   }
   const actualOrder = analysis.timeline.shots.map((shot) => shot.assetId);
@@ -2045,7 +2070,7 @@ async function validateGeneratedCut({
       xmlSyntax,
       dtd,
     },
-    preview: previewResult.metadata,
+    preview: previewResult?.metadata || null,
     artifacts: {
       outputDirectory,
       fcpxmlPath,
@@ -2056,6 +2081,7 @@ async function validateGeneratedCut({
 
 async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {}) {
   const bundle = await loadProjectBundle(projectPath, options);
+  const internal = bundle.artifactRoot === internalArtifactRoot(bundle.projectPath);
   const registry = await readPlatformVariants(bundle.projectPath);
   const current = findVariant(registry, variantId);
   if (current.status !== 'approved' || !current.approval) {
@@ -2077,16 +2103,12 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
     || inferFps(bundle.manifest, bundle.analysis);
   const mappingById = new Map(bundle.mappings.map((item) => [item.assetId, item]));
   const outputs = [];
-  const baseOutputRoot = path.join(
-    bundle.projectPath,
-    PLATFORM_VARIANTS_DIR,
-    'douyin',
-    current.variantId,
-    `r${current.revision}`,
-  );
+  const baseOutputRoot = internal
+    ? path.join(bundle.artifactRoot, INTERNAL_ARTIFACT_DIRS.variants, 'douyin', current.variantId, `r${current.revision}`)
+    : path.join(bundle.projectPath, PLATFORM_VARIANTS_DIR, 'douyin', current.variantId, `r${current.revision}`);
   for (const video of plan.videos) {
     const outputDirectory = path.join(baseOutputRoot, safeId(video.videoId));
-    if (!isInside(bundle.projectPath, outputDirectory)) {
+    if (!internal && !isInside(bundle.projectPath, outputDirectory)) {
       throw variantError('UNSAFE_PLATFORM_VARIANT_PATH', '抖音输出目录越过项目边界。');
     }
     const existing = await fs.readdir(outputDirectory).catch(() => []);
@@ -2107,8 +2129,18 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
     }
     const editPlanPath = path.join(outputDirectory, 'edit-plan.json');
     const analysisPath = path.join(outputDirectory, 'analysis.json');
-    const fcpxmlPath = path.join(outputDirectory, 'timeline.fcpxml');
-    const previewPath = path.join(outputDirectory, 'preview.mp4');
+    const deliverableName = sanitizeFcpFilename(
+      `${current.variantId}-${video.videoId}-${video.theme}`,
+      `douyin-${video.videoId}`,
+    );
+    const fcpxmlPath = internal
+      ? path.join(bundle.projectPath, `${deliverableName}.fcpxml`)
+      : path.join(outputDirectory, 'timeline.fcpxml');
+    const shouldGeneratePreview = options.generatePreview === true
+      || (!internal && options.generatePreview !== false);
+    const previewPath = shouldGeneratePreview
+      ? path.join(outputDirectory, 'preview.mp4')
+      : null;
     const validationPath = path.join(outputDirectory, 'validation-report.json');
     await Promise.all([
       atomicWriteJson(editPlanPath, {
@@ -2126,9 +2158,18 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
           variantId: current.variantId,
           revision: current.revision,
           videoId: video.videoId,
-          sharedManifest: path.relative(outputDirectory, path.join(bundle.projectPath, CODEX_VIDEO_MANIFEST_FILE)),
-          sharedBaseAnalysis: path.relative(outputDirectory, path.join(bundle.projectPath, CODEX_VIDEO_ANALYSIS_FILE)),
-          baseAnalysisSha256: await hashFile(path.join(bundle.projectPath, CODEX_VIDEO_ANALYSIS_FILE)),
+          sharedManifest: path.join(
+            bundle.artifactRoot,
+            path.basename(internal ? INTERNAL_CODEX_VIDEO_MANIFEST_FILE : CODEX_VIDEO_MANIFEST_FILE),
+          ),
+          sharedBaseAnalysis: path.join(
+            bundle.artifactRoot,
+            path.basename(internal ? INTERNAL_CODEX_VIDEO_ANALYSIS_FILE : CODEX_VIDEO_ANALYSIS_FILE),
+          ),
+          baseAnalysisSha256: await hashFile(path.join(
+            bundle.artifactRoot,
+            path.basename(internal ? INTERNAL_CODEX_VIDEO_ANALYSIS_FILE : CODEX_VIDEO_ANALYSIS_FILE),
+          )),
         },
       }),
     ]);
@@ -2141,12 +2182,9 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
       assetMappings: mappings,
       managedCaptionTitles: titles,
     }, { expectedTitleCount: titles.length });
-    const previewResult = await previewImpl(
-      previewPath,
-      analysis,
-      mappings,
-      bundle.profile,
-    );
+    const previewResult = previewPath
+      ? await previewImpl(previewPath, analysis, mappings, bundle.profile)
+      : { metadata: null };
     const sourceAfter = await snapshotSource(bundle.manifest.sourceDirectory);
     const sourceVerification = compareSourceSnapshots(bundle.manifest.sourceSnapshot, sourceAfter);
     const protectedAfter = await snapshotProtectedFiles(bundle);
@@ -2181,11 +2219,11 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
         ? (validation.fullySuccessful ? 'verified' : 'warning')
         : 'failed',
       artifacts: {
-        fcpxml: path.relative(bundle.projectPath, fcpxmlPath),
-        preview: path.relative(bundle.projectPath, previewPath),
-        editPlan: path.relative(bundle.projectPath, editPlanPath),
-        analysis: path.relative(bundle.projectPath, analysisPath),
-        validation: path.relative(bundle.projectPath, validationPath),
+        fcpxml: internal ? fcpxmlPath : path.relative(bundle.projectPath, fcpxmlPath),
+        ...(previewPath ? { preview: internal ? previewPath : path.relative(bundle.projectPath, previewPath) } : {}),
+        editPlan: internal ? editPlanPath : path.relative(bundle.projectPath, editPlanPath),
+        analysis: internal ? analysisPath : path.relative(bundle.projectPath, analysisPath),
+        validation: internal ? validationPath : path.relative(bundle.projectPath, validationPath),
       },
       validation,
     });
@@ -2220,15 +2258,18 @@ async function verifyDouyinVariant(projectPath, variantId = 'douyin', options = 
   const variant = await readDouyinVariant(projectPath, variantId, options);
   const reports = [];
   for (const output of asArray(variant.outputs)) {
-    const validationPath = path.join(variant.projectPath, output.artifacts.validation);
+    const resolveArtifact = (value) => path.isAbsolute(value)
+      ? value
+      : path.join(variant.projectPath, value);
+    const validationPath = resolveArtifact(output.artifacts.validation);
     const report = await readJson(validationPath, 'validation-report.json');
-    const required = Object.values(output.artifacts);
+    const required = Object.values(output.artifacts).filter(Boolean);
     const missing = [];
-    for (const relativePath of required) {
-      const target = path.resolve(variant.projectPath, relativePath);
-      if (!isInside(variant.projectPath, target)
+    for (const artifactPath of required) {
+      const target = resolveArtifact(artifactPath);
+      if ((!path.isAbsolute(artifactPath) && !isInside(variant.projectPath, target))
         || !(await fs.stat(target).catch(() => null))?.isFile()) {
-        missing.push(relativePath);
+        missing.push(artifactPath);
       }
     }
     reports.push({

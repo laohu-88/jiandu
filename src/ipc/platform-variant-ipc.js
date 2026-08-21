@@ -69,7 +69,9 @@ function registerPlatformVariantIpc(ctx) {
   ipcMain.handle('platform-variant:douyin-build', async (_event, args) => {
     const validated = await assertCatalogProject(DEFAULT_PROJECT_ROOT, args?.projectPath);
     authorizeProject(validated);
-    return buildDouyinVariant(validated, args?.variantId || 'douyin');
+    return buildDouyinVariant(validated, args?.variantId || 'douyin', {
+      generatePreview: args?.generatePreview === true,
+    });
   });
 
   ipcMain.handle('platform-variant:douyin-verify', async (_event, args) => {

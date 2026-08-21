@@ -8,6 +8,11 @@ const {
   CODEX_VIDEO_ANALYSIS_FILE,
   CODEX_VIDEO_MANIFEST_FILE,
   CODEX_VIDEO_STATUS_FILE,
+  EDITORIAL_REVIEW_FILE,
+  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
+  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
+  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_EDITORIAL_REVIEW_FILE,
 } = require('../constants');
 const { readJsonFile } = require('./project-json-service');
 const {
@@ -29,6 +34,7 @@ const {
   secondsToFrameIndex,
   writeFcpxml,
 } = require('./fcpxml-service');
+const { resolveProjectArtifactRoot } = require('./project-artifact-paths');
 
 const MIN_READABLE_CAPTION_SEC = 1.2;
 const MIN_CHARS_PER_SEC = 4;
@@ -927,20 +933,37 @@ function summarizeXmlProtection(beforeXml, afterXml) {
 
 async function loadProjectExportContext(projectPath) {
   const resolved = path.resolve(String(projectPath || ''));
-  const [analysis, manifest, status, editorialModel] = await Promise.all([
-    readJsonFile(path.join(resolved, CODEX_VIDEO_ANALYSIS_FILE), {
+  const artifactRoot = await resolveProjectArtifactRoot(resolved);
+  const internal = artifactRoot !== resolved
+    && path.resolve(artifactRoot) !== path.resolve(path.join(resolved, '00-项目总控'));
+  const names = internal ? {
+    analysis: INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
+    manifest: INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
+    status: INTERNAL_CODEX_VIDEO_STATUS_FILE,
+    review: INTERNAL_EDITORIAL_REVIEW_FILE,
+  } : {
+    analysis: path.basename(CODEX_VIDEO_ANALYSIS_FILE),
+    manifest: path.basename(CODEX_VIDEO_MANIFEST_FILE),
+    status: path.basename(CODEX_VIDEO_STATUS_FILE),
+    review: path.basename(EDITORIAL_REVIEW_FILE),
+  };
+  const [analysis, manifest, status, stored] = await Promise.all([
+    readJsonFile(path.join(artifactRoot, names.analysis), {
       optional: true,
       label: 'Codex 分析',
     }),
-    readJsonFile(path.join(resolved, CODEX_VIDEO_MANIFEST_FILE), {
+    readJsonFile(path.join(artifactRoot, names.manifest), {
       optional: true,
       label: 'Codex 清单',
     }),
-    readJsonFile(path.join(resolved, CODEX_VIDEO_STATUS_FILE), {
+    readJsonFile(path.join(artifactRoot, names.status), {
       optional: true,
       label: 'Codex 状态',
     }),
-    buildEditorialReviewModel(resolved),
+    readJsonFile(path.join(artifactRoot, names.review), {
+      optional: true,
+      label: 'editorial-review',
+    }),
   ]);
 
   const effectiveAnalysis = status?.value?.effectiveAnalysis || analysis?.value || null;
@@ -950,6 +973,12 @@ async function loadProjectExportContext(projectPath) {
   const existingXml = fcpxmlPath
     ? await fs.readFile(fcpxmlPath, 'utf8').catch(() => null)
     : null;
+  const editorialModel = await buildEditorialReviewModel(resolved, {
+    analysis: analysis?.value || null,
+    manifest: manifest?.value || null,
+    status: status?.value || null,
+    stored: stored?.value || null,
+  });
   const confirmedCaptions = getConfirmedCaptions(editorialModel, {
     analysis: effectiveAnalysis,
   });
@@ -1124,6 +1153,9 @@ async function exportConfirmedCaptionsToFcpxml(projectPath, options = {}) {
     expectedTitleCount,
     atomic: true,
     backupExisting: true,
+    backupDirectory: context.status?.artifactRoot
+      ? path.join(context.status.artifactRoot, 'revisions')
+      : path.join(context.projectPath, '00-项目总控', 'revisions'),
   });
 
   const writtenXml = await fs.readFile(context.fcpxmlPath, 'utf8');

@@ -141,6 +141,7 @@ async function autoFinalizeDouyin(projectPath) {
   if (!Array.isArray(variant.outputs) || variant.outputs.length === 0) {
     variant = await buildDouyinVariant(projectPath, variant.variantId, {
       approvedBy: 'agent-bridge',
+      generatePreview: false,
     });
   }
   return variant;

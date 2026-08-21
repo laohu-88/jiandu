@@ -12,6 +12,11 @@ const {
   CODEX_VIDEO_PREVIEW_DIR,
   DEFAULT_PROJECT_ROOT,
   EDITORIAL_REVIEW_FILE,
+  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
+  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
+  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_EDITORIAL_REVIEW_FILE,
+  internalProjectRoot,
 } = require('../constants');
 const {
   classifyHotIngestFile,
@@ -31,6 +36,7 @@ const {
   getConfirmedCaptions,
 } = require('./editorial-review-service');
 const { readCodexProjectResult } = require('./codex-project-result-service');
+const { resolveProjectArtifactRoot } = require('./project-artifact-paths');
 const {
   buildCodexVideoProject,
   verifyCodexVideoProject,
@@ -240,19 +246,24 @@ function inferTimelineSpecFromEpisode(episode) {
 async function loadExistingProjectBundle(projectPath) {
   if (!projectPath) return null;
   const resolved = path.resolve(projectPath);
-  const control = path.join(resolved, '00-项目总控');
+  const artifactRoot = await resolveProjectArtifactRoot(resolved);
+  const internal = artifactRoot !== resolved && artifactRoot !== path.join(resolved, '00-项目总控');
+  const analysisName = internal ? INTERNAL_CODEX_VIDEO_ANALYSIS_FILE : path.basename(CODEX_VIDEO_ANALYSIS_FILE);
+  const manifestName = internal ? INTERNAL_CODEX_VIDEO_MANIFEST_FILE : path.basename(CODEX_VIDEO_MANIFEST_FILE);
+  const statusName = internal ? INTERNAL_CODEX_VIDEO_STATUS_FILE : path.basename(CODEX_VIDEO_STATUS_FILE);
+  const editorialName = internal ? INTERNAL_EDITORIAL_REVIEW_FILE : path.basename(EDITORIAL_REVIEW_FILE);
   const [projectStat, status, analysis, manifest, editorialStat] = await Promise.all([
     fs.stat(resolved).catch(() => null),
-    fs.readFile(path.join(control, path.basename(CODEX_VIDEO_STATUS_FILE)), 'utf8')
+    fs.readFile(path.join(artifactRoot, statusName), 'utf8')
       .then(JSON.parse)
       .catch(() => null),
-    fs.readFile(path.join(resolved, CODEX_VIDEO_ANALYSIS_FILE), 'utf8')
+    fs.readFile(path.join(artifactRoot, analysisName), 'utf8')
       .then(JSON.parse)
       .catch(() => null),
-    fs.readFile(path.join(resolved, CODEX_VIDEO_MANIFEST_FILE), 'utf8')
+    fs.readFile(path.join(artifactRoot, manifestName), 'utf8')
       .then(JSON.parse)
       .catch(() => null),
-    fs.stat(path.join(resolved, EDITORIAL_REVIEW_FILE)).catch(() => null),
+    fs.stat(path.join(artifactRoot, editorialName)).catch(() => null),
   ]);
   if (!projectStat?.isDirectory()) return null;
   let editorialModel = null;
@@ -269,7 +280,7 @@ async function loadExistingProjectBundle(projectPath) {
   const failed = status?.status === 'failed' || result?.project?.status === 'failed';
   const storedCaptionStatuses = { approved: 0, edited_approved: 0, other: 0 };
   try {
-    const stored = JSON.parse(await fs.readFile(path.join(resolved, EDITORIAL_REVIEW_FILE), 'utf8'));
+    const stored = JSON.parse(await fs.readFile(path.join(artifactRoot, editorialName), 'utf8'));
     for (const review of Object.values(stored.reviews || {})) {
       for (const caption of Object.values(review.captions || {})) {
         if (caption.reviewStatus === 'approved') storedCaptionStatuses.approved += 1;
@@ -310,6 +321,7 @@ async function loadExistingProjectBundle(projectPath) {
     artifacts: result?.artifacts || null,
     formats: result?.formats || status?.formats || null,
     result,
+    artifactRoot,
     analysis,
     manifest,
     statusRecord: status,
@@ -917,6 +929,7 @@ async function runLocalBuildJob(job, helpers) {
     analysisPath: existing.analysisPath,
     projectRoot,
     projectName: targetName,
+    internalRoot: internalProjectRoot(path.join(projectRoot, targetName)),
     timelineFormat: existing.formats?.timeline || existing.timeline || undefined,
     previewFormat: existing.formats?.preview || undefined,
     hyperframes: { enabled: false },
@@ -931,8 +944,9 @@ async function runLocalBuildJob(job, helpers) {
 
   // Preserve human editorial review into the new project without touching the source copy.
   if (existing.hasEditorialReview) {
-    const targetReview = path.join(built.projectPath, EDITORIAL_REVIEW_FILE);
+    const targetReview = path.join(internalProjectRoot(built.projectPath), INTERNAL_EDITORIAL_REVIEW_FILE);
     const sourceReview = await fs.readFile(existing.editorialReviewPath, 'utf8');
+    await fs.mkdir(path.dirname(targetReview), { recursive: true });
     await fs.writeFile(targetReview, sourceReview, 'utf8');
   }
 

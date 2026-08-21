@@ -10,8 +10,13 @@ const {
   CODEX_VIDEO_MANIFEST_FILE,
   CODEX_VIDEO_STATUS_FILE,
   EDITORIAL_REVIEW_FILE,
+  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
+  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
+  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_EDITORIAL_REVIEW_FILE,
 } = require('../constants');
 const { readJsonFile } = require('./project-json-service');
+const { resolveProjectArtifactRoot } = require('./project-artifact-paths');
 
 function isInside(rootPath, targetPath) {
   const relative = path.relative(rootPath, targetPath);
@@ -256,8 +261,21 @@ async function readOptionalProjectJson(projectPath, relativePath, label) {
   return readJsonFile(path.join(projectPath, relativePath), { optional: true, label });
 }
 
+async function resolveEditorialReviewPath(projectPath) {
+  const resolved = path.resolve(projectPath);
+  if (path.basename(resolved) === '00-项目总控') {
+    return path.join(resolved, path.basename(EDITORIAL_REVIEW_FILE));
+  }
+  const legacyPath = path.join(resolved, EDITORIAL_REVIEW_FILE);
+  const legacyDirectory = await fs.stat(path.join(resolved, '00-项目总控')).catch(() => null);
+  if (legacyDirectory?.isDirectory() || await fs.stat(legacyPath).catch(() => null)) {
+    return legacyPath;
+  }
+  return path.join(resolved, INTERNAL_EDITORIAL_REVIEW_FILE);
+}
+
 async function loadEditorialReviewFile(projectPath) {
-  const filePath = path.join(projectPath, EDITORIAL_REVIEW_FILE);
+  const filePath = await resolveEditorialReviewPath(projectPath);
   try {
     const raw = JSON.parse(await fs.readFile(filePath, 'utf8'));
     return normalizeStoredReview(raw);
@@ -271,7 +289,7 @@ async function loadEditorialReviewFile(projectPath) {
 }
 
 async function atomicWriteEditorialReview(projectPath, payload) {
-  const filePath = path.join(projectPath, EDITORIAL_REVIEW_FILE);
+  const filePath = await resolveEditorialReviewPath(projectPath);
   const directory = path.dirname(filePath);
   const tempPath = path.join(
     directory,
@@ -930,11 +948,16 @@ async function buildEditorialReviewModel(projectPath, {
   stored = null,
 } = {}) {
   const resolved = path.resolve(String(projectPath || ''));
+  const artifactRoot = await resolveProjectArtifactRoot(resolved);
+  const internal = artifactRoot !== resolved && artifactRoot !== path.join(resolved, '00-项目总控');
+  const analysisName = internal ? INTERNAL_CODEX_VIDEO_ANALYSIS_FILE : path.basename(CODEX_VIDEO_ANALYSIS_FILE);
+  const manifestName = internal ? INTERNAL_CODEX_VIDEO_MANIFEST_FILE : path.basename(CODEX_VIDEO_MANIFEST_FILE);
+  const statusName = internal ? INTERNAL_CODEX_VIDEO_STATUS_FILE : path.basename(CODEX_VIDEO_STATUS_FILE);
   const [analysisFile, manifestFile, statusFile, storedFile] = await Promise.all([
-    analysis ? Promise.resolve({ value: analysis }) : readOptionalProjectJson(resolved, CODEX_VIDEO_ANALYSIS_FILE, 'Codex 视频分析'),
-    manifest ? Promise.resolve({ value: manifest }) : readOptionalProjectJson(resolved, CODEX_VIDEO_MANIFEST_FILE, 'Codex 视频素材清单'),
-    status ? Promise.resolve({ value: status }) : readOptionalProjectJson(resolved, CODEX_VIDEO_STATUS_FILE, 'Codex 视频状态'),
-    stored ? Promise.resolve(stored) : loadEditorialReviewFile(resolved),
+    analysis ? Promise.resolve({ value: analysis }) : readOptionalProjectJson(artifactRoot, analysisName, 'Codex 视频分析'),
+    manifest ? Promise.resolve({ value: manifest }) : readOptionalProjectJson(artifactRoot, manifestName, 'Codex 视频素材清单'),
+    status ? Promise.resolve({ value: status }) : readOptionalProjectJson(artifactRoot, statusName, 'Codex 视频状态'),
+    stored ? Promise.resolve(stored) : loadEditorialReviewFile(artifactRoot),
   ]);
 
   const merged = mergeEditorialReviews({
@@ -1203,11 +1226,16 @@ function applyCaptionPatch(existing, patch, context) {
 
 async function saveEditorialReview(projectPath, input = {}) {
   const resolved = path.resolve(String(projectPath || ''));
+  const artifactRoot = await resolveProjectArtifactRoot(resolved);
+  const internal = artifactRoot !== resolved && artifactRoot !== path.join(resolved, '00-项目总控');
+  const analysisName = internal ? INTERNAL_CODEX_VIDEO_ANALYSIS_FILE : path.basename(CODEX_VIDEO_ANALYSIS_FILE);
+  const manifestName = internal ? INTERNAL_CODEX_VIDEO_MANIFEST_FILE : path.basename(CODEX_VIDEO_MANIFEST_FILE);
+  const statusName = internal ? INTERNAL_CODEX_VIDEO_STATUS_FILE : path.basename(CODEX_VIDEO_STATUS_FILE);
   const [analysisFile, manifestFile, statusFile, stored] = await Promise.all([
-    readOptionalProjectJson(resolved, CODEX_VIDEO_ANALYSIS_FILE, 'Codex 视频分析'),
-    readOptionalProjectJson(resolved, CODEX_VIDEO_MANIFEST_FILE, 'Codex 视频素材清单'),
-    readOptionalProjectJson(resolved, CODEX_VIDEO_STATUS_FILE, 'Codex 视频状态'),
-    loadEditorialReviewFile(resolved),
+    readOptionalProjectJson(artifactRoot, analysisName, 'Codex 视频分析'),
+    readOptionalProjectJson(artifactRoot, manifestName, 'Codex 视频素材清单'),
+    readOptionalProjectJson(artifactRoot, statusName, 'Codex 视频状态'),
+    loadEditorialReviewFile(artifactRoot),
   ]);
   const merged = mergeEditorialReviews({
     stored,
@@ -1285,7 +1313,7 @@ async function saveEditorialReview(projectPath, input = {}) {
     reviews: nextReviews,
     warnings: merged.warnings,
   };
-  const filePath = await atomicWriteEditorialReview(resolved, payload);
+  const filePath = await atomicWriteEditorialReview(artifactRoot, payload);
   const model = await buildEditorialReviewModel(resolved, {
     analysis: analysisFile.value,
     manifest: manifestFile.value,

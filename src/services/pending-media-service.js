@@ -1,6 +1,5 @@
 const fs = require('node:fs/promises');
 const { createReadStream } = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 
@@ -17,6 +16,7 @@ const {
   detectNarrativeStructure,
   summarizeChapters,
 } = require('./narrative-structure-service');
+const { APPLICATION_SUPPORT_ROOT } = require('../constants');
 
 const IMAGE_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp',
@@ -462,9 +462,9 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
   await onStage('scanning_media', '正在扫描一期素材并生成原始快照。');
   const before = await snapshotSource(sourceDirectory);
   const cacheRoot = path.resolve(options.cacheRoot || path.join(
-    os.tmpdir(),
-    'video-cut-planner-v3',
-    'codex-video-cache',
+    APPLICATION_SUPPORT_ROOT,
+    'cache',
+    'pending-media',
   ));
   const cacheKey = sha256Text(`${before.sourceDirectory}\0${before.digest}`).slice(0, 24);
   const cacheDirectory = path.join(cacheRoot, cacheKey);
