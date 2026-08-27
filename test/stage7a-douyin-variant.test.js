@@ -5,7 +5,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
-const { execute } = require('../bin/video-skill');
+const { execute } = require('../bin/jiandu');
 const {
   buildAgentPrompt,
 } = require('../src/services/handoff-task-service');
@@ -33,7 +33,8 @@ const { runMediaTool } = require('../src/services/media-tool-service');
 const {
   snapshotSource,
 } = require('../src/services/pending-media-service');
-const { resolveToolPath } = require('../src/services/stage7-service');
+const { resolveToolPath } = require('../src/services/media-tool-service');
+const SKILL_PATH = path.join(__dirname, '../skills/jiandu/SKILL.md');
 
 const CONTROL = '00-项目总控';
 
@@ -347,9 +348,9 @@ async function createFormalProject(t) {
         availability: 'available',
       })),
     }),
-    writeJson(path.join(projectPath, CONTROL, 'Codex视频素材清单.json'), manifest),
-    writeJson(path.join(projectPath, CONTROL, 'Codex视频分析.json'), analysis),
-    writeJson(path.join(projectPath, CONTROL, 'Codex视频状态.json'), status),
+    writeJson(path.join(projectPath, CONTROL, '视频素材清单.json'), manifest),
+    writeJson(path.join(projectPath, CONTROL, '视频分析.json'), analysis),
+    writeJson(path.join(projectPath, CONTROL, '视频状态.json'), status),
     fs.writeFile(path.join(exportDirectory, 'FCPXML', 'timeline.fcpxml'), '<fcpxml/>'),
     fs.writeFile(path.join(exportDirectory, '粗剪预览', 'preview.mp4'), 'default-preview'),
   ]);
@@ -375,9 +376,9 @@ function validationContext(fixture, profile) {
 test('抖音平台档案、独立变体、内容驱动选材与多成片规划保持默认主成片不变', async (t) => {
   const fixture = await createFormalProject(t);
   const protectedPaths = [
-    'Codex视频素材清单.json',
-    'Codex视频分析.json',
-    'Codex视频状态.json',
+    '视频素材清单.json',
+    '视频分析.json',
+    '视频状态.json',
   ].map((name) => path.join(fixture.projectPath, CONTROL, name));
   const before = await Promise.all(protectedPaths.map(fingerprint));
   const created = await createDouyinVariant(fixture.projectPath);
@@ -400,7 +401,7 @@ test('抖音平台档案、独立变体、内容驱动选材与多成片规划�
 
   const registry = await readPlatformVariants(fixture.projectPath);
   assert.equal(registry.defaultMain.untouchedByPlatformVariants, true);
-  assert.equal(registry.defaultMain.analysis, '00-项目总控/Codex视频分析.json');
+  assert.equal(registry.defaultMain.analysis, '00-项目总控/视频分析.json');
   assert.deepEqual(await Promise.all(protectedPaths.map(fingerprint)), before);
 
   const cliCreated = await execute([
@@ -608,9 +609,9 @@ test('人工调整批准后生成多条独立 FCPXML、预览与验证报告，�
   }
   const fixture = await createFormalProject(t);
   const protectedPaths = [
-    'Codex视频素材清单.json',
-    'Codex视频分析.json',
-    'Codex视频状态.json',
+    '视频素材清单.json',
+    '视频分析.json',
+    '视频状态.json',
     'project.json',
   ].map((name) => path.join(fixture.projectPath, CONTROL, name));
   const before = await Promise.all(protectedPaths.map(fingerprint));
@@ -750,42 +751,23 @@ test('Codex、App 和 CLI 共用抖音规划合同与本地续建入口', async 
   };
   const contract = sharedDouyinPlanningContractText();
   const codexPrompt = buildAgentPrompt('codex', input);
-  const skill = await fs.readFile(path.join(__dirname, '../skills/video-cut-planner/SKILL.md'), 'utf8');
+  const skill = await fs.readFile(SKILL_PATH, 'utf8');
   assert.equal(codexPrompt.includes(contract), false);
   assert.equal(codexPrompt.includes(contract), false);
   assert.match(codexPrompt, /执行视频剪辑任务/);
-  assert.match(skill, /platformVariants\.douyin/);
   assert.match(skill, /platformVariants\.douyin/);
   assert.match(contract, /不得写入或使用固定目标时长/);
   assert.doesNotMatch(contract, /\d+\s*[–—-]\s*\d+\s*秒/);
 
   const preloadRoot = path.join(__dirname, '../src/preload');
-  const preloadFiles = await fs.readdir(preloadRoot);
-  const [douyinPage, editorCore, workflowVm, preloadEntry, cli, packageVerifier, ...preloadModules] = await Promise.all([
-    fs.readFile(path.join(__dirname, '../src/renderer/modules/douyin/douyin-page.js'), 'utf8'),
-    fs.readFile(path.join(__dirname, '../src/renderer/modules/douyin/editor-core.js'), 'utf8'),
-    fs.readFile(path.join(__dirname, '../src/view-models/douyin-workflow-view-model.js'), 'utf8'),
+  const [preloadEntry, cli, packageVerifier] = await Promise.all([
     fs.readFile(path.join(__dirname, '../src/preload.js'), 'utf8'),
-    fs.readFile(path.join(__dirname, '../bin/video-skill.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '../bin/jiandu.js'), 'utf8'),
     fs.readFile(path.join(__dirname, '../scripts/verify-package.js'), 'utf8'),
-    ...preloadFiles
-      .filter((name) => name.endsWith('.js'))
-      .map((name) => fs.readFile(path.join(preloadRoot, name), 'utf8')),
   ]);
-  const preload = [preloadEntry, ...preloadModules].join('\n');
-  const renderer = `${douyinPage}\n${editorCore}\n${workflowVm}`;
-  for (const text of ['创建抖音变体', '生成预览与 FCP 时间线', '裁切前', '主体安全区', '抖音结果']) {
-    assert.match(renderer, new RegExp(text));
-  }
-  for (const method of [
-    'createDouyinVariant',
-    'saveDouyinVariant',
-    'approveDouyinVariant',
-    'buildDouyinVariant',
-    'verifyDouyinVariant',
-  ]) {
-    assert.match(preload, new RegExp(method));
-  }
+  // 薄壳之后，抖音规划合同只由 Skill 与 CLI 承载；renderer / preload 不再暴露编辑器通道。
+  assert.match(skill, /platformVariants\.douyin/);
+  assert.doesNotMatch(preloadEntry, /createDouyinVariant|saveDouyinVariant|approveDouyinVariant|buildDouyinVariant|verifyDouyinVariant/);
   assert.match(cli, /douyin-create/);
   assert.match(cli, /douyin-update/);
   assert.match(cli, /douyin-approve/);

@@ -7,14 +7,14 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const {
-  CODEX_VIDEO_ANALYSIS_FILE,
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_STATUS_FILE,
+  VIDEO_ANALYSIS_FILE,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_STATUS_FILE,
   DOUYIN_PLATFORM_PROFILE_FILE,
   EDITORIAL_REVIEW_FILE,
-  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_VIDEO_ANALYSIS_FILE,
+  INTERNAL_VIDEO_MANIFEST_FILE,
+  INTERNAL_VIDEO_STATUS_FILE,
   INTERNAL_PLATFORM_VARIANTS_FILE,
   INTERNAL_ARTIFACT_DIRS,
   PLATFORM_VARIANTS_DIR,
@@ -227,13 +227,13 @@ async function loadProjectBundle(projectPath, options = {}) {
   const internal = artifactRoot !== resolved
     && path.resolve(artifactRoot) !== path.resolve(path.join(resolved, '00-项目总控'));
   const names = internal ? {
-    analysis: INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-    manifest: INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-    status: INTERNAL_CODEX_VIDEO_STATUS_FILE,
+    analysis: INTERNAL_VIDEO_ANALYSIS_FILE,
+    manifest: INTERNAL_VIDEO_MANIFEST_FILE,
+    status: INTERNAL_VIDEO_STATUS_FILE,
   } : {
-    analysis: path.basename(CODEX_VIDEO_ANALYSIS_FILE),
-    manifest: path.basename(CODEX_VIDEO_MANIFEST_FILE),
-    status: path.basename(CODEX_VIDEO_STATUS_FILE),
+    analysis: path.basename(VIDEO_ANALYSIS_FILE),
+    manifest: path.basename(VIDEO_MANIFEST_FILE),
+    status: path.basename(VIDEO_STATUS_FILE),
   };
   const [manifest, analysis, status, profileRecord] = await Promise.all([
     readJson(path.join(artifactRoot, names.manifest), 'Codex 视频素材清单'),
@@ -261,8 +261,8 @@ function defaultRegistry(projectPath) {
     updatedAt: null,
     defaultMain: {
       storage: 'legacy-main',
-      analysis: CODEX_VIDEO_ANALYSIS_FILE,
-      status: CODEX_VIDEO_STATUS_FILE,
+      analysis: VIDEO_ANALYSIS_FILE,
+      status: VIDEO_STATUS_FILE,
       untouchedByPlatformVariants: true,
     },
     variants: [],
@@ -1639,9 +1639,9 @@ async function generateDouyinPreview(outputPath, analysis, mappings, profile) {
 
 async function snapshotProtectedFiles(bundle) {
   const paths = [
-    path.join(bundle.projectPath, CODEX_VIDEO_ANALYSIS_FILE),
-    path.join(bundle.projectPath, CODEX_VIDEO_MANIFEST_FILE),
-    path.join(bundle.projectPath, CODEX_VIDEO_STATUS_FILE),
+    path.join(bundle.projectPath, VIDEO_ANALYSIS_FILE),
+    path.join(bundle.projectPath, VIDEO_MANIFEST_FILE),
+    path.join(bundle.projectPath, VIDEO_STATUS_FILE),
     path.join(bundle.projectPath, EDITORIAL_REVIEW_FILE),
   ];
   const rows = [];
@@ -2160,15 +2160,15 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
           videoId: video.videoId,
           sharedManifest: path.join(
             bundle.artifactRoot,
-            path.basename(internal ? INTERNAL_CODEX_VIDEO_MANIFEST_FILE : CODEX_VIDEO_MANIFEST_FILE),
+            path.basename(internal ? INTERNAL_VIDEO_MANIFEST_FILE : VIDEO_MANIFEST_FILE),
           ),
           sharedBaseAnalysis: path.join(
             bundle.artifactRoot,
-            path.basename(internal ? INTERNAL_CODEX_VIDEO_ANALYSIS_FILE : CODEX_VIDEO_ANALYSIS_FILE),
+            path.basename(internal ? INTERNAL_VIDEO_ANALYSIS_FILE : VIDEO_ANALYSIS_FILE),
           ),
           baseAnalysisSha256: await hashFile(path.join(
             bundle.artifactRoot,
-            path.basename(internal ? INTERNAL_CODEX_VIDEO_ANALYSIS_FILE : CODEX_VIDEO_ANALYSIS_FILE),
+            path.basename(internal ? INTERNAL_VIDEO_ANALYSIS_FILE : VIDEO_ANALYSIS_FILE),
           )),
         },
       }),

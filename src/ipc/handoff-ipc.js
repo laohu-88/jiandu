@@ -1,7 +1,7 @@
 const path = require('node:path');
 
 const {
-  CODEX_WORKSPACE_ROOT,
+  WORKSPACE_ROOT,
   DEFAULT_PROJECT_ROOT,
 } = require('../constants');
 const { DEFAULT_PENDING_ROOT } = require('../services/pending-media-catalog-service');
@@ -90,7 +90,7 @@ function registerHandoffIpc(ctx) {
         durationPolicy: episode.durationPolicy,
         allowChapterInterleave: episode.allowChapterInterleave,
       },
-      appWorkspace: CODEX_WORKSPACE_ROOT,
+      appWorkspace: WORKSPACE_ROOT,
       hyperframesMode: args?.hyperframesMode || 'auto',
       engine: 'codex',
       extraRequirements: args?.extraRequirements == null ? '' : String(args.extraRequirements),
@@ -146,7 +146,7 @@ function registerHandoffIpc(ctx) {
         durationPolicy: episode.durationPolicy,
         allowChapterInterleave: episode.allowChapterInterleave,
       },
-      appWorkspace: CODEX_WORKSPACE_ROOT,
+      appWorkspace: WORKSPACE_ROOT,
       hyperframesMode: args?.hyperframesMode || 'auto',
       engine: 'codex',
       extraRequirements: args?.extraRequirements == null ? '' : String(args.extraRequirements),

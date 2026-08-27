@@ -2,7 +2,7 @@
 
 const path = require('node:path');
 
-const SKILL_RELATIVE_PATH = path.join('skills', 'video-cut-planner', 'SKILL.md');
+const SKILL_RELATIVE_PATH = path.join('skills', 'jiandu', 'SKILL.md');
 
 function skillPathFor(appWorkspace) {
   return path.join(path.resolve(String(appWorkspace || '')), SKILL_RELATIVE_PATH);

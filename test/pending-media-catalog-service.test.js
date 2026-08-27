@@ -8,8 +8,8 @@ const {
   scanPendingMediaCatalog,
 } = require('../src/services/pending-media-catalog-service');
 const {
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_STATUS_FILE,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_STATUS_FILE,
 } = require('../src/constants');
 
 async function tempRoot() {
@@ -71,20 +71,20 @@ test('已有正式结果按 sourceDirectory/digest 匹配，同名不同来源�
   await Promise.all([
     fs.mkdir(issue, { recursive: true }),
     fs.mkdir(other, { recursive: true }),
-    fs.mkdir(path.dirname(path.join(project, CODEX_VIDEO_MANIFEST_FILE)), { recursive: true }),
+    fs.mkdir(path.dirname(path.join(project, VIDEO_MANIFEST_FILE)), { recursive: true }),
   ]);
   await fs.writeFile(path.join(issue, 'a.txt'), 'a');
   await fs.writeFile(path.join(other, 'a.txt'), 'different');
-  await fs.writeFile(path.join(project, CODEX_VIDEO_MANIFEST_FILE), JSON.stringify({
+  await fs.writeFile(path.join(project, VIDEO_MANIFEST_FILE), JSON.stringify({
     sourceDirectory: other,
     sourceSnapshot: { digest: 'different-digest' },
   }));
-  await fs.writeFile(path.join(project, CODEX_VIDEO_STATUS_FILE), JSON.stringify({ status: 'verified' }));
+  await fs.writeFile(path.join(project, VIDEO_STATUS_FILE), JSON.stringify({ status: 'verified' }));
   let payload = await scanPendingMediaCatalog({ rootPath: root, projectRoot });
   assert.equal(payload.episodes[0].existingProject, null);
-  const manifest = JSON.parse(await fs.readFile(path.join(project, CODEX_VIDEO_MANIFEST_FILE)));
+  const manifest = JSON.parse(await fs.readFile(path.join(project, VIDEO_MANIFEST_FILE)));
   manifest.sourceDirectory = issue;
-  await fs.writeFile(path.join(project, CODEX_VIDEO_MANIFEST_FILE), JSON.stringify(manifest));
+  await fs.writeFile(path.join(project, VIDEO_MANIFEST_FILE), JSON.stringify(manifest));
   payload = await scanPendingMediaCatalog({ rootPath: root, projectRoot });
   assert.equal(payload.episodes[0].existingProject.projectPath, project);
 });

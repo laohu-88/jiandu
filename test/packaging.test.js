@@ -8,7 +8,10 @@ const packageJson = require('../package.json');
 const {
   assertExpectedAppPath,
   builtAppPath,
+  installRoot,
   installedAppPath,
+  productName,
+  resolveInstalledAppPath,
 } = require('../scripts/package-utils');
 const {
   backupPathFor,
@@ -88,8 +91,13 @@ test('构建与安装路径严格限定且支持中文和空格', () => {
     builtAppPath,
   );
   assert.equal(
-    assertExpectedAppPath(installedAppPath, ['/Applications']),
+    assertExpectedAppPath(installedAppPath, [installRoot()]),
     installedAppPath,
+  );
+  assert.equal(installRoot(), '/Applications');
+  assert.equal(
+    resolveInstalledAppPath('/tmp/custom-apps'),
+    path.join('/tmp/custom-apps', `${productName}.app`),
   );
   assert.throws(
     () => assertExpectedAppPath('/Applications/恶意.app', ['/Applications']),
@@ -105,7 +113,7 @@ test('安装备份使用稳定 userData 子目录和无冒号时间戳', () => {
   const fixed = new Date('2026-07-23T12:34:56.789Z');
   assert.equal(timestamp(fixed), '2026-07-23T12-34-56-789Z');
   const backup = backupPathFor(fixed);
-  assert.match(backup, /剪渡\/install-backups\//);
+  assert.match(backup, /剪渡-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.app$/);
   assert.equal(path.extname(backup), '.app');
   assert.equal(backup.includes(':'), false);
   assert.equal(escapeRegExp('/Applications/a+b.app'), '/Applications/a\\+b\\.app');
@@ -119,7 +127,7 @@ test('package 脚本禁止证书自动发现且 launch 不回退 npm start', asy
   assert.match(launchScript, /\/usr\/bin\/open/);
   assert.doesNotMatch(launchScript, /npm start|electron \./);
   assert.match(installScript, /\/usr\/bin\/ditto/);
-  assert.match(installScript, /install-backups/);
+  assert.match(installScript, /installBackupRoot/);
   assert.match(installScript, /skipRuntimeFileRequirements: true/);
   assert.match(installScript, /skipVersionCheck: true/);
   assert.match(installScript, /backupVerification\.appAsarSha256 !== installedVerification\.appAsarSha256/);

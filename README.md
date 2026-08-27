@@ -1,6 +1,6 @@
-# 剪渡（JianDu）
+# 剪渡（jiandu）
 
-Electron 视频项目管理与剪辑编排工具。当前新增的 Codex 视频工作流面向软件操作录屏、开发过程、功能前后对比、截图、测试证据和成品展示，不依赖口播、配音、全程字幕或固定分段模板。
+AI 视频 → Final Cut Pro 的 Skill-first 工作台。剪渡 Skill + CLI 承载全部业务；Electron 只是可选薄壳。工作流面向软件操作录屏、开发过程、功能前后对比、截图、测试证据和成品展示，不依赖口播、配音、全程字幕或固定分段模板。
 
 ## Agent-first 视频工作流
 
@@ -8,7 +8,7 @@ Electron 视频项目管理与剪辑编排工具。当前新增的 Codex 视频�
 素材进入待处理
 → App 自动识别（含 HotIngest 伴随信息）
 → 用户可填写「本次额外要求」
-→ 开始剪辑（Codex → FCPXML → Final Cut Pro）
+→ 开始剪辑（AI Agent → FCPXML → Final Cut Pro）
 → Agent 读取固定 Skill 与本次任务清单
 → App 监控完成后自动回流到结果工作区
 → 预览 / 让 AI 再调整 / 在 Final Cut Pro 中打开
@@ -20,15 +20,15 @@ CLI 和 Electron IPC 调用同一组 `src/services`，不会复制项目创建�
 
 Electron 默认打开“待处理素材”，只扫描 `/Users/example/Desktop/视频待处理` 的直属子目录。卡片显示图片、视频、音频、支持文件、总数、视频总时长、大小、修改时间、读取/格式警告、最近任务和正式结果。已有结果优先按正式项目 `sourceDirectory`、原始快照 digest 和规范化真实路径匹配，不按目录名猜测。
 
-点击“交给 Codex 处理”先进入确认页，查看素材摘要、Codex 工作、正式产物并选择：
+薄壳上直接填写「本次额外要求」并开始剪辑；HyperFrames 模式：
 
 - `auto`：默认；先形成真实素材初剪，再判断动画是否明显优于普通剪辑、轻字幕或转场；
 - `disabled`：本期禁止 HyperFrames；
 - `force-attempt`：必须认真设计尝试，但质量门不通过时放弃。
 
-“打开 Codex 并开始”创建 `<Electron userData>/handoffs/<UUID>.json`，使用 `codex://threads/new?prompt=<encoded>&path=<encoded>` 打开 Codex 并将应用置前。工作目录固定为本仓库，素材目录、任务 ID、任务文件和模式在完整提示词中传入；输入框预填但不会自动发送。唯一人工动作是用户按一次发送。
+“开始剪辑”创建 `<Electron userData>/handoffs/<UUID>.json`，使用 `codex://threads/new?prompt=<encoded>&path=<encoded>` 打开 Codex 并将应用置前。工作目录固定为本仓库，素材目录、任务 ID、任务文件和模式在完整提示词中传入；输入框预填但不会自动发送。唯一人工动作是用户按一次发送。
 
-任务快照用临时文件原子替换，旁边保留追加式 NDJSON 事件；损坏任务单点隔离显示，尾部不完整事件被忽略。真实 Skill/CLI 节点写入扫描、元数据、抽帧、分析、编排、HyperFrames、构建、预览、FCPXML、验证和心跳。v3 通过文件监听发现终态，自动置前并打开该任务完成页；应用中途关闭时，下次启动仍能恢复未查看终态。
+任务快照用临时文件原子替换，旁边保留追加式 NDJSON 事件；损坏任务单点隔离显示，尾部不完整事件被忽略。真实 Skill/CLI 节点写入扫描、元数据、抽帧、分析、编排、HyperFrames、构建、预览、FCPXML、验证和心跳。App 通过文件监听发现终态，自动置前并打开该任务完成页；应用中途关闭时，下次启动仍能恢复未查看终态。
 
 完成页是进入 FCP 前的短验收门，直接展示标题、镜头、时长、Marker、FCP Title、HyperFrames、正式/预览规格并播放粗剪。完整通过时主按钮“在 Final Cut Pro 中打开”可用；警告明确列出且不自动打开；失败时不显示“粗剪已完成”，无有效 FCPXML 时禁用 FCP。设置“验证全部通过后，自动打开 Final Cut Pro”默认关闭并持久化，只对无警告的完整成功执行。
 
@@ -42,7 +42,7 @@ Electron 默认打开“待处理素材”，只扫描 `/Users/example/Desktop/�
 npm start
 ```
 
-应用的“项目结果中心”只读扫描 `/Users/example/Desktop/视频素材库` 的直属项目目录。Codex 创建正式 v3 项目后，不需要再次输入路径；点击列表项目即可查看：
+应用的“项目结果中心”只读扫描 `/Users/example/Desktop/视频素材库` 的直属项目目录。创建正式项目后，不需要再次输入路径；点击列表项目即可查看：
 
 - 项目状态、主题、主题依据、建议标题和标题候选；
 - 采用、候选、淘汰素材及理由、有效区间和精选素材复制状态；
@@ -85,7 +85,7 @@ App 主导航只保留待处理、项目和设置。旧项目数据仍可读取�
 
 ## 在 Codex 中使用
 
-Skill 源文件位于 `skills/video-cut-planner`。安装或更新到当前 Codex：
+Skill 源文件位于 `skills/jiandu`。安装或更新到当前 Codex：
 
 ```bash
 node scripts/install-video-skill.js
@@ -98,7 +98,7 @@ node scripts/install-video-skill.js --check
 使用视频 Skill，处理 /Users/example/Desktop/视频待处理/本期素材
 ```
 
-也可以说“把这个素材文件夹整理成 v3 项目”“分析这些录屏并生成 FCP 粗剪”或“用视频剪辑编排器处理本期素材”。
+也可以说“把这个素材文件夹整理成正式项目”“分析这些录屏并生成 FCPXML”或“用剪渡处理本期素材”。
 
 Skill 会查看图片预览、视频故事板和必要的单帧，生成主题、标题候选、素材采用/淘汰判断、可信度、有效区间、无口播镜头顺序和少量 marker，然后调用正式 CLI 完成项目。
 
@@ -150,7 +150,7 @@ node bin/video-skill.js build \
   --json
 ```
 
-由 v3 发起的可视化任务把同一个 `--handoff-task "/absolute/task.json"` 传给 `prepare`、`validate-analysis`、`build` 和 `verify`。Codex-only 决策用 `handoff-update` 写入；观看复核后执行：
+由 App 发起的可视化任务把同一个 `--handoff-task "/absolute/task.json"` 传给 `prepare`、`validate-analysis`、`build` 和 `verify`。Codex-only 决策用 `handoff-update` 写入；观看复核后执行：
 
 ```bash
 node bin/video-skill.js handoff-complete \
@@ -167,7 +167,7 @@ node bin/video-skill.js handoff-return \
 重新验证已有正式项目：
 
 ```bash
-node bin/video-skill.js verify --project "/path/to/v3-project" --json
+node bin/jiandu.js verify --project "/path/to/project" --json
 ```
 
 ### 可选 HyperFrames 适配
@@ -198,7 +198,7 @@ node bin/video-skill.js build \
 适配层也支持 `--hyperframes-executable` 和 `--hyperframes-browser` 显式路径。
 它会关闭遥测，先运行 HyperFrames `check`，再渲染 MP4，并用 ffprobe 校验
 时长、生产分辨率和帧率。`doctor.ok` 可能因为 Docker、TTS、BGM 等非必需项
-缺失而为 false；v3 只用本地渲染必需的四项判断可用性。
+缺失而为 false；剪渡只用本地渲染必需的四项判断可用性。
 
 process-flow 是已实现能力，不只是标题卡描述。使用
 `--hyperframes-flow <流程.json>` 提供 3–6 个短节点、真实原因和
@@ -210,12 +210,12 @@ Stage 4D 的 `auto` 不等同于默认生成。Codex 必须先检查真实素材
 当前没有把 HyperFrames 固定为 Electron 生产依赖：`0.7.63` 的传递依赖
 `adm-zip<0.6.0` 命中
 [GHSA-xcpc-8h2w-3j85](https://github.com/advisories/GHSA-xcpc-8h2w-3j85)，
-npm 暂无自动修复。适配仅处理 v3 生成的可信 composition，不接收外部 ZIP。
+npm 暂无自动修复。适配仅处理剪渡生成的可信 composition，不接收外部 ZIP。
 完整审计与 A/B 验收见 `docs/hyperframes-audit.md`。
 
 所有命令使用参数数组调用媒体工具，错误输出是结构化 JSON，并使用非零退出码区分输入/协议错误、构建错误和完整性错误。
 
-## 正式 v3 项目产物
+## 正式项目产物
 
 实际项目仍复用现有四目录结构：
 
@@ -252,7 +252,7 @@ Codex 工作流增加的正式文件：
 `01-精选素材` 保存被时间线采用的独立素材副本，并通过现有 `assets.json` 机制登记。FCPXML 直接引用这些独立素材，因此导入 Final Cut Pro 后可以单独移动、删除、缩短、拉长、调速、裁切和调整音量。粗剪 MP4 只用于检查顺序、节奏、黑屏和错误镜头，不能替代 FCPXML。
 
 启用 HyperFrames 时，标题卡或 process-flow MP4 同样位于 `01-精选素材`，拥有独立哈希、
-独立 v3 stable ID 和独立 FCPXML asset/clip；它不会被烘焙进原始录屏，也不会
+独立 stable ID 和独立 FCPXML asset/clip；它不会被烘焙进原始录屏，也不会
 让 FCPXML 改为引用整条粗剪预览。标题卡插在开头；process-flow 按
 `insertAfterShotId` 插入，只有其后的 marker 会移动。
 
@@ -267,7 +267,7 @@ node bin/video-skill.js build \
   --reuse-hyperframes-project "/path/to/已验收-HyperFrames-项目"
 ```
 
-该方式创建新的完整 v3 项目并复制、登记已验收的独立 MP4 与 composition，不覆盖原项目。
+该方式创建新的完整项目并复制、登记已验收的独立 MP4 与 composition，不覆盖原项目。
 
 ## 分析边界
 
@@ -286,7 +286,7 @@ node bin/video-skill.js build \
 1. 打开 `/Applications/剪渡.app`；
 2. 在“待处理素材”选择一期素材并交给 Codex；
 3. Codex 新任务会预填完整提示词，用户按一次发送；
-4. 生产完成后通过 `video-cut-planner://` 自动回到已安装 App；
+4. 生产完成后通过 `video-cut-planner://` 自动回到已安装 App；（URL scheme 为稳定标识，历史版本兼容，保持不变）
 5. 完成短验收后再进入 Final Cut Pro。
 
 正式 App 与开发模式明确共用固定数据目录：
@@ -300,7 +300,7 @@ node bin/video-skill.js build \
 App Bundle 或 `app.asar`。Codex 深链接的工作目录仍固定为真实源码仓库：
 
 ```text
-/Users/example/Projects/video-cut-planner-v3
+/Users/example/Projects/jiandu
 ```
 
 本机构建、验证、安装与启动：

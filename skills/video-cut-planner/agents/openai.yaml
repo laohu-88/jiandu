@@ -1,4 +1,0 @@
-interface:
-  display_name: "视频剪辑编排器"
-  short_description: "分析一期素材并创建正式 v3 项目、FCPXML 与粗剪预览"
-  default_prompt: "使用 $video-cut-planner 分析本期素材并创建 v3 项目、FCPXML 和粗剪预览。"

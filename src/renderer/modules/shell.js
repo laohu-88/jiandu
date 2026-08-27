@@ -35,7 +35,7 @@
       brand.className = 'nav-brand';
       brand.append(
         text('strong', '剪渡'),
-        text('span', 'JianDu', 'nav-brand-version'),
+        text('span', '剪渡', 'nav-brand-version'),
       );
       navSidebar.appendChild(brand);
       const list = document.createElement('nav');

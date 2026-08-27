@@ -1,22 +1,22 @@
 ---
-name: video-cut-planner
+name: jiandu
 description: Analyze media from ~/Desktop/视频待处理 and create one flat user-facing project under ~/Desktop/视频素材库 with editable FCPXML timelines. Machine state, manifests, revisions, validation, handoff records, platform variants, caches and temporary previews live in 剪渡 Application Support; MP4 is never a default deliverable.
 ---
 
-# Video Cut Planner
+# 剪渡 Skill（jiandu）
 
-Use Codex's current-session image understanding for semantic decisions and the v3 CLI for deterministic media and project work. Do not call an external model API or the Electron-local AI models for this workflow.
+Use Codex's current-session image understanding for semantic decisions and the jiandu CLI for deterministic media and project work. Do not call an external model API or the Electron-local AI models for this workflow.
 
 ## Core paths
 
-- CLI: `/Users/example/Projects/video-cut-planner-v3/bin/video-skill.js`
+- CLI: `/Users/example/Projects/jiandu/bin/jiandu.js`
 - Default pending root: `/Users/example/Desktop/视频待处理/`
-- Default v3 project root: `/Users/example/Desktop/视频素材库/`
+- Default project root: `/Users/example/Desktop/视频素材库/`
 - Internal state root: `~/Library/Application Support/剪渡/projects/<本期项目名>/`
 - User project root contains only independently editable `.fcpxml` deliverables; never create stage subdirectories or copy source media.
 - Protocol: [references/analysis-protocol.md](references/analysis-protocol.md)
 
-If the CLI path is missing, stop and report that the v3 repository is unavailable. Do not recreate the project system inside the Skill.
+If the CLI path is missing, stop and report that the jiandu repository is unavailable. Do not recreate the project system inside the Skill.
 
 ## Compact App task prompts
 
@@ -78,20 +78,20 @@ Never mark failure as success.
 
 ## Visible handoff tasks
 
-When the prompt contains a handoff task ID and an absolute task JSON path, this is a visible v3 → Codex production handoff:
+When the prompt contains a handoff task ID and an absolute task JSON path, this is a visible App → Agent production handoff:
 
 - Pass `--handoff-task "<task.json>"` and `--attempt-id "<attemptId>"` to `prepare`, `validate-analysis`, `build`, `handoff-update`, `handoff-complete`, and `handoff-return`. The attemptId comes from the compact prompt and task manifest; never reuse an old attempt after App 接管.
 - Use `handoff-update` at the real Codex-only stages `analyzing_media`, `planning_story`, `deciding_hyperframes`, and, when applicable, `designing_hyperframes` and `reviewing_hyperframes`. Record a short stage message and keep heartbeats current during long visual review.
 - Respect the task's `hyperframesMode`: `disabled` forbids generation; `auto` decides only after a truthful real-media first cut; `force-attempt` requires a serious design attempt but still rejects work that fails the quality gate.
 - Always record `hyperframesDecision`, `hyperframesReason`, the expression gap, whether ordinary editing/subtitles/transitions are sufficient, and the final quality review. Do not mark an enabled animation reviewed without viewing its rendered output.
-- `build` leaves a handoff in `verifying` so Codex can watch the rough cut and any HyperFrames render. After this visual review, run `handoff-complete --handoff-task "<task.json>" --project "<v3 project>" --json`; then run `handoff-return --handoff-task "<task.json>" --json` even for warning/failure outcomes.
+- `build` leaves a handoff in `verifying` so Codex can watch the rough cut and any HyperFrames render. After this visual review, run `handoff-complete --handoff-task "<task.json>" --project "<项目目录>" --json`; then run `handoff-return --handoff-task "<task.json>" --json` even for warning/failure outcomes.
 - If `validate-analysis` fails with `INVALID_VIDEO_ANALYSIS`, keep the handoff running, fix `analysis.json`, and re-validate. Other command failures may mark `failed`; still run `handoff-return` when possible. Never fabricate a stage from a timer.
 
 Example semantic updates:
 
 ```bash
-node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage analyzing_media --message "正在查看全部图片预览和视频故事板" --json
-node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage deciding_hyperframes --hyperframes-decision disabled --hyperframes-reason "真实素材与一条轻字幕已能清楚表达流程" --hyperframes-gap "无必须由动画补足的表达缺口" --json
+node /Users/example/Projects/jiandu/bin/jiandu.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage analyzing_media --message "正在查看全部图片预览和视频故事板" --json
+node /Users/example/Projects/jiandu/bin/jiandu.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage deciding_hyperframes --hyperframes-decision disabled --hyperframes-reason "真实素材与一条轻字幕已能清楚表达流程" --hyperframes-gap "无必须由动画补足的表达缺口" --json
 ```
 
 ## Workflow
@@ -100,14 +100,14 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
 2. Run:
 
    ```bash
-   node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js prepare --source "$HOME/Desktop/视频待处理/<一期素材目录>" --json
+   node /Users/example/Projects/jiandu/bin/jiandu.js prepare --source "$HOME/Desktop/视频待处理/<一期素材目录>" --json
    ```
 
 3. Read `analysisRequestPath` and `manifestPath`, including `projectBrief`, `contextDocuments`, `contextIngestion`, `storyUnits`, `contextBudget`, `analysisBudget`, `chapters`, `narrative.durationPolicy`, and every asset's `relativePath`, `chapterId`, `subchapterId`, optional `semanticProfile`, and optional HotIngest `context`. View every image preview and every available video storyboard with `view_image`. Use individual scene/timed frames when the storyboard is unclear. Treat bound title/body/translation/source data as contextual evidence, never as proof of what is visibly present or as OCR. Do not infer content from filenames alone.
 4. For an important or low-confidence video interval, request denser frames:
 
    ```bash
-   node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js inspect-range --manifest "<manifest.json>" --asset-id "<assetId>" --start <秒> --end <秒> --interval 0.5 --json
+   node /Users/example/Projects/jiandu/bin/jiandu.js inspect-range --manifest "<manifest.json>" --asset-id "<assetId>" --start <秒> --end <秒> --interval 0.5 --json
    ```
 
 5. Produce one analysis JSON following the protocol reference. Base decisions on this priority:
@@ -155,13 +155,13 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
 12. Validate before building:
 
     ```bash
-    node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js validate-analysis --manifest "<manifest.json>" --analysis "<analysis.json>" --json
+    node /Users/example/Projects/jiandu/bin/jiandu.js validate-analysis --manifest "<manifest.json>" --analysis "<analysis.json>" --json
     ```
 
-13. Fix every validation error. Then create the formal flat v3 project. The CLI writes all machine files to Application Support, writes no MP4 by default, and places each generated FCPXML directly in the user project root:
+13. Fix every validation error. Then create the formal flat project. The CLI writes all machine files to Application Support, writes no MP4 by default, and places each generated FCPXML directly in the user project root:
 
     ```bash
-    node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js build --manifest "<manifest.json>" --analysis "<analysis.json>" --project-root "$HOME/Desktop/视频素材库" --project-name "<项目名>" --json
+    node /Users/example/Projects/jiandu/bin/jiandu.js build --manifest "<manifest.json>" --analysis "<analysis.json>" --project-root "$HOME/Desktop/视频素材库" --project-name "<项目名>" --json
     ```
 
 14. When the user explicitly requests HyperFrames, or a handoff task uses `force-attempt`, first run
@@ -175,7 +175,7 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
     `drawInterface`, `drawResult`, `comfyInterface`, and `comfyResult`; use only
     screenshots whose visible content supports the stated relationship. The generated
     MP4 is an internal cache asset inserted at that exact narrative boundary and only later markers move. In
-    either mode, register it as an independent v3 asset and FCPXML clip. Do not treat missing Docker,
+    either mode, register it as an independent project asset and FCPXML clip. Do not treat missing Docker,
     transcription, TTS, or BGM tools as a local-render failure.
     For handoff `auto`, first make a real-media-only timeline and compare ordinary
     editing, one light subtitle, and a normal transition against the concrete gap.
@@ -183,8 +183,8 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
     independent MP4 and check clarity, continuity, easing, layout, black frames,
     distortion, jitter, typography, and the transitions to adjacent real shots.
     Revise and re-render if needed; reject it if it still does not improve the film.
-15. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs machine verification. For a later recheck, run `verify --project "<v3 项目目录>" --json`; this does not replace importing every generated FCPXML into Final Cut Pro.
-16. When a release refinement must preserve an already accepted HyperFrames render, use `--reuse-hyperframes-project "<已验收 v3 项目>"` instead of rendering HyperFrames again. The source project is read-only; the build copies and registers its independent MP4, composition, and records into a new non-empty-safe project target.
+15. Do not pass `--open-fcpxml` unless the user explicitly asks to open it. Building already runs machine verification. For a later recheck, run `verify --project "<项目目录>" --json`; this does not replace importing every generated FCPXML into Final Cut Pro.
+16. When a release refinement must preserve an already accepted HyperFrames render, use `--reuse-hyperframes-project "<已验收项目>"` instead of rendering HyperFrames again. The source project is read-only; the build copies and registers its independent MP4, composition, and records into a new non-empty-safe project target.
 
 ## Completion rules
 
@@ -194,7 +194,7 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
 - Default delivery is FCPXML. A temporary MP4 may exist only in Application Support/cache and must never be reported as the final film.
 - Confirm source file collection, hashes, sizes, and mtimes are unchanged.
 - When HyperFrames is enabled, report its pinned version, check result, independent
-  MP4 path/hash/metadata, v3 registration, and FCPXML clip count.
+  MP4 path/hash/metadata, project registration, and FCPXML clip count.
 - Treat any internal preview as a review artifact only; FCPXML references unchanged original media by file URL.
 - Treat timeline and any optional preview formats independently: the formal FCPXML uses the production timeline format from the analysis; preview generation is opt-in.
 - Report theme, title candidates/recommendation, adopted/rejected assets, video ranges and confidence, shot order, markers, artifact paths, and verification result.
@@ -206,4 +206,4 @@ node /Users/example/Projects/video-cut-planner-v3/bin/video-skill.js handoff-upd
 - For an empty, damaged, or undecodable video, preserve its manifest record and report the CLI degradation warning. Do not invent its contents.
 - If ffmpeg/ffprobe is unavailable, report the environment failure; do not install another copy without user approval.
 - If source verification fails, stop before building or mark the partial project failed. Never “repair” the source folder.
-- If the analysis schema fails, edit only the analysis JSON and revalidate; do not hand-edit v3 internal project files.
+- If the analysis schema fails, edit only the analysis JSON and revalidate; do not hand-edit internal project files.

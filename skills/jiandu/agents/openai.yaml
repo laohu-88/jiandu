@@ -1,0 +1,4 @@
+interface:
+  display_name: "剪渡"
+  short_description: "分析一期素材并创建正式项目、可编辑 FCPXML 时间线与验证报告"
+  default_prompt: "使用 $jiandu 分析本期素材并创建正式项目、FCPXML 与验证报告。"

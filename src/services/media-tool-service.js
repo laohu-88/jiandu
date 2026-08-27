@@ -1,9 +1,36 @@
+#!/usr/bin/env node
+// 剪渡 媒体工具运行时：外部命令解析、执行、环境探测的唯一实现。
+const { constants: fsConstants } = require('node:fs');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
-const { resolveToolPath } = require('./stage7-service');
-
 const execFileAsync = promisify(execFile);
+
+const TOOL_SEARCH_DIRS = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin'];
+
+async function resolveToolPath(toolName) {
+  const command = String(toolName || '').trim();
+  if (!command) return null;
+
+  const candidates = path.isAbsolute(command)
+    ? [command]
+    : [
+      ...String(process.env.PATH || '').split(path.delimiter).filter(Boolean),
+      ...TOOL_SEARCH_DIRS,
+    ].map((directory) => path.resolve(directory, command));
+
+  for (const candidate of new Set(candidates)) {
+    try {
+      await fs.access(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch {
+      // 继续尝试下一个 PATH 或常见安装位置。
+    }
+  }
+  return null;
+}
 
 function createToolError(code, message, details = {}) {
   return Object.assign(new Error(message), { code, ...details });
@@ -58,6 +85,7 @@ function parseFrameRate(value) {
   const fps = numerator / denominator;
   return fps > 0 ? Number(fps.toFixed(6)) : null;
 }
+
 
 async function probeMedia(filePath) {
   const result = await runMediaTool('ffprobe', [
@@ -142,5 +170,92 @@ module.exports = {
   parseFrameRate,
   probeMedia,
   probeMediaSafe,
+  runMediaTool,
+};
+
+async function checkExecutable(command, args = ['-version']) {
+  const commandPath = await resolveToolPath(command);
+  if (!commandPath) {
+    return {
+      available: false,
+      message: '不可用',
+      detail: `未在 PATH 或常见安装位置找到 ${command}。`,
+    };
+  }
+  try {
+    const result = await execFileAsync(commandPath, args, {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+    });
+    return {
+      available: true,
+      message: '可用',
+      detail: String(result.stdout || result.stderr || '').split('\n')[0],
+      executablePath: commandPath,
+    };
+  } catch (error) {
+    return {
+      available: false,
+      message: '不可用',
+      detail: error.stderr || error.message,
+    };
+  }
+}
+
+async function checkSubtitleCommand(command = 'ww') {
+  const cleanCommand = String(command || '').trim() || 'ww';
+  if (!/^[\w./-]+$/.test(cleanCommand)) {
+    return {
+      available: false,
+      message: '可能不可用',
+      detail: '字幕命令包含空格或特殊字符。请填写真实命令路径或脚本路径。',
+    };
+  }
+  const commandPath = await resolveToolPath(cleanCommand);
+  if (!commandPath) {
+    return {
+      available: false,
+      message: '可能不可用',
+      detail: '未找到可执行文件。可以手动生成 raw.srt 后用“整理已有 SRT”。',
+    };
+  }
+  return {
+    available: true,
+    message: '可用',
+    detail: commandPath,
+    executablePath: commandPath,
+  };
+}
+
+async function detectEnvironment(subtitleCommand = 'ww') {
+  const [ffmpeg, ffprobe, subtitle] = await Promise.all([
+    checkExecutable('ffmpeg'),
+    checkExecutable('ffprobe'),
+    checkSubtitleCommand(subtitleCommand),
+  ]);
+  return {
+    checkedAt: new Date().toISOString(),
+    ffmpeg,
+    ffprobe,
+    subtitleCommand: {
+      command: subtitleCommand || 'ww',
+      ...subtitle,
+    },
+    notes: [
+      'ffmpeg / ffprobe 不可用时，粗剪生成和视频信息读取会受影响。',
+      '字幕命令不可用时，可以先手动生成 raw.srt，再用“整理已有 SRT”。',
+    ],
+  };
+}
+
+module.exports = {
+  checkExecutable,
+  checkSubtitleCommand,
+  createToolError,
+  detectEnvironment,
+  parseFrameRate,
+  probeMedia,
+  probeMediaSafe,
+  resolveToolPath,
   runMediaTool,
 };

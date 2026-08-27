@@ -6,13 +6,13 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const {
-  CODEX_VIDEO_ANALYSIS_FILE,
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_STATUS_FILE,
+  VIDEO_ANALYSIS_FILE,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_STATUS_FILE,
   EDITORIAL_REVIEW_FILE,
-  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_VIDEO_ANALYSIS_FILE,
+  INTERNAL_VIDEO_MANIFEST_FILE,
+  INTERNAL_VIDEO_STATUS_FILE,
   INTERNAL_EDITORIAL_REVIEW_FILE,
 } = require('../constants');
 const { readJsonFile } = require('./project-json-service');
@@ -950,9 +950,9 @@ async function buildEditorialReviewModel(projectPath, {
   const resolved = path.resolve(String(projectPath || ''));
   const artifactRoot = await resolveProjectArtifactRoot(resolved);
   const internal = artifactRoot !== resolved && artifactRoot !== path.join(resolved, '00-项目总控');
-  const analysisName = internal ? INTERNAL_CODEX_VIDEO_ANALYSIS_FILE : path.basename(CODEX_VIDEO_ANALYSIS_FILE);
-  const manifestName = internal ? INTERNAL_CODEX_VIDEO_MANIFEST_FILE : path.basename(CODEX_VIDEO_MANIFEST_FILE);
-  const statusName = internal ? INTERNAL_CODEX_VIDEO_STATUS_FILE : path.basename(CODEX_VIDEO_STATUS_FILE);
+  const analysisName = internal ? INTERNAL_VIDEO_ANALYSIS_FILE : path.basename(VIDEO_ANALYSIS_FILE);
+  const manifestName = internal ? INTERNAL_VIDEO_MANIFEST_FILE : path.basename(VIDEO_MANIFEST_FILE);
+  const statusName = internal ? INTERNAL_VIDEO_STATUS_FILE : path.basename(VIDEO_STATUS_FILE);
   const [analysisFile, manifestFile, statusFile, storedFile] = await Promise.all([
     analysis ? Promise.resolve({ value: analysis }) : readOptionalProjectJson(artifactRoot, analysisName, 'Codex 视频分析'),
     manifest ? Promise.resolve({ value: manifest }) : readOptionalProjectJson(artifactRoot, manifestName, 'Codex 视频素材清单'),
@@ -1228,9 +1228,9 @@ async function saveEditorialReview(projectPath, input = {}) {
   const resolved = path.resolve(String(projectPath || ''));
   const artifactRoot = await resolveProjectArtifactRoot(resolved);
   const internal = artifactRoot !== resolved && artifactRoot !== path.join(resolved, '00-项目总控');
-  const analysisName = internal ? INTERNAL_CODEX_VIDEO_ANALYSIS_FILE : path.basename(CODEX_VIDEO_ANALYSIS_FILE);
-  const manifestName = internal ? INTERNAL_CODEX_VIDEO_MANIFEST_FILE : path.basename(CODEX_VIDEO_MANIFEST_FILE);
-  const statusName = internal ? INTERNAL_CODEX_VIDEO_STATUS_FILE : path.basename(CODEX_VIDEO_STATUS_FILE);
+  const analysisName = internal ? INTERNAL_VIDEO_ANALYSIS_FILE : path.basename(VIDEO_ANALYSIS_FILE);
+  const manifestName = internal ? INTERNAL_VIDEO_MANIFEST_FILE : path.basename(VIDEO_MANIFEST_FILE);
+  const statusName = internal ? INTERNAL_VIDEO_STATUS_FILE : path.basename(VIDEO_STATUS_FILE);
   const [analysisFile, manifestFile, statusFile, stored] = await Promise.all([
     readOptionalProjectJson(artifactRoot, analysisName, 'Codex 视频分析'),
     readOptionalProjectJson(artifactRoot, manifestName, 'Codex 视频素材清单'),

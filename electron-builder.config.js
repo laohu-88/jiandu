@@ -35,7 +35,9 @@ module.exports = {
     entitlementsInherit: 'build/entitlements.mac.plist',
     extendInfo: {
       CFBundleDisplayName: '剪渡',
-      CFBundleName: 'JianDu',
+      // 注意：不得覆写 CFBundleName。Electron 按 <CFBundleName> Helper.app
+      // 在 Contents/Frameworks 查找 Helper，必须与 productName 保持一致，
+      // 否则打包后的 App 会在 LaunchServices 启动时立即 SIGTRAP 崩溃。
     },
     protocols: [{
       name: '剪渡交接回流',

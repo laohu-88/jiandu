@@ -5,15 +5,15 @@ const { pathToFileURL } = require('node:url');
 const {
   ASSETS_DIR,
   ASSETS_FILE,
-  CODEX_VIDEO_ANALYSIS_FILE,
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_STATUS_FILE,
+  VIDEO_ANALYSIS_FILE,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_STATUS_FILE,
   CONTROL_DIR,
   EXPORT_DIR,
   INTERNAL_ASSETS_FILE,
-  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_VIDEO_ANALYSIS_FILE,
+  INTERNAL_VIDEO_MANIFEST_FILE,
+  INTERNAL_VIDEO_STATUS_FILE,
   INTERNAL_PROJECT_FILE,
   PROJECT_FILE,
 } = require('../constants');
@@ -160,15 +160,15 @@ async function readCodexProjectResult(projectPath) {
   const names = internal ? {
     project: INTERNAL_PROJECT_FILE,
     assets: INTERNAL_ASSETS_FILE,
-    manifest: INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-    analysis: INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-    status: INTERNAL_CODEX_VIDEO_STATUS_FILE,
+    manifest: INTERNAL_VIDEO_MANIFEST_FILE,
+    analysis: INTERNAL_VIDEO_ANALYSIS_FILE,
+    status: INTERNAL_VIDEO_STATUS_FILE,
   } : {
     project: path.basename(PROJECT_FILE),
     assets: path.basename(ASSETS_FILE),
-    manifest: path.basename(CODEX_VIDEO_MANIFEST_FILE),
-    analysis: path.basename(CODEX_VIDEO_ANALYSIS_FILE),
-    status: path.basename(CODEX_VIDEO_STATUS_FILE),
+    manifest: path.basename(VIDEO_MANIFEST_FILE),
+    analysis: path.basename(VIDEO_ANALYSIS_FILE),
+    status: path.basename(VIDEO_STATUS_FILE),
   };
   const [projectFile, assetsFile, manifestFile, analysisFile, statusFile] = await Promise.all([
     optionalJson(artifactRoot, names.project, 'project.json'),
@@ -451,8 +451,8 @@ function defaultPlatformRegistry(projectPath) {
   return {
     defaultMain: {
       storage: 'legacy-main',
-      analysis: CODEX_VIDEO_ANALYSIS_FILE,
-      status: CODEX_VIDEO_STATUS_FILE,
+      analysis: VIDEO_ANALYSIS_FILE,
+      status: VIDEO_STATUS_FILE,
       untouchedByPlatformVariants: true,
     },
     projectPath,

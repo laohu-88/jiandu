@@ -12,8 +12,8 @@
       <div class="app-main">
         <header class="app-topbar">
           <div>
-            <p class="eyebrow">剪渡 · JianDu</p>
-            <h1 class="app-title">Codex → Final Cut Pro</h1>
+            <p class="eyebrow">剪渡 · Jiandu</p>
+            <h1 class="app-title">AI → Final Cut Pro</h1>
           </div>
           <span id="version" class="version">正在读取版本…</span>
         </header>
@@ -27,22 +27,6 @@
           <div id="pageBrief" class="project-page"></div>
           <div id="pageProcessing" class="project-page hidden"></div>
           <div id="pageResults" class="project-page hidden"></div>
-          <div id="pageAdvanced" class="project-page hidden" aria-hidden="true">
-            <div id="projectTabs" class="project-tabs hidden" aria-hidden="true"></div>
-            <div id="pageOverview" class="hidden"></div>
-            <div id="pageMain" class="hidden"></div>
-            <div id="pageDouyin">
-              <div class="douyin-stage-rail" aria-label="高级调整阶段"></div>
-              <div id="douyinStagePlan" class="douyin-stage"></div>
-              <div id="douyinStageIssues" class="douyin-stage hidden"></div>
-              <div id="douyinStagePreview" class="douyin-stage editor-workspace hidden"></div>
-              <div id="douyinStageDeliver" class="douyin-stage hidden"></div>
-              <footer class="sticky-action-bar" aria-label="高级调整"></footer>
-            </div>
-            <div id="pageAssets" class="hidden"></div>
-            <div id="pageReview" class="hidden"></div>
-            <div id="pageOutputs" class="hidden"></div>
-          </div>
         </div>
       </div>
     </div>
@@ -50,8 +34,6 @@
     <div id="overlayRoot" class="overlay-root hidden" hidden></div>
     <div id="toast" class="toast hidden" role="status"></div>
 
-    <script src="../view-models/issue-center-view-model.js"></script>
-    <script src="../view-models/douyin-workflow-view-model.js"></script>
     <script src="../view-models/workspace-view-model.js"></script>
     <script src="../view-models/index.js"></script>
     <script src="./modules/utils.js"></script>
@@ -59,22 +41,13 @@
     <script src="./modules/router.js"></script>
     <script src="./modules/ipc-client.js"></script>
     <script src="./modules/components/dom.js"></script>
-    <script src="./modules/douyin/editor-core.js"></script>
     <script src="./modules/app-data.js"></script>
     <script src="./modules/catalog/library-page.js"></script>
-    <script src="./modules/workspace/result-playback.js"></script>
-    <script src="./modules/workspace/overview-page.js"></script>
-    <script src="./modules/workspace/main-film-page.js"></script>
-    <script src="./modules/douyin/douyin-page.js"></script>
-    <script src="./modules/review/review-page.js"></script>
-    <script src="./modules/assets/assets-page.js"></script>
-    <script src="./modules/outputs/outputs-page.js"></script>
-    <script src="./modules/workspace/edit-workspace.js"></script>
     <script src="./modules/pending/pending-page.js"></script>
     <script src="./modules/workspace/settings-page.js"></script>
+    <script src="./modules/workspace/task-pages.js"></script>
     <script src="./modules/workspace/workspace-shell.js"></script>
     <script src="./modules/shell.js"></script>
-    <script src="./explanation-review-ui.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

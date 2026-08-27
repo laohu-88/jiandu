@@ -282,7 +282,7 @@ test('Codex 使用固定剪辑规则', () => {
   assert.match(codex, /固定剪辑 Skill：/);
   assert.doesNotMatch(codex, /不得设置或推断默认成片目标时长/);
   assert.doesNotMatch(codex, /默认都需要进入时间线/);
-  const skill = fs.readFileSync(path.join(__dirname, '../skills/video-cut-planner/SKILL.md'), 'utf8');
+  const skill = fs.readFileSync(path.join(__dirname, '../skills/jiandu/SKILL.md'), 'utf8');
   assert.match(skill, /不设默认成片目标时长|不得设置或推断默认成片目标时长/);
   assert.match(skill, /默认都需要进入时间线/);
   assert.match(skill, /默认保留原声/);

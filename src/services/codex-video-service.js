@@ -9,18 +9,18 @@ const { promisify } = require('node:util');
 const {
   ASSETS_DIR,
   ASSETS_FILE,
-  CODEX_VIDEO_ANALYSIS_FILE,
-  CODEX_VIDEO_FCPXML_DIR,
-  CODEX_VIDEO_HYPERFRAMES_DIR,
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_PREVIEW_DIR,
-  CODEX_VIDEO_STATUS_FILE,
-  CODEX_VIDEO_SUMMARY_FILE,
+  VIDEO_ANALYSIS_FILE,
+  VIDEO_FCPXML_DIR,
+  VIDEO_HYPERFRAMES_DIR,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_PREVIEW_DIR,
+  VIDEO_STATUS_FILE,
+  VIDEO_SUMMARY_FILE,
   INTERNAL_ASSETS_FILE,
-  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-  INTERNAL_CODEX_VIDEO_STATUS_FILE,
-  INTERNAL_CODEX_VIDEO_SUMMARY_FILE,
+  INTERNAL_VIDEO_ANALYSIS_FILE,
+  INTERNAL_VIDEO_MANIFEST_FILE,
+  INTERNAL_VIDEO_STATUS_FILE,
+  INTERNAL_VIDEO_SUMMARY_FILE,
   INTERNAL_ARTIFACT_DIRS,
   INTERNAL_EDITORIAL_REVIEW_FILE,
   INTERNAL_PROJECT_FILE,
@@ -29,7 +29,7 @@ const {
   PROJECT_FILE,
 } = require('../constants');
 const { createProject } = require('./project-service');
-const { loadAssetIndex, scanAssets, updateAssetReview } = require('./media-service');
+const { createStableId, loadAssetIndex, scanAssets, updateAssetReview } = require('./media-service');
 const { probeMedia, parseFrameRate, runMediaTool } = require('./media-tool-service');
 const {
   compareSourceSnapshots,
@@ -197,7 +197,7 @@ async function syncTimelineAssets(projectPath, manifest, analysis, options = {})
   const assetIndex = await scanAssets(projectPath);
   for (const mapping of mappings) {
     const registered = assetIndex.assets.find((item) => item.relativePath === mapping.projectRelativePath);
-    if (!registered) throw new Error(`v3 素材索引未登记 ${mapping.projectFilename}。`);
+    if (!registered) throw new Error(`素材索引未登记 ${mapping.projectFilename}。`);
     mapping.projectStableId = registered.stableId;
     await updateAssetReview(projectPath, registered.stableId, {
       reviewStatus: 'keep',
@@ -237,8 +237,38 @@ async function resolveInstalledFcpxmlDtd(version = '1.14') {
   return null;
 }
 
+// 把生成素材登记进 assets.json 索引；内部模式与旧版布局的索引文件位置不同。
+function generatedAssetIndexPath(projectPath, options = {}) {
+  if (options.internalRoot) {
+    return path.join(path.resolve(options.internalRoot), 'assets.json');
+  }
+  return path.join(path.resolve(projectPath), CONTROL_DIR, path.basename(ASSETS_FILE));
+}
+
+async function upsertGeneratedAssetEntry(indexPath, entry) {
+  let payload;
+  try {
+    payload = JSON.parse(await fs.readFile(indexPath, 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    payload = { schemaVersion: 2, assets: [] };
+  }
+  const assets = Array.isArray(payload.assets) ? payload.assets : [];
+  const existing = assets.find((item) => item.relativePath === entry.relativePath);
+  if (existing) {
+    Object.assign(existing, entry, { stableId: existing.stableId || entry.stableId });
+  } else {
+    assets.push(entry);
+  }
+  payload.assets = assets;
+  await fs.mkdir(path.dirname(indexPath), { recursive: true });
+  await fs.writeFile(indexPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  return existing?.stableId || entry.stableId;
+}
+
 async function registerHyperframesAsset(projectPath, rendered, analysis, flow = null, options = {}) {
   const projectRelativePath = path.relative(projectPath, rendered.outputPath);
+  // 先刷新常规素材索引，再追加生成素材，避免扫描覆盖登记。
   const registered = options.internalRoot ? null : (await scanAssets(projectPath)).assets
     .find((item) => item.relativePath === projectRelativePath);
   if (registered) {
@@ -253,6 +283,14 @@ async function registerHyperframesAsset(projectPath, rendered, analysis, flow = 
         : `根据现有 Codex 分析生成：${analysis.titles.recommended}`,
     });
   }
+  const stableId = await upsertGeneratedAssetEntry(generatedAssetIndexPath(projectPath, options), {
+    stableId: null,
+    relativePath: projectRelativePath,
+    filename: path.basename(rendered.outputPath),
+    availability: 'available',
+    origin: 'hyperframes',
+    sourceSha256: rendered.sha256,
+  });
   return {
     assetId: GENERATED_ASSET_ID,
     type: 'video',
@@ -264,7 +302,7 @@ async function registerHyperframesAsset(projectPath, rendered, analysis, flow = 
     projectAbsolutePath: rendered.outputPath,
     metadata: rendered.metadata,
     analysis: null,
-    projectStableId: registered?.stableId || null,
+    projectStableId: registered?.stableId || stableId,
     generator: {
       name: 'hyperframes',
       version: rendered.environment.version,
@@ -292,7 +330,7 @@ function assertContainedPath(rootPath, candidate, label) {
 async function copyReusableHyperframes(projectPath, sourceProjectPath) {
   const sourceRoot = path.resolve(String(sourceProjectPath || ''));
   const sourceStatus = await readJson(
-    path.join(sourceRoot, CODEX_VIDEO_STATUS_FILE),
+    path.join(sourceRoot, VIDEO_STATUS_FILE),
     '复用项目 Codex 视频状态',
   );
   if (sourceStatus.status !== 'verified'
@@ -641,17 +679,17 @@ async function verifyCodexVideoProject(projectPath, options = {}) {
   const artifactNames = internal ? {
     project: INTERNAL_PROJECT_FILE,
     assets: INTERNAL_ASSETS_FILE,
-    manifest: INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-    analysis: INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-    status: INTERNAL_CODEX_VIDEO_STATUS_FILE,
-    summary: INTERNAL_CODEX_VIDEO_SUMMARY_FILE,
+    manifest: INTERNAL_VIDEO_MANIFEST_FILE,
+    analysis: INTERNAL_VIDEO_ANALYSIS_FILE,
+    status: INTERNAL_VIDEO_STATUS_FILE,
+    summary: INTERNAL_VIDEO_SUMMARY_FILE,
   } : {
     project: path.basename(PROJECT_FILE),
     assets: path.basename(ASSETS_FILE),
-    manifest: path.basename(CODEX_VIDEO_MANIFEST_FILE),
-    analysis: path.basename(CODEX_VIDEO_ANALYSIS_FILE),
-    status: path.basename(CODEX_VIDEO_STATUS_FILE),
-    summary: path.basename(CODEX_VIDEO_SUMMARY_FILE),
+    manifest: path.basename(VIDEO_MANIFEST_FILE),
+    analysis: path.basename(VIDEO_ANALYSIS_FILE),
+    status: path.basename(VIDEO_STATUS_FILE),
+    summary: path.basename(VIDEO_SUMMARY_FILE),
   };
   const paths = {
     project: path.join(artifactRoot, artifactNames.project),
@@ -940,7 +978,7 @@ async function buildCodexVideoProject(options) {
       : 'building_project',
     hyperframesOptions.enabled || hyperframesOptions.reuseProjectPath
       ? '正在校验 HyperFrames 方案与真实素材关系。'
-      : '正在校验分析并创建正式 v3 项目。',
+      : '正在校验分析并创建正式 正式项目。',
   );
   let hyperframesFlow = hyperframesOptions.flowSpecPath
     ? normalizeFlowSpec(await readJson(hyperframesOptions.flowSpecPath, 'HyperFrames 流程输入'))
@@ -980,17 +1018,17 @@ async function buildCodexVideoProject(options) {
   const artifactFiles = useApplicationSupport ? {
     project: path.join(artifactRoot, INTERNAL_PROJECT_FILE),
     assets: path.join(artifactRoot, INTERNAL_ASSETS_FILE),
-    manifest: path.join(artifactRoot, INTERNAL_CODEX_VIDEO_MANIFEST_FILE),
-    analysis: path.join(artifactRoot, INTERNAL_CODEX_VIDEO_ANALYSIS_FILE),
-    status: path.join(artifactRoot, INTERNAL_CODEX_VIDEO_STATUS_FILE),
-    summary: path.join(artifactRoot, INTERNAL_CODEX_VIDEO_SUMMARY_FILE),
+    manifest: path.join(artifactRoot, INTERNAL_VIDEO_MANIFEST_FILE),
+    analysis: path.join(artifactRoot, INTERNAL_VIDEO_ANALYSIS_FILE),
+    status: path.join(artifactRoot, INTERNAL_VIDEO_STATUS_FILE),
+    summary: path.join(artifactRoot, INTERNAL_VIDEO_SUMMARY_FILE),
   } : {
     project: path.join(projectPath, PROJECT_FILE),
     assets: path.join(projectPath, ASSETS_FILE),
-    manifest: path.join(projectPath, CODEX_VIDEO_MANIFEST_FILE),
-    analysis: path.join(projectPath, CODEX_VIDEO_ANALYSIS_FILE),
-    status: path.join(projectPath, CODEX_VIDEO_STATUS_FILE),
-    summary: path.join(projectPath, CODEX_VIDEO_SUMMARY_FILE),
+    manifest: path.join(projectPath, VIDEO_MANIFEST_FILE),
+    analysis: path.join(projectPath, VIDEO_ANALYSIS_FILE),
+    status: path.join(projectPath, VIDEO_STATUS_FILE),
+    summary: path.join(projectPath, VIDEO_SUMMARY_FILE),
   };
   await fs.mkdir(artifactRoot, { recursive: true });
   await writeJson(artifactFiles.project, {
@@ -1085,7 +1123,7 @@ async function buildCodexVideoProject(options) {
       );
       const compositionDirectory = path.join(
         projectPath,
-        CODEX_VIDEO_HYPERFRAMES_DIR,
+        VIDEO_HYPERFRAMES_DIR,
         hyperframesFlow ? 'process-flow' : 'title-card',
       );
       const rendered = await renderHyperframesAsset({
@@ -1140,7 +1178,7 @@ async function buildCodexVideoProject(options) {
       };
       await onStage('reviewing_hyperframes', 'HyperFrames 已渲染并通过本地 check，等待质量复核。');
     }
-    await onStage('building_project', '正在登记独立素材并完成正式 v3 项目。');
+    await onStage('building_project', '正在登记独立素材并完成正式 正式项目。');
     const outputBase = safeFilename(analysis.titles.recommended, target.name);
     const fcpxmlPath = path.join(projectPath, `${outputBase}.fcpxml`);
     const previewEnabled = options.generatePreview === true

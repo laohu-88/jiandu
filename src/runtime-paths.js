@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 
 const {
   APP_NAME,
-  CODEX_WORKSPACE_ROOT,
+  WORKSPACE_ROOT,
   LEGACY_USER_DATA_DIRNAME,
   USER_DATA_DIRNAME,
 } = require('./constants');
@@ -47,7 +47,7 @@ function legacyUserDataPath(appDataPath) {
 }
 
 /**
- * Merge the old data directory into the JianDu directory without replacing
+ * Merge the old data directory into 剪渡 directory without replacing
  * anything already created there. Keeping the old directory is deliberate:
  * it makes this migration recoverable and lets older installs keep reading it.
  */
@@ -82,7 +82,7 @@ function getRuntimePaths(electronApp) {
     preloadPath: path.join(appPath, 'src', 'preload.js'),
     rendererPath: path.join(appPath, 'src', 'renderer', 'index.html'),
     analysisSchemaPath: path.join(appPath, 'schemas', 'codex-video-analysis.schema.json'),
-    codexWorkspacePath: CODEX_WORKSPACE_ROOT,
+    workspacePath: WORKSPACE_ROOT,
   });
 }
 

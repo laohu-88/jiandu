@@ -122,7 +122,7 @@ async function createFixture(root, name, options = {}) {
       availability: 'available',
     })),
   });
-  await writeJson(path.join(control, 'Codex视频素材清单.json'), {
+  await writeJson(path.join(control, '视频素材清单.json'), {
     items: base.assets.map((item, index) => ({
       assetId: item.assetId,
       filename: `source-${index + 1}.png`,
@@ -135,9 +135,9 @@ async function createFixture(root, name, options = {}) {
     warnings: options.manifestWarning ? ['素材清单警告'] : [],
   });
   if (options.corruptAnalysis) {
-    await fs.writeFile(path.join(control, 'Codex视频分析.json'), '{bad', 'utf8');
+    await fs.writeFile(path.join(control, '视频分析.json'), '{bad', 'utf8');
   } else {
-    await writeJson(path.join(control, 'Codex视频分析.json'), base);
+    await writeJson(path.join(control, '视频分析.json'), base);
   }
   const artifacts = {
     fcpxml: '03-导出/FCPXML/timeline.fcpxml',
@@ -149,7 +149,7 @@ async function createFixture(root, name, options = {}) {
     await fs.writeFile(path.join(exportDir, 'FCPXML', 'timeline.fcpxml'), '<fcpxml/>');
     await fs.writeFile(path.join(exportDir, '粗剪预览', 'preview.mp4'), 'preview');
   }
-  await writeJson(path.join(control, 'Codex视频状态.json'), {
+  await writeJson(path.join(control, '视频状态.json'), {
     status: options.failed ? 'failed' : 'verified',
     createdAt: '2026-07-19T00:00:00.000Z',
     generatedAt,
@@ -289,9 +289,9 @@ test('打开、扫描、读取和切换项目保持核心项目文件哈希与 m
   const files = [
     '00-项目总控/project.json',
     '00-项目总控/assets.json',
-    '00-项目总控/Codex视频分析.json',
-    '00-项目总控/Codex视频状态.json',
-    '00-项目总控/Codex视频素材清单.json',
+    '00-项目总控/视频分析.json',
+    '00-项目总控/视频状态.json',
+    '00-项目总控/视频素材清单.json',
     '03-导出/FCPXML/timeline.fcpxml',
     '03-导出/粗剪预览/preview.mp4',
   ].map((relative) => path.join(first, relative));
@@ -355,26 +355,3 @@ test('preload 不暴露文件系统、任意 shell 命令或任意绝对路径�
   assert.match(preload, /openProjectFcpxmlInFinalCut/);
 });
 
-test('Electron 结果中心提供 Marker 列表、seek、高亮、字幕叠加与只读时间线且不暴露写项目操作', async () => {
-  const [playback, explanation, stylesIndex, stylesPlayback] = await Promise.all([
-    fs.readFile(path.join(__dirname, '../src/renderer/modules/workspace/result-playback.js'), 'utf8'),
-    fs.readFile(path.join(__dirname, '../src/renderer/explanation-review-ui.js'), 'utf8'),
-    fs.readFile(path.join(__dirname, '../src/renderer/styles/index.css'), 'utf8'),
-    fs.readFile(path.join(__dirname, '../src/renderer/styles/pages/results-playback.css'), 'utf8'),
-  ]);
-  const renderer = `${playback}\n${explanation}`;
-  const styles = `${stylesIndex}\n${stylesPlayback}`;
-  assert.match(renderer, /轻字幕建议/);
-  assert.match(renderer, /跳到此处/);
-  assert.match(renderer, /预览字幕/);
-  assert.match(renderer, /关闭预览/);
-  assert.match(renderer, /video\.currentTime\s*=/);
-  assert.match(renderer, /loadedmetadata.*timeupdate.*seeked.*ended/s);
-  assert.match(renderer, /activeMarkerKey/);
-  assert.match(renderer, /currentTimelineShot/);
-  assert.match(renderer, /readonly-timeline/);
-  assert.match(renderer, /不会烧录进粗剪视频/);
-  assert.match(styles, /\.result-subtitle-overlay/);
-  assert.match(styles, /\.readonly-playhead/);
-  assert.doesNotMatch(renderer, /save.*Marker|update.*Marker|write.*Marker/i);
-});

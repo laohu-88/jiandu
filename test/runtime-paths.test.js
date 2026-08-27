@@ -29,8 +29,8 @@ test('development 和 packaged 都从 app.getAppPath 解析内部资源', () => 
     '/Applications/剪渡.app/Contents/Resources/app.asar/src/preload.js',
   );
   assert.match(packaged.analysisSchemaPath, /app\.asar\/schemas\/codex-video-analysis\.schema\.json$/);
-  assert.equal(packaged.codexWorkspacePath, '/Users/example/Projects/video-cut-planner-v3');
-  assert.doesNotMatch(packaged.codexWorkspacePath, /app\.asar|Applications/);
+  assert.equal(packaged.workspacePath, path.resolve(__dirname, '..'));
+  assert.doesNotMatch(packaged.workspacePath, /app\.asar|Applications/);
 });
 
 test('稳定 userData 与 cwd、package name、Bundle ID 无关', () => {

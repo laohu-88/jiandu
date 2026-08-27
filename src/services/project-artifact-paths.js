@@ -2,13 +2,21 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const {
-  CODEX_VIDEO_ANALYSIS_FILE,
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_STATUS_FILE,
+  LEGACY_VIDEO_ANALYSIS_FILENAME,
+  LEGACY_VIDEO_MANIFEST_FILENAME,
+  LEGACY_VIDEO_STATUS_FILENAME,
+  LEGACY_VIDEO_SUMMARY_FILENAME,
+  LEGACY_INTERNAL_VIDEO_ANALYSIS_FILE,
+  LEGACY_INTERNAL_VIDEO_MANIFEST_FILE,
+  LEGACY_INTERNAL_VIDEO_STATUS_FILE,
+  LEGACY_INTERNAL_VIDEO_SUMMARY_FILE,
+  VIDEO_ANALYSIS_FILE,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_STATUS_FILE,
   INTERNAL_ASSETS_FILE,
-  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-  INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  INTERNAL_VIDEO_ANALYSIS_FILE,
+  INTERNAL_VIDEO_MANIFEST_FILE,
+  INTERNAL_VIDEO_STATUS_FILE,
   INTERNAL_EDITORIAL_REVIEW_FILE,
   INTERNAL_PLATFORM_VARIANTS_FILE,
   INTERNAL_PROJECT_FILE,
@@ -17,12 +25,39 @@ const {
   PLATFORM_VARIANTS_FILE,
 } = require('../constants');
 
+// v3.2 命名迁移：读取侧把旧 Codex 前缀文件名一次性搬到中性名（幂等）。
+const NEUTRAL_NAME_MIGRATIONS = Object.freeze([
+  [LEGACY_INTERNAL_VIDEO_STATUS_FILE, INTERNAL_VIDEO_STATUS_FILE],
+  [LEGACY_INTERNAL_VIDEO_ANALYSIS_FILE, INTERNAL_VIDEO_ANALYSIS_FILE],
+  [LEGACY_INTERNAL_VIDEO_MANIFEST_FILE, INTERNAL_VIDEO_MANIFEST_FILE],
+  [LEGACY_INTERNAL_VIDEO_SUMMARY_FILE, '视频项目摘要.md'],
+]);
+
+async function ensureNeutralArtifactNames(root) {
+  for (const [legacyName, neutralName] of NEUTRAL_NAME_MIGRATIONS) {
+    const target = path.join(root, neutralName);
+    if (await isFile(target)) continue;
+    const source = path.join(root, legacyName);
+    if (await isFile(source)) {
+      await fs.rename(source, target).catch(() => {});
+    }
+  }
+}
+
+// 旧版控制目录内同样存在 Codex 前缀命名的文件。
+const LEGACY_CONTROL_MIGRATIONS = Object.freeze([
+  [LEGACY_VIDEO_STATUS_FILENAME],
+  [LEGACY_VIDEO_ANALYSIS_FILENAME],
+  [LEGACY_VIDEO_MANIFEST_FILENAME],
+  [LEGACY_VIDEO_SUMMARY_FILENAME],
+]);
+
 const INTERNAL_ARTIFACT_FILES = Object.freeze({
   project: INTERNAL_PROJECT_FILE,
   assets: INTERNAL_ASSETS_FILE,
-  manifest: INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-  analysis: INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-  status: INTERNAL_CODEX_VIDEO_STATUS_FILE,
+  manifest: INTERNAL_VIDEO_MANIFEST_FILE,
+  analysis: INTERNAL_VIDEO_ANALYSIS_FILE,
+  status: INTERNAL_VIDEO_STATUS_FILE,
   editorialReview: INTERNAL_EDITORIAL_REVIEW_FILE,
   platformVariants: INTERNAL_PLATFORM_VARIANTS_FILE,
 });
@@ -46,10 +81,29 @@ async function isFile(filePath) {
 async function resolveProjectArtifactRoot(projectPath) {
   const resolved = path.resolve(String(projectPath || ''));
   const internal = internalArtifactRoot(resolved);
+  await ensureNeutralArtifactNames(internal);
   if (await isFile(path.join(internal, INTERNAL_ARTIFACT_FILES.status))) return internal;
   const legacy = legacyArtifactRoot(resolved);
-  if (await isFile(path.join(legacy, path.basename(CODEX_VIDEO_STATUS_FILE)))) return legacy;
-  if (await isFile(path.join(resolved, path.basename(CODEX_VIDEO_STATUS_FILE)))) return resolved;
+  // 旧版目录里的 Codex 前缀名同样一次性迁移为中性名。
+  for (const legacyName of [
+    'Codex视频状态.json',
+    'Codex视频分析.json',
+    'Codex视频素材清单.json',
+    'Codex视频项目摘要.md',
+  ]) {
+    const source = path.join(legacy, legacyName);
+    if (!(await isFile(source))) continue;
+    const neutralName = {
+      'Codex视频状态.json': path.basename(VIDEO_STATUS_FILE),
+      'Codex视频分析.json': path.basename(VIDEO_ANALYSIS_FILE),
+      'Codex视频素材清单.json': path.basename(VIDEO_MANIFEST_FILE),
+      'Codex视频项目摘要.md': '视频项目摘要.md',
+    }[legacyName];
+    const target = path.join(legacy, neutralName);
+    if (!(await isFile(target))) await fs.rename(source, target).catch(() => {});
+  }
+  if (await isFile(path.join(legacy, path.basename(VIDEO_STATUS_FILE)))) return legacy;
+  if (await isFile(path.join(resolved, path.basename(VIDEO_STATUS_FILE)))) return resolved;
   return internal;
 }
 
@@ -83,9 +137,9 @@ function internalProjectDirectory(projectName) {
 
 function legacyProjectFile(key) {
   const map = {
-    manifest: CODEX_VIDEO_MANIFEST_FILE,
-    analysis: CODEX_VIDEO_ANALYSIS_FILE,
-    status: CODEX_VIDEO_STATUS_FILE,
+    manifest: VIDEO_MANIFEST_FILE,
+    analysis: VIDEO_ANALYSIS_FILE,
+    status: VIDEO_STATUS_FILE,
     platformVariants: PLATFORM_VARIANTS_FILE,
   };
   return map[key] || key;

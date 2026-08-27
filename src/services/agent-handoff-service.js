@@ -3,7 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const { CODEX_WORKSPACE_ROOT, DEFAULT_PROJECT_ROOT } = require('../constants');
+const { WORKSPACE_ROOT, DEFAULT_PROJECT_ROOT } = require('../constants');
 const {
   AGENT_ENGINES,
   STAGE_LABELS,
@@ -26,7 +26,6 @@ const PACKAGE_RETENTION = Object.freeze({
 });
 const { validateAnalysisFile, buildCodexVideoProject, verifyCodexVideoProject } = require('./codex-video-service');
 const { readCodexProjectResult } = require('./codex-project-result-service');
-const { uniqueProjectName } = require('./in-app-edit-workflow-service');
 
 const EXPECTED_ANALYSIS_ARTIFACTS = Object.freeze([
   {
@@ -54,7 +53,7 @@ function engineLabel(engine) {
 }
 
 function agentWorkspaceFor(task) {
-  return path.resolve(task?.appWorkspace || CODEX_WORKSPACE_ROOT);
+  return path.resolve(task?.appWorkspace || WORKSPACE_ROOT);
 }
 
 const TASK_WINDOW_TITLE = '剪渡 Codex 任务';
@@ -176,7 +175,7 @@ async function writeCodexAgentPackage(task) {
     analysisOutputPath,
     expectedAnalysisContract: 'schemas/codex-video-analysis.schema.json',
     expectedPlatformVariantContract: 'schemas/douyin-platform-variant.schema.json',
-    videoSkillCli: path.join(task.appWorkspace, 'bin/video-skill.js'),
+    videoSkillCli: path.join(task.appWorkspace, 'bin/jiandu.js'),
   };
   const expectedArtifacts = {
     schemaVersion: 1,

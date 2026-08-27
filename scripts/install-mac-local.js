@@ -6,11 +6,11 @@ const path = require('node:path');
 const {
   assertExpectedAppPath,
   builtAppPath,
-  installedAppPath,
+  installBackupRoot,
   pathExists,
   productName,
+  resolveInstalledAppPath,
   run,
-  userDataPath,
 } = require('./package-utils');
 const { verifyPackage } = require('./verify-package');
 
@@ -19,7 +19,7 @@ function timestamp(date = new Date()) {
 }
 
 function backupPathFor(date = new Date()) {
-  return path.join(userDataPath, 'install-backups', `${productName}-${timestamp(date)}.app`);
+  return path.join(installBackupRoot(), `${productName}-${timestamp(date)}.app`);
 }
 
 function escapeRegExp(value) {
@@ -28,7 +28,7 @@ function escapeRegExp(value) {
 
 async function findInstalledPids(options = {}) {
   const runImpl = options.runImpl || run;
-  const executable = path.join(installedAppPath, 'Contents', 'MacOS', productName);
+  const executable = path.join(resolveInstalledAppPath(), 'Contents', 'MacOS', productName);
   try {
     const { stdout } = await runImpl('/usr/bin/pgrep', ['-f', `^${escapeRegExp(executable)}$`], {
       timeout: 5000,
@@ -49,26 +49,45 @@ async function waitForExit(timeoutMs = 10_000, options = {}) {
   return false;
 }
 
+async function terminateInstalledProcesses(options = {}) {
+  const pids = await findInstalledPids(options);
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+  }
+}
+
 async function requestNormalQuit(options = {}) {
   if ((await findInstalledPids(options)).length === 0) return;
   const runImpl = options.runImpl || run;
-  await runImpl('/usr/bin/osascript', [
-    '-e',
-    'tell application id "com.laohu.video-cut-planner-v3" to quit',
-  ], { timeout: 10_000 });
+  try {
+    await runImpl('/usr/bin/osascript', [
+      '-e',
+      'tell application id "com.laohu.video-cut-planner-v3" to quit',
+    ], { timeout: 10_000 });
+  } catch (error) {
+    // 终端进程可能缺少 Apple Events 自动化授权；降级为直接 SIGTERM。
+    process.stderr.write('osascript 退出失败，改用 SIGTERM：\n');
+    process.stderr.write(`${String(error.message || error).trim()}\n`);
+    await terminateInstalledProcesses(options);
+  }
   if (!await waitForExit(10_000, options)) {
     throw new Error('已安装 App 仍在运行；请正常退出后重新安装。');
   }
 }
 
 async function installMacLocal(options = {}) {
+  const installedAppPath = resolveInstalledAppPath(options.installRoot);
   const source = assertExpectedAppPath(
     options.sourcePath || builtAppPath,
     [path.dirname(builtAppPath)],
   );
   const target = assertExpectedAppPath(
     options.targetPath || installedAppPath,
-    ['/Applications'],
+    [path.dirname(path.resolve(installedAppPath))],
   );
   const runImpl = options.runImpl || run;
   const verifyImpl = options.verifyImpl || verifyPackage;
@@ -77,7 +96,10 @@ async function installMacLocal(options = {}) {
 
   const previousExists = await pathExists(target);
   const backupPath = previousExists ? backupPathFor() : null;
-  const stagingPath = path.join('/Applications', `.${productName}.installing-${process.pid}.app`);
+  const stagingPath = path.join(
+    path.dirname(path.resolve(target)),
+    `.${productName}.installing-${process.pid}.app`,
+  );
   const legacyVerificationOptions = {
     skipRuntimeEntitlements: true,
     skipRuntimeFileRequirements: true,

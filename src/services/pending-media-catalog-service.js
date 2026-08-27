@@ -2,8 +2,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const {
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_STATUS_FILE,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_STATUS_FILE,
 } = require('../constants');
 const { probeMediaSafe } = require('./media-tool-service');
 const { snapshotSource } = require('./pending-media-service');
@@ -88,8 +88,8 @@ async function readExistingProjectSources(projectRoot) {
     const projectPath = path.join(root, entry.name);
     try {
       const [manifest, status, stat] = await Promise.all([
-        fs.readFile(path.join(projectPath, CODEX_VIDEO_MANIFEST_FILE), 'utf8').then(JSON.parse),
-        fs.readFile(path.join(projectPath, CODEX_VIDEO_STATUS_FILE), 'utf8').then(JSON.parse),
+        fs.readFile(path.join(projectPath, VIDEO_MANIFEST_FILE), 'utf8').then(JSON.parse),
+        fs.readFile(path.join(projectPath, VIDEO_STATUS_FILE), 'utf8').then(JSON.parse),
         fs.stat(projectPath),
       ]);
       if (!manifest?.sourceDirectory) continue;

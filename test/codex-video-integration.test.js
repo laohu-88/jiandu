@@ -15,7 +15,7 @@ const {
   preparePendingMedia,
   snapshotSource,
 } = require('../src/services/pending-media-service');
-const { resolveToolPath } = require('../src/services/stage7-service');
+const { resolveToolPath } = require('../src/services/media-tool-service');
 
 async function mediaToolsAvailable() {
   return Boolean(
@@ -229,7 +229,7 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
     [`${analysis.titles.recommended}.fcpxml`],
   );
   assert.equal(
-    await fs.stat(path.join(internalRoot, 'Codex视频状态.json')).then(() => true),
+    await fs.stat(path.join(internalRoot, '视频状态.json')).then(() => true),
     true,
   );
   assert.equal(flatBuilt.artifacts.previewPath, null);
@@ -244,9 +244,9 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
   const protectedFiles = [
     path.join(built.projectPath, '00-项目总控/project.json'),
     path.join(built.projectPath, '00-项目总控/assets.json'),
-    path.join(built.projectPath, '00-项目总控/Codex视频分析.json'),
-    path.join(built.projectPath, '00-项目总控/Codex视频状态.json'),
-    path.join(built.projectPath, '00-项目总控/Codex视频素材清单.json'),
+    path.join(built.projectPath, '00-项目总控/视频分析.json'),
+    path.join(built.projectPath, '00-项目总控/视频状态.json'),
+    path.join(built.projectPath, '00-项目总控/视频素材清单.json'),
     built.artifacts.fcpxmlPath,
     built.artifacts.previewPath,
   ];

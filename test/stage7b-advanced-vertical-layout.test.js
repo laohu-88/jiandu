@@ -5,9 +5,9 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  CODEX_VIDEO_ANALYSIS_FILE,
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_STATUS_FILE,
+  VIDEO_ANALYSIS_FILE,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_STATUS_FILE,
 } = require('../src/constants');
 const {
   buildFcpxml,
@@ -26,7 +26,7 @@ const {
 } = require('../src/services/platform-variant-service');
 const { runMediaTool, probeMedia } = require('../src/services/media-tool-service');
 const { snapshotSource } = require('../src/services/pending-media-service');
-const { resolveToolPath } = require('../src/services/stage7-service');
+const { resolveToolPath } = require('../src/services/media-tool-service');
 
 function layout(mode, overrides = {}) {
   return {
@@ -360,7 +360,7 @@ test('布局修改后批准哈希与旧生成状态失效，未重新批准不�
   const sourceSnapshot = await snapshotSource(source);
   const context = fixtureContext((await loadDouyinProfile()).profile);
   await fs.writeFile(
-    path.join(project, CODEX_VIDEO_MANIFEST_FILE),
+    path.join(project, VIDEO_MANIFEST_FILE),
     `${JSON.stringify({
       schemaVersion: 1,
       sourceDirectory: source,
@@ -369,7 +369,7 @@ test('布局修改后批准哈希与旧生成状态失效，未重新批准不�
     }, null, 2)}\n`,
   );
   await fs.writeFile(
-    path.join(project, CODEX_VIDEO_ANALYSIS_FILE),
+    path.join(project, VIDEO_ANALYSIS_FILE),
     `${JSON.stringify({
       schemaVersion: 1,
       titles: { candidates: ['开发录屏'], recommended: '开发录屏', rationale: '真实录屏。' },
@@ -387,7 +387,7 @@ test('布局修改后批准哈希与旧生成状态失效，未重新批准不�
     }, null, 2)}\n`,
   );
   await fs.writeFile(
-    path.join(project, CODEX_VIDEO_STATUS_FILE),
+    path.join(project, VIDEO_STATUS_FILE),
     `${JSON.stringify({
       schemaVersion: 1,
       formats: { timeline: { fps: 30 } },
@@ -417,34 +417,4 @@ test('布局修改后批准哈希与旧生成状态失效，未重新批准不�
     buildDouyinVariant(project, created.variantId),
     { code: 'DOUYIN_PLAN_NOT_APPROVED' },
   );
-});
-
-test('规划页提供手机预览、可视化裁切、复制/恢复、分段和多变体真实入口', async () => {
-  const [douyinPage, editorCore, stylesIndex, stylesDouyin, stylesLegacy] = await Promise.all([
-    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'modules', 'douyin', 'douyin-page.js'), 'utf8'),
-    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'modules', 'douyin', 'editor-core.js'), 'utf8'),
-    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'styles', 'index.css'), 'utf8'),
-    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'styles', 'pages', 'douyin.css'), 'utf8'),
-    fs.readFile(path.join(__dirname, '..', 'src', 'renderer', 'styles', 'pages', 'douyin-legacy.css'), 'utf8'),
-  ]);
-  const renderer = `${douyinPage}\n${editorCore}`;
-  const styles = `${stylesIndex}\n${stylesDouyin}\n${stylesLegacy}`;
-  for (const text of [
-    '录屏局部放大',
-    '上下双层录屏',
-    '分段局部放大',
-    '复制上一镜头布局',
-    '恢复 Agent 建议值',
-    '从中点连续拆分',
-    '当前裁切区域',
-    '手机尺寸 / 成片结果',
-    '原画小字高度(px)',
-    '字幕类型',
-    '新建抖音变体',
-  ]) {
-    assert.match(renderer, new RegExp(text.replace(/[()]/g, '\\$&')));
-  }
-  assert.match(styles, /\.douyin-crop-box/);
-  assert.match(styles, /\.douyin-ui-mask/);
-  assert.match(styles, /\.douyin-readability-notice/);
 });

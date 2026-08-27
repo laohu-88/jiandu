@@ -159,26 +159,26 @@ function hyperframesOptions(options) {
 }
 
 function helpText() {
-  return `视频剪辑编排器 v3 Codex CLI
+  return `剪渡 CLI（jiandu）
 
 用法：
-  video-skill --help
-  video-skill prepare --source <一期素材目录> [--cache-root <目录>] [--json]
-  video-skill inspect-range --manifest <manifest.json> --asset-id <ID> --start <秒> --end <秒> [--interval <秒>] [--json]
-  video-skill validate-analysis --manifest <manifest.json> --analysis <analysis.json> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--json]
-  video-skill hyperframes-doctor [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--json]
-  video-skill build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--preview-width <像素>] [--preview-height <像素>] [--preview-fps <帧率>] [--hyperframes] [--hyperframes-flow <流程 JSON>] [--reuse-hyperframes-project <已验收项目>] [--hyperframes-duration <秒>] [--hyperframes-quality draft|standard|high] [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--open-fcpxml] [--json]
-  video-skill verify --project <v3 正式项目目录> [--json]
-  video-skill douyin-create --project <v3 正式项目目录> [--variant-id <ID>] [--plan <edit-plan.json>] [--json]
-  video-skill douyin-update --project <v3 正式项目目录> --plan <edit-plan.json> [--variant-id <ID>] [--expected-revision <数字>] [--json]
-  video-skill douyin-approve --project <v3 正式项目目录> [--variant-id <ID>] [--approved-warnings <JSON 数组>] [--json]
-  video-skill douyin-build --project <v3 正式项目目录> [--variant-id <ID>] [--json]
-  video-skill douyin-verify --project <v3 正式项目目录> [--variant-id <ID>] [--json]
-  video-skill handoff-update --handoff-task <task.json> [--attempt-id <attemptId>] --stage <状态> [--message <说明>] [--hyperframes-decision <enabled|disabled|attempted-rejected>] [--hyperframes-reason <理由>] [--hyperframes-gap <表达缺口>] [--hyperframes-quality-review <复核结果>] [--json]
-  video-skill handoff-complete --handoff-task <task.json> [--attempt-id <attemptId>] --project <v3 正式项目目录> [--json]
-  video-skill handoff-return --handoff-task <task.json> [--json]
+  jiandu --help
+  jiandu prepare --source <一期素材目录> [--cache-root <目录>] [--json]
+  jiandu inspect-range --manifest <manifest.json> --asset-id <ID> --start <秒> --end <秒> [--interval <秒>] [--json]
+  jiandu validate-analysis --manifest <manifest.json> --analysis <analysis.json> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--json]
+  jiandu hyperframes-doctor [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--json]
+  jiandu build --manifest <manifest.json> --analysis <analysis.json> --project-root <目录> --project-name <名称> [--orientation horizontal|vertical] [--width <像素>] [--height <像素>] [--fps <帧率>] [--preview-width <像素>] [--preview-height <像素>] [--preview-fps <帧率>] [--hyperframes] [--hyperframes-flow <流程 JSON>] [--reuse-hyperframes-project <已验收项目>] [--hyperframes-duration <秒>] [--hyperframes-quality draft|standard|high] [--hyperframes-executable <路径>] [--hyperframes-browser <路径>] [--open-fcpxml] [--json]
+  jiandu verify --project <v3 正式项目目录> [--json]
+  jiandu douyin-create --project <v3 正式项目目录> [--variant-id <ID>] [--plan <edit-plan.json>] [--json]
+  jiandu douyin-update --project <v3 正式项目目录> --plan <edit-plan.json> [--variant-id <ID>] [--expected-revision <数字>] [--json]
+  jiandu douyin-approve --project <v3 正式项目目录> [--variant-id <ID>] [--approved-warnings <JSON 数组>] [--json]
+  jiandu douyin-build --project <v3 正式项目目录> [--variant-id <ID>] [--json]
+  jiandu douyin-verify --project <v3 正式项目目录> [--variant-id <ID>] [--json]
+  jiandu handoff-update --handoff-task <task.json> [--attempt-id <attemptId>] --stage <状态> [--message <说明>] [--hyperframes-decision <enabled|disabled|attempted-rejected>] [--hyperframes-reason <理由>] [--hyperframes-gap <表达缺口>] [--hyperframes-quality-review <复核结果>] [--json]
+  jiandu handoff-complete --handoff-task <task.json> [--attempt-id <attemptId>] --project <v3 正式项目目录> [--json]
+  jiandu handoff-return --handoff-task <task.json> [--json]
 
-CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。用户项目根目录只写 FCPXML，默认不生成 MP4；机器文件和可选预览写入剪渡 Application Support。由 v3 发起时，把 --handoff-task 传给 prepare、validate-analysis、build 和 verify。
+CLI 不调用外部模型。prepare 只准备可供 Codex 查看和推理的媒体；build 只接受通过协议校验的分析结果。用户项目根目录只写 FCPXML，默认不生成 MP4；机器文件和可选预览写入剪渡 Application Support。由 App 发起时，把 --handoff-task 传给 prepare、validate-analysis、build 和 verify。
 `;
 }
 
@@ -248,7 +248,7 @@ function humanOutput(command, result) {
     return `交接任务已更新：${result.taskId}｜${result.stageMessage}\n`;
   }
   if (command === 'handoff-return') {
-    return `已请求返回视频剪辑编排器 v3：${result.taskId}\n`;
+    return `已请求返回剪渡：${result.taskId}\n`;
   }
   if (command === 'handoff-complete') {
     return `交接任务已完成并写回验收结果：${result.resultProjectPath}\n`;

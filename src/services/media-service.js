@@ -11,7 +11,7 @@ const {
   BRIEF_FILE,
 } = require('../constants');
 const { writeProjectState } = require('./project-service');
-const { resolveToolPath } = require('./stage7-service');
+const { resolveToolPath } = require('./media-tool-service');
 
 const execFileAsync = promisify(execFile);
 
@@ -564,6 +564,7 @@ async function generateBrief(projectPath) {
 }
 
 module.exports = {
+  createStableId,
   getAssetType,
   getOrientation,
   getAspectRatio,

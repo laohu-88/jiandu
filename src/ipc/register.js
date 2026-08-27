@@ -2,9 +2,7 @@ const { registerAppIpc } = require('./app-ipc');
 const { registerPendingIpc } = require('./pending-ipc');
 const { registerHandoffIpc } = require('./handoff-ipc');
 const { registerDialogIpc } = require('./dialog-ipc');
-const { registerEditIpc } = require('./edit-ipc');
 const { registerCatalogIpc } = require('./catalog-ipc');
-const { registerPlatformVariantIpc } = require('./platform-variant-ipc');
 const { registerShellIpc } = require('./shell-ipc');
 
 function registerIpc(ctx) {
@@ -12,9 +10,7 @@ function registerIpc(ctx) {
   registerPendingIpc(ctx);
   registerHandoffIpc(ctx);
   registerDialogIpc(ctx);
-  registerEditIpc(ctx);
   registerCatalogIpc(ctx);
-  registerPlatformVariantIpc(ctx);
   registerShellIpc(ctx);
 }
 

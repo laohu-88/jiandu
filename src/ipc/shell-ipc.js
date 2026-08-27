@@ -1,3 +1,5 @@
+const { detectEnvironment } = require('../services/media-tool-service');
+
 function registerShellIpc(ctx) {
   const { ipcMain, shell, resolveAuthorizedItem } = ctx;
 
@@ -14,6 +16,9 @@ function registerShellIpc(ctx) {
     if (error) throw new Error(error);
     return { opened: true };
   });
+
+  // 高级诊断：探测 ffmpeg / ffprobe 等外部工具可用性。
+  ipcMain.handle('shell:detect-environment', async () => detectEnvironment());
 }
 
 module.exports = { registerShellIpc };

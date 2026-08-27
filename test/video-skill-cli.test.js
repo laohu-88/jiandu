@@ -5,13 +5,13 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 
-const cliPath = path.resolve(__dirname, '..', 'bin', 'video-skill.js');
+const cliPath = path.resolve(__dirname, '..', 'bin', 'jiandu.js');
 const {
   formatOptions,
   hyperframesOptions,
   parseArguments,
   shouldMarkHandoffFailed,
-} = require('../bin/video-skill');
+} = require('../bin/jiandu');
 const { createHandoffTask, readHandoffTask } = require('../src/services/handoff-task-service');
 const { snapshotSource, preparePendingMedia } = require('../src/services/pending-media-service');
 

@@ -2,9 +2,9 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const {
-  CODEX_VIDEO_ANALYSIS_FILE,
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_STATUS_FILE,
+  VIDEO_ANALYSIS_FILE,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_STATUS_FILE,
   LEGACY_PROJECT_DIRS,
   PROJECT_FILE,
 } = require('../constants');
@@ -23,9 +23,9 @@ function isDirectChild(rootPath, candidatePath) {
 async function looksLikeProject(directoryPath) {
   const markers = [
     PROJECT_FILE,
-    CODEX_VIDEO_STATUS_FILE,
-    CODEX_VIDEO_ANALYSIS_FILE,
-    CODEX_VIDEO_MANIFEST_FILE,
+    VIDEO_STATUS_FILE,
+    VIDEO_ANALYSIS_FILE,
+    VIDEO_MANIFEST_FILE,
     ...LEGACY_PROJECT_DIRS,
   ];
   for (const marker of markers) {

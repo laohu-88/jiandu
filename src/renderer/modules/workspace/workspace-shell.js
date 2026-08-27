@@ -7,7 +7,7 @@
     return (root.PlannerDom || root.PlannerUtils).createTextElement(tag, value, className);
   }
 
-  function mount({ data, root: rootEl, router }) {
+  function mount({ data, root: rootEl }) {
     const workspace = rootEl.querySelector('#workspaceView');
     if (!workspace) return;
     const header = workspace.querySelector('#workspaceHeader');
@@ -15,15 +15,9 @@
       brief: workspace.querySelector('#pageBrief'),
       processing: workspace.querySelector('#pageProcessing'),
       results: workspace.querySelector('#pageResults'),
-      advanced: workspace.querySelector('#pageAdvanced'),
     };
 
-    root.PlannerOverviewPage?.mount?.({ data, root: rootEl, router, pageEl: workspace.querySelector('#pageOverview') });
-    root.PlannerMainFilmPage?.mount?.({ data, root: rootEl, router, pageEl: workspace.querySelector('#pageMain') });
-    root.PlannerDouyinPage?.mount?.({ data, root: rootEl, router, pageEl: workspace.querySelector('#pageDouyin') });
-    root.PlannerAssetsPage?.mount?.({ data, root: rootEl, router, pageEl: workspace.querySelector('#pageAssets') });
-    root.PlannerReviewPage?.mount?.({ data, root: rootEl, router, pageEl: workspace.querySelector('#pageReview') });
-    root.PlannerOutputsPage?.mount?.({ data, root: rootEl, router, pageEl: workspace.querySelector('#pageOutputs') });
+    root.PlannerTaskPages?.mount?.({ data, root: rootEl });
 
     function renderHeader(snap) {
       if (!header) return;
@@ -34,15 +28,12 @@
       left.append(text('h2', info?.name || snap.currentEpisode?.name || '剪辑工作区'));
       const meta = document.createElement('div');
       meta.className = 'workspace-header-meta';
-      const engine = text('span', 'Codex', 'status-pill');
-      engine.type = 'button';
       const task = snap.runningOverlays?.handoffTask;
       const locked = ['handed_off', 'running'].includes(task?.lifecycle);
-      engine.disabled = Boolean(locked);
       meta.append(
-        engine,
         text('span', info?.status || '准备开始', 'status-pill'),
-      );
+        locked ? text('span', 'AI 处理中', 'status-pill accent') : null,
+      ).forEach((node) => node && meta.appendChild(node));
       const back = text('button', '返回项目列表', 'button ghost');
       back.type = 'button';
       back.addEventListener('click', () => data.closeProject());
@@ -52,7 +43,7 @@
     function syncPages(snap) {
       if (!snap.route.sessionOpen) return;
       let phase = snap.route.workspacePhase || snap.route.projectPage || 'brief';
-      if (snap.runningOverlays?.handoffTask && !['results', 'advanced', 'revise'].includes(phase)) {
+      if (snap.runningOverlays?.handoffTask && phase !== 'revise') {
         const status = snap.runningOverlays.handoffTask.status;
         if (['completed', 'completed_with_warnings', 'failed'].includes(status)) phase = 'results';
         else if (status === 'cancelled') phase = 'brief';
@@ -60,7 +51,7 @@
       }
       Object.entries(pages).forEach(([id, el]) => {
         if (!el) return;
-        el.classList.toggle('hidden', id === 'advanced' || (id !== phase && !(phase === 'revise' && id === 'brief')));
+        el.classList.toggle('hidden', id !== phase);
       });
       renderHeader(snap);
     }

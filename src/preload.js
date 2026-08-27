@@ -48,24 +48,6 @@ const api = {
   selectRoot: () => ipcRenderer.invoke('dialog:select-root'),
   selectMaterialDirectory: () => ipcRenderer.invoke('dialog:select-material'),
 }),
-  // --- edit-api.js ---
-  ...({
-  recognizeEditMaterial: (sourceDirectory) =>
-    ipcRenderer.invoke('edit:recognize', sourceDirectory),
-  buildEditPreflight: (sourceDirectory) =>
-    ipcRenderer.invoke('edit:preflight', sourceDirectory),
-  createEditJob: (args) => ipcRenderer.invoke('edit:create-job', args),
-  runEditJob: (jobPath) => ipcRenderer.invoke('edit:run-job', jobPath),
-  readEditJob: (jobPath) => ipcRenderer.invoke('edit:read-job', jobPath),
-  listEditJobs: () => ipcRenderer.invoke('edit:list-jobs'),
-  updateEditJob: (args) => ipcRenderer.invoke('edit:update-job', args),
-  openEditJobInFinalCut: (jobPathOrProjectPath) =>
-    ipcRenderer.invoke('edit:open-final-cut', jobPathOrProjectPath),
-  openEditProjectFolder: (projectPath) =>
-    ipcRenderer.invoke('edit:open-project', projectPath),
-  showEditEditorialReview: (projectPath) =>
-    ipcRenderer.invoke('edit:show-editorial-review', projectPath),
-}),
   // --- catalog-api.js ---
   ...({
   scanProjectCatalog: () => ipcRenderer.invoke('catalog:scan'),
@@ -74,42 +56,12 @@ const api = {
   runProjectArtifactAction: (args) => ipcRenderer.invoke('catalog:artifact-action', args),
   openProjectFcpxmlInFinalCut: (projectPath) =>
     ipcRenderer.invoke('catalog:open-final-cut', projectPath),
-  loadEditorialReview: (projectPath) =>
-    ipcRenderer.invoke('catalog:load-editorial-review', projectPath),
-  saveEditorialReview: (args) =>
-    ipcRenderer.invoke('catalog:save-editorial-review', args),
-  getConfirmedCaptions: (projectPath) =>
-    ipcRenderer.invoke('catalog:get-confirmed-captions', projectPath),
-  previewCaptionFcpxmlExport: (projectPath) =>
-    ipcRenderer.invoke('catalog:preview-caption-fcpxml-export', projectPath),
-  exportCaptionFcpxml: (projectPath) =>
-    ipcRenderer.invoke('catalog:export-caption-fcpxml', projectPath),
-}),
-  // --- platform-variant-api.js ---
-  ...({
-  createDouyinVariant: (args) =>
-    ipcRenderer.invoke('platform-variant:douyin-create', args),
-  readDouyinVariant: (args) =>
-    ipcRenderer.invoke('platform-variant:douyin-read', args),
-  saveDouyinVariant: (args) =>
-    ipcRenderer.invoke('platform-variant:douyin-save', args),
-  analyzeDouyinShotTracking: (args) =>
-    ipcRenderer.invoke('platform-variant:douyin-analyze-tracking', args),
-  approveDouyinVariant: (args) =>
-    ipcRenderer.invoke('platform-variant:douyin-approve', args),
-  buildDouyinVariant: (args) =>
-    ipcRenderer.invoke('platform-variant:douyin-build', args),
-  verifyDouyinVariant: (args) =>
-    ipcRenderer.invoke('platform-variant:douyin-verify', args),
-  runDouyinArtifactAction: (args) =>
-    ipcRenderer.invoke('platform-variant:douyin-artifact', args),
-  openDouyinFcpxmlInFinalCut: (args) =>
-    ipcRenderer.invoke('platform-variant:douyin-open-final-cut', args),
 }),
   // --- shell-api.js ---
   ...({
   showItemInFolder: (args) => ipcRenderer.invoke('shell:show-item', args),
   openFolder: (args) => ipcRenderer.invoke('shell:open-folder', args),
+  detectEnvironment: () => ipcRenderer.invoke('shell:detect-environment'),
 }),
 };
 

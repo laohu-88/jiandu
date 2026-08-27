@@ -5,9 +5,9 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  CODEX_VIDEO_ANALYSIS_FILE,
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_STATUS_FILE,
+  VIDEO_ANALYSIS_FILE,
+  VIDEO_MANIFEST_FILE,
+  VIDEO_STATUS_FILE,
 } = require('../src/constants');
 const {
   alignSourceTime,
@@ -31,7 +31,7 @@ const {
 } = require('../src/services/platform-variant-service');
 const { probeMedia, runMediaTool } = require('../src/services/media-tool-service');
 const { snapshotSource } = require('../src/services/pending-media-service');
-const { resolveToolPath } = require('../src/services/stage7-service');
+const { resolveToolPath } = require('../src/services/media-tool-service');
 
 const SAFE_ZONE = { x: 0.07, y: 0.08, width: 0.72, height: 0.72 };
 
@@ -466,13 +466,13 @@ test('跟踪修改会令旧批准失效，revision 递增后必须重新批准',
   const sourceSnapshot = await snapshotSource(source);
   const { profile } = await loadDouyinProfile();
   const fixture = context(profile);
-  await fs.writeFile(path.join(project, CODEX_VIDEO_MANIFEST_FILE), `${JSON.stringify({
+  await fs.writeFile(path.join(project, VIDEO_MANIFEST_FILE), `${JSON.stringify({
     schemaVersion: 1,
     sourceDirectory: source,
     sourceSnapshot,
     items: fixture.manifest.items,
   }, null, 2)}\n`);
-  await fs.writeFile(path.join(project, CODEX_VIDEO_ANALYSIS_FILE), `${JSON.stringify({
+  await fs.writeFile(path.join(project, VIDEO_ANALYSIS_FILE), `${JSON.stringify({
     schemaVersion: 1,
     theme: { summary: '人物移动', rationale: '真实动作。', confidence: 1, folderNameConflict: false },
     titles: { candidates: ['人物移动'], recommended: '人物移动', rationale: '真实动作。' },
@@ -480,7 +480,7 @@ test('跟踪修改会令旧批准失效，revision 递增后必须重新批准',
     lightCaptionPlan: [],
     timeline: { orientation: 'horizontal', width: 1920, height: 1080, fps: 30, shots: [], markers: [] },
   }, null, 2)}\n`);
-  await fs.writeFile(path.join(project, CODEX_VIDEO_STATUS_FILE), `${JSON.stringify({
+  await fs.writeFile(path.join(project, VIDEO_STATUS_FILE), `${JSON.stringify({
     schemaVersion: 1,
     formats: { timeline: { fps: 30 } },
     assetMappings: [{

@@ -302,9 +302,9 @@ async function createFixtureProject(label = 'stage5d') {
   const status = statusFor([video, image]);
   await fs.writeFile(path.join(assetsDir, video.filename), 'fake-video');
   await fs.writeFile(path.join(assetsDir, image.filename), 'fake-image');
-  await fs.writeFile(path.join(control, 'Codex视频分析.json'), `${JSON.stringify(analysis, null, 2)}\n`);
-  await fs.writeFile(path.join(control, 'Codex视频素材清单.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  await fs.writeFile(path.join(control, 'Codex视频状态.json'), `${JSON.stringify(status, null, 2)}\n`);
+  await fs.writeFile(path.join(control, '视频分析.json'), `${JSON.stringify(analysis, null, 2)}\n`);
+  await fs.writeFile(path.join(control, '视频素材清单.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  await fs.writeFile(path.join(control, '视频状态.json'), `${JSON.stringify(status, null, 2)}\n`);
   await fs.writeFile(path.join(control, 'project.json'), `${JSON.stringify({
     projectName: 'stage5d-fixture',
     version: '3',
@@ -363,9 +363,9 @@ test('没有 Stage 5C 数据的旧项目正常打开', async () => {
     confidence: 0.8,
   }], [shot('shot-1', 'old_1', { durationSec: 2, outSec: 2, audioMode: 'mute' })]);
   const manifest = baseManifest([imageItem('old_1')]);
-  await fs.writeFile(path.join(root, '00-项目总控', 'Codex视频分析.json'), `${JSON.stringify(analysis, null, 2)}\n`);
-  await fs.writeFile(path.join(root, '00-项目总控', 'Codex视频素材清单.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  await fs.writeFile(path.join(root, '00-项目总控', 'Codex视频状态.json'), `${JSON.stringify(statusFor(manifest.items), null, 2)}\n`);
+  await fs.writeFile(path.join(root, '00-项目总控', '视频分析.json'), `${JSON.stringify(analysis, null, 2)}\n`);
+  await fs.writeFile(path.join(root, '00-项目总控', '视频素材清单.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  await fs.writeFile(path.join(root, '00-项目总控', '视频状态.json'), `${JSON.stringify(statusFor(manifest.items), null, 2)}\n`);
   const model = await buildEditorialReviewModel(root);
   assert.equal(model.available, false);
   assert.match(model.message, /暂无解释与轻字幕分析/);
@@ -595,7 +595,7 @@ test('人工编辑文本不会被重新分析覆盖，同时可出现新建议',
     ],
   };
   await fs.writeFile(
-    path.join(root, '00-项目总控', 'Codex视频分析.json'),
+    path.join(root, '00-项目总控', '视频分析.json'),
     `${JSON.stringify(nextAnalysis, null, 2)}\n`,
   );
   const model = await buildEditorialReviewModel(root, {
@@ -675,7 +675,7 @@ test('preserveFullClipLocked / preserveOriginalAudioLocked 可保存并覆盖自
   analysis.assets[0].audioAnalysis.audioEnabled = false;
   analysis.assets[0].audioAnalysis.muteReason = 'user_brief';
   await fs.writeFile(
-    path.join(root, '00-项目总控', 'Codex视频分析.json'),
+    path.join(root, '00-项目总控', '视频分析.json'),
     `${JSON.stringify(analysis, null, 2)}\n`,
   );
   await saveEditorialReview(root, {
@@ -833,7 +833,7 @@ test('本阶段不会增加 FCP Title / Marker，也不会修改已有 FCPXML', 
   });
 
   const afterAnalysis = JSON.parse(
-    await fs.readFile(path.join(root, '00-项目总控', 'Codex视频分析.json'), 'utf8'),
+    await fs.readFile(path.join(root, '00-项目总控', '视频分析.json'), 'utf8'),
   );
   const afterXml = await fs.readFile(xmlPath, 'utf8');
   assert.equal(afterAnalysis.timeline.markers.length, beforeMarkers);

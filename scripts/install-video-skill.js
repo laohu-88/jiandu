@@ -3,7 +3,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 
-const SKILL_NAME = 'video-cut-planner';
+const SKILL_NAME = 'jiandu';
+const LEGACY_SKILL_NAMES = ['video-cut-planner'];
 const source = path.resolve(__dirname, '..', 'skills', SKILL_NAME);
 
 async function listFiles(directory, root = directory, files = []) {
@@ -36,7 +37,7 @@ function parseTarget(argv) {
 async function assertCompatibleTarget(target) {
   const skillPath = path.join(target, 'SKILL.md');
   const text = await fs.readFile(skillPath, 'utf8').catch(() => null);
-  if (text && !/^name:\s*video-cut-planner\s*$/m.test(text)) {
+  if (text && !/^name:\s*jiandu\s*$/m.test(text)) {
     throw new Error(`拒绝覆盖非 ${SKILL_NAME} Skill：${target}`);
   }
 }

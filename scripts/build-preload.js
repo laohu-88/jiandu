@@ -16,9 +16,7 @@ const order = [
   'pending-api.js',
   'handoff-api.js',
   'dialog-api.js',
-  'edit-api.js',
   'catalog-api.js',
-  'platform-variant-api.js',
   'shell-api.js',
 ];
 

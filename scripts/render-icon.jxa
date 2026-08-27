@@ -1,0 +1,40 @@
+// usage: osascript -l JavaScript render-icon.jxa <svgPath> <outPng> <size>
+ObjC.import('AppKit');
+ObjC.import('Foundation');
+
+function run(argv) {
+  const svgPath = argv[0];
+  const outPath = argv[1];
+  const size = parseInt(argv[2], 10);
+
+  const data = $.NSData.dataWithContentsOfFile(svgPath);
+  if (data.isNil()) { return 'cannot read ' + svgPath; }
+
+  const image = $.NSImage.alloc.initWithData(data);
+  if (image.isNil()) { return 'cannot parse svg'; }
+
+  const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(
+    null, size, size, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
+  if (rep.isNil()) { return 'cannot create bitmap rep'; }
+
+  const ctx = $.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep);
+  if (ctx.isNil()) { return 'cannot create graphics context'; }
+  $.NSGraphicsContext.saveGraphicsState;
+  $.NSGraphicsContext.setCurrentContext(ctx);
+  ctx.setShouldAntialias(true);
+  ctx.setImageInterpolation($.NSImageInterpolationHigh);
+
+  image.setSize({ width: size, height: size });
+  image.drawInRectFromRectOperationFraction(
+    $.NSMakeRect(0, 0, size, size),
+    $.NSZeroRect,
+    $.NSCompositingOperationCopy,
+    1.0
+  );
+
+  $.NSGraphicsContext.restoreGraphicsState;
+
+  const png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $.NSDictionary.dictionary);
+  const ok = png.writeToFileAtomically(outPath, true);
+  return ok ? 'OK' : 'write failed';
+}

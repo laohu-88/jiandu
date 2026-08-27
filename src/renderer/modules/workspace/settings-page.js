@@ -23,14 +23,6 @@
       engine.append(text('p', 'Codex（唯一可执行 provider）', 'muted'));
       view.appendChild(engine);
 
-      const grok = root.PlannerDom.createResultSection('Grok Build');
-      const grokStatus = snap.config?.providers?.providers?.grokBuild;
-      grok.append(text('p', grokStatus
-        ? `${grokStatus.installed ? '已安装' : '未安装'} · ${grokStatus.configured ? '已配置' : '未配置'} · ${grokStatus.available ? '可用' : '不可用'}`
-        : '正在检测…', 'muted'));
-      if (grokStatus?.reason) grok.append(text('p', grokStatus.reason, 'muted'));
-      view.appendChild(grok);
-
       const library = root.PlannerDom.createResultSection('素材库位置');
       library.appendChild(root.PlannerDom.createDefinitionGrid([
         ['待处理', snap.config?.pendingRoot || '/Users/example/Desktop/视频待处理'],
@@ -66,10 +58,31 @@
       diag.appendChild(root.PlannerDom.createDefinitionGrid([
         ['版本', snap.config?.version || '—'],
         ['工作区', snap.config?.workspace || '—'],
-        ['FFmpeg', snap.config?.ffmpeg || '本地媒体处理可用'],
         ['当前任务', task?.taskId || '无'],
         ['任务记录', retention],
       ].filter((item) => item[1])));
+
+      const envButton = text('button', '探测本机媒体工具', 'button ghost');
+      envButton.type = 'button';
+      envButton.addEventListener('click', async () => {
+        try {
+          const environment = await window.plannerApi.detectEnvironment();
+          const rows = [['FFmpeg', environment?.ffmpeg?.available ? `可用（${environment.ffmpeg.version || '已安装'}）` : environment?.ffmpeg?.detail || '不可用']];
+          if (environment?.subtitleCommand) {
+            rows.push(['字幕工具', environment.subtitleCommand.available
+              ? `可用（${environment.subtitleCommand.command}）`
+              : environment.subtitleCommand.detail || '不可用']);
+          }
+          const old = diag.querySelector('.environment-grid');
+          if (old) old.remove();
+          diag.insertBefore(root.PlannerDom.createDefinitionGrid(rows), envButton);
+          const grid = diag.querySelector('.definition-grid:last-of-type');
+          grid.classList.add('environment-grid');
+        } catch (error) {
+          data.toast(root.PlannerUtils.getUserErrorMessage(error), true);
+        }
+      });
+      diag.appendChild(envButton);
       view.appendChild(diag);
     }
 

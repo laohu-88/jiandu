@@ -5,10 +5,6 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
-  const douyin = (typeof require === 'function' ? (() => { try { return require('./douyin-workflow-view-model'); } catch { return null; } })() : null)
-    || root.DouyinWorkflowViewModel;
-  const { DOUYIN_STAGES } = douyin;
-
 const NAV_ITEMS = Object.freeze([
   { id: 'pending', label: '待处理' },
   { id: 'library', label: '项目' },
@@ -19,19 +15,20 @@ const PROJECT_PAGES = Object.freeze([
   { id: 'brief', label: '剪辑准备' },
   { id: 'processing', label: '处理中' },
   { id: 'results', label: '结果' },
-  { id: 'advanced', label: '高级调整' },
 ]);
 
+// 旧工作区页面一律归并到三页薄壳；advanced 概念已退出产品。
 const LEGACY_PAGE_MAP = Object.freeze({
-  overview: 'brief',
+  overview: 'results',
   main: 'results',
   douyin: 'results',
-  assets: 'advanced',
-  review: 'advanced',
+  assets: 'results',
+  review: 'results',
+  advanced: 'results',
   outputs: 'results',
   plan: 'brief',
-  issues: 'advanced',
-  preview: 'advanced',
+  issues: 'results',
+  preview: 'results',
   deliver: 'results',
 });
 
@@ -301,18 +298,18 @@ function buildWorkspaceHeader({
 function buildAppRouteState(partial = {}) {
   const navIds = new Set(NAV_ITEMS.map((item) => item.id));
   const pageIds = new Set(PROJECT_PAGES.map((item) => item.id));
-  const stageIds = new Set(DOUYIN_STAGES.map((item) => item.id));
+  const stageIds = new Set(['plan', 'issues', 'preview', 'deliver']);
   const assetFilters = new Set(ASSET_FILTERS);
 
   let nav = navIds.has(partial.nav) ? partial.nav : (partial.nav === 'tasks' ? 'library' : 'pending');
   if (!navIds.has(nav)) nav = 'pending';
   const requestedPage = LEGACY_PAGE_MAP[partial.projectPage] || partial.projectPage;
   const projectPage = pageIds.has(requestedPage) ? requestedPage : 'brief';
-  const douyinStage = stageIds.has(partial.douyinStage) ? partial.douyinStage : 'plan';
+  const douyinStage = partial.douyinStage != null && stageIds.has(partial.douyinStage) ? partial.douyinStage : 'plan';
   const assetFilter = assetFilters.has(partial.assetFilter) ? partial.assetFilter : 'all';
   const platformMode = partial.platformMode === 'main' ? 'main' : 'douyin';
   const engine = 'codex';
-  const workspacePhase = ['brief', 'processing', 'results', 'revise', 'advanced'].includes(partial.workspacePhase)
+  const workspacePhase = ['brief', 'processing', 'results', 'revise'].includes(partial.workspacePhase)
     ? partial.workspacePhase
     : projectPage;
 

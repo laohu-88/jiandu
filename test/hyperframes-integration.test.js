@@ -15,7 +15,7 @@ const {
   preparePendingMedia,
   snapshotSource,
 } = require('../src/services/pending-media-service');
-const { resolveToolPath } = require('../src/services/stage7-service');
+const { resolveToolPath } = require('../src/services/media-tool-service');
 
 async function prerequisitesAvailable() {
   if (!(await resolveToolPath('ffmpeg'))

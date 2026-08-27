@@ -3,12 +3,12 @@ const path = require('node:path');
 const { version: PACKAGE_VERSION } = require('../package.json');
 
 const APP_NAME = '剪渡';
-const INTERNAL_APP_NAME = 'JianDu';
 const APP_VERSION = `v${PACKAGE_VERSION}`;
 const APP_ID = 'com.laohu.video-cut-planner-v3';
 const USER_DATA_DIRNAME = APP_NAME;
 const LEGACY_USER_DATA_DIRNAME = '视频剪辑编排器 v3';
-const CODEX_WORKSPACE_ROOT = '/Users/example/Projects/video-cut-planner-v3';
+// 工作区根目录跟随仓库实际位置，目录改名后不再失效。
+const WORKSPACE_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_PROJECT_ROOT = path.join(os.homedir(), 'Desktop', '视频素材库');
 const DEFAULT_PENDING_ROOT = path.join(os.homedir(), 'Desktop', '视频待处理');
 const APPLICATION_SUPPORT_ROOT = path.join(os.homedir(), 'Library', 'Application Support', APP_NAME);
@@ -53,27 +53,38 @@ const ASSETS_FILE = path.join(CONTROL_DIR, 'assets.json');
 const AI_ANALYSIS_FILE = path.join(CONTROL_DIR, 'ai-analysis.json');
 const AI_MATERIAL_REPORT_FILE = path.join(CONTROL_DIR, 'ai素材报告.md');
 const AI_EDIT_SUGGESTION_FILE = path.join(CONTROL_DIR, '剪辑建议.md');
-const CODEX_VIDEO_MANIFEST_FILE = path.join(CONTROL_DIR, 'Codex视频素材清单.json');
-const CODEX_VIDEO_ANALYSIS_FILE = path.join(CONTROL_DIR, 'Codex视频分析.json');
-const CODEX_VIDEO_STATUS_FILE = path.join(CONTROL_DIR, 'Codex视频状态.json');
-const CODEX_VIDEO_SUMMARY_FILE = path.join(CONTROL_DIR, 'Codex视频项目摘要.md');
-const CODEX_VIDEO_HYPERFRAMES_DIR = path.join(CONTROL_DIR, 'HyperFrames');
+// Agent-neutral 数据文件名（v3.2 起写入新名，读取兼容旧 Codex 前缀名）。
+const VIDEO_MANIFEST_FILE = path.join(CONTROL_DIR, '视频素材清单.json');
+const VIDEO_ANALYSIS_FILE = path.join(CONTROL_DIR, '视频分析.json');
+const VIDEO_STATUS_FILE = path.join(CONTROL_DIR, '视频状态.json');
+const VIDEO_SUMMARY_FILE = path.join(CONTROL_DIR, '视频项目摘要.md');
+const VIDEO_HYPERFRAMES_DIR = path.join(CONTROL_DIR, 'HyperFrames');
+// 一次性兼容：旧版本写入的 Codex 前缀文件名。
+const LEGACY_VIDEO_MANIFEST_FILENAME = 'Codex视频素材清单.json';
+const LEGACY_VIDEO_ANALYSIS_FILENAME = 'Codex视频分析.json';
+const LEGACY_VIDEO_STATUS_FILENAME = 'Codex视频状态.json';
+const LEGACY_VIDEO_SUMMARY_FILENAME = 'Codex视频项目摘要.md';
 const EDITORIAL_REVIEW_FILE = path.join(CONTROL_DIR, 'editorial-review.json');
 const PLATFORM_VARIANTS_FILE = path.join(CONTROL_DIR, 'platform-variants.json');
 const PLATFORM_VARIANTS_DIR = path.join(EXPORT_DIR, '平台变体');
 const DOUYIN_PLATFORM_PROFILE_FILE = path.join('config', 'platforms', 'douyin.json');
 // New projects keep only user-facing deliverables in the project root. These
 // names remain as relative legacy paths so old projects can still be read.
-const CODEX_VIDEO_FCPXML_DIR = '.';
-const CODEX_VIDEO_PREVIEW_DIR = '.';
+const VIDEO_FCPXML_DIR = '.';
+const VIDEO_PREVIEW_DIR = '.';
 // New projects keep machine state outside the visible project directory. The
 // legacy relative constants above remain readable by old-project adapters.
 const INTERNAL_PROJECT_FILE = 'project.json';
 const INTERNAL_ASSETS_FILE = 'assets.json';
-const INTERNAL_CODEX_VIDEO_MANIFEST_FILE = 'Codex视频素材清单.json';
-const INTERNAL_CODEX_VIDEO_ANALYSIS_FILE = 'Codex视频分析.json';
-const INTERNAL_CODEX_VIDEO_STATUS_FILE = 'Codex视频状态.json';
-const INTERNAL_CODEX_VIDEO_SUMMARY_FILE = 'Codex视频项目摘要.md';
+const INTERNAL_VIDEO_MANIFEST_FILE = '视频素材清单.json';
+const INTERNAL_VIDEO_ANALYSIS_FILE = '视频分析.json';
+const INTERNAL_VIDEO_STATUS_FILE = '视频状态.json';
+const INTERNAL_VIDEO_SUMMARY_FILE = '视频项目摘要.md';
+// 内部目录旧文件名的兼容读取入口。
+const LEGACY_INTERNAL_VIDEO_MANIFEST_FILE = 'Codex视频素材清单.json';
+const LEGACY_INTERNAL_VIDEO_ANALYSIS_FILE = 'Codex视频分析.json';
+const LEGACY_INTERNAL_VIDEO_STATUS_FILE = 'Codex视频状态.json';
+const LEGACY_INTERNAL_VIDEO_SUMMARY_FILE = 'Codex视频项目摘要.md';
 const INTERNAL_EDITORIAL_REVIEW_FILE = 'editorial-review.json';
 const INTERNAL_PLATFORM_VARIANTS_FILE = 'platform-variants.json';
 const INTERNAL_ARTIFACT_DIRS = Object.freeze({
@@ -106,13 +117,12 @@ const SUBTITLE_REPORT_FILE = path.join(SUBTITLE_DIR, 'subtitle-report.md');
 
 module.exports = {
   APP_NAME,
-  INTERNAL_APP_NAME,
   APP_VERSION,
   APP_ID,
   PACKAGE_VERSION,
   USER_DATA_DIRNAME,
   LEGACY_USER_DATA_DIRNAME,
-  CODEX_WORKSPACE_ROOT,
+  WORKSPACE_ROOT,
   DEFAULT_PROJECT_ROOT,
   DEFAULT_PENDING_ROOT,
   APPLICATION_SUPPORT_ROOT,
@@ -136,23 +146,31 @@ module.exports = {
   AI_ANALYSIS_FILE,
   AI_MATERIAL_REPORT_FILE,
   AI_EDIT_SUGGESTION_FILE,
-  CODEX_VIDEO_MANIFEST_FILE,
-  CODEX_VIDEO_ANALYSIS_FILE,
-  CODEX_VIDEO_STATUS_FILE,
-  CODEX_VIDEO_SUMMARY_FILE,
-  CODEX_VIDEO_HYPERFRAMES_DIR,
+  VIDEO_MANIFEST_FILE,
+  LEGACY_VIDEO_MANIFEST_FILENAME,
+  VIDEO_ANALYSIS_FILE,
+  LEGACY_VIDEO_ANALYSIS_FILENAME,
+  VIDEO_STATUS_FILE,
+  LEGACY_VIDEO_STATUS_FILENAME,
+  VIDEO_SUMMARY_FILE,
+  LEGACY_VIDEO_SUMMARY_FILENAME,
+  VIDEO_HYPERFRAMES_DIR,
   EDITORIAL_REVIEW_FILE,
   PLATFORM_VARIANTS_FILE,
   PLATFORM_VARIANTS_DIR,
   DOUYIN_PLATFORM_PROFILE_FILE,
-  CODEX_VIDEO_FCPXML_DIR,
-  CODEX_VIDEO_PREVIEW_DIR,
+  VIDEO_FCPXML_DIR,
+  VIDEO_PREVIEW_DIR,
   INTERNAL_PROJECT_FILE,
   INTERNAL_ASSETS_FILE,
-  INTERNAL_CODEX_VIDEO_MANIFEST_FILE,
-  INTERNAL_CODEX_VIDEO_ANALYSIS_FILE,
-  INTERNAL_CODEX_VIDEO_STATUS_FILE,
-  INTERNAL_CODEX_VIDEO_SUMMARY_FILE,
+  INTERNAL_VIDEO_MANIFEST_FILE,
+  LEGACY_INTERNAL_VIDEO_MANIFEST_FILE,
+  INTERNAL_VIDEO_ANALYSIS_FILE,
+  LEGACY_INTERNAL_VIDEO_ANALYSIS_FILE,
+  INTERNAL_VIDEO_STATUS_FILE,
+  LEGACY_INTERNAL_VIDEO_STATUS_FILE,
+  INTERNAL_VIDEO_SUMMARY_FILE,
+  LEGACY_INTERNAL_VIDEO_SUMMARY_FILE,
   INTERNAL_EDITORIAL_REVIEW_FILE,
   INTERNAL_PLATFORM_VARIANTS_FILE,
   INTERNAL_ARTIFACT_DIRS,

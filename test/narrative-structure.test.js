@@ -329,7 +329,7 @@ test('剪辑工作区展示素材识别与额外要求，不再展示旧交接�
   const [html, pending, edit] = await Promise.all([
     fs.readFile(path.join(__dirname, '../src/renderer/index.html'), 'utf8'),
     fs.readFile(path.join(__dirname, '../src/renderer/modules/pending/pending-page.js'), 'utf8'),
-    fs.readFile(path.join(__dirname, '../src/renderer/modules/workspace/edit-workspace.js'), 'utf8'),
+    fs.readFile(path.join(__dirname, '../src/renderer/modules/workspace/task-pages.js'), 'utf8'),
   ]);
   assert.match(html, /id="pageBrief"/);
   assert.match(pending, /开始剪辑/);
