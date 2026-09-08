@@ -6,6 +6,7 @@ const {
   validateRequiredLightCaptions,
 } = require('./editing-contract-service');
 const DOUYIN_PROFILE = require('../../config/platforms/douyin.json');
+const { validateCleanupPlan } = require('./source-cleanup-service');
 
 const ASSET_STATUSES = new Set(['adopt', 'candidate', 'reject']);
 const FIT_MODES = new Set(['contain', 'cover']);
@@ -559,6 +560,7 @@ function validateVideoAnalysis(analysis, manifest) {
     if (!ASSET_STATUSES.has(asset.status)) errors.push(`${field}.status 无效。`);
     if (!isNonEmptyString(asset.reason, 1000)) errors.push(`${field}.reason 无效。`);
     if (!isConfidence(asset.confidence)) errors.push(`${field}.confidence 必须在 0 到 1 之间。`);
+    validateCleanupPlan(asset.cleanup, `${field}.cleanup`, errors);
     if (!Array.isArray(asset.ranges)) {
       errors.push(`${field}.ranges 必须是数组。`);
     } else {
@@ -662,6 +664,7 @@ function validateVideoAnalysis(analysis, manifest) {
       if (shot.reviewRequired != null && typeof shot.reviewRequired !== 'boolean') {
         errors.push(`${field}.reviewRequired 必须是布尔值。`);
       }
+      validateCleanupPlan(shot.cleanup, `${field}.cleanup`, errors);
     }
 
     const duration = timelineDuration(shots);

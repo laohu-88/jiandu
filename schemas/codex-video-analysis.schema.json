@@ -612,6 +612,7 @@
         "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
         "ranges": { "type": "array", "items": { "$ref": "#/$defs/range" } },
         "confidence": { "$ref": "#/$defs/confidence" },
+        "cleanup": { "$ref": "#/$defs/cleanupPlan" },
         "contextUsage": {
           "type": "object",
           "additionalProperties": false,
@@ -675,10 +676,65 @@
         "purpose": { "type": "string", "minLength": 1, "maxLength": 500 },
         "confidence": { "$ref": "#/$defs/confidence" },
         "reviewRequired": { "type": "boolean" },
+        "cleanup": { "$ref": "#/$defs/cleanupPlan" },
         "storyUnitId": { "type": "string", "minLength": 1, "maxLength": 100 },
         "narrativeRole": { "$ref": "#/$defs/narrativeRole" },
         "selectionReason": { "type": "string", "minLength": 1, "maxLength": 1000 },
         "evidence": { "$ref": "#/$defs/evidenceDecision" }
+      }
+    },
+    "cleanupZone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+        "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+      }
+    },
+    "cleanupPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision", "overlayTypes", "rationale", "method", "provider",
+        "zones", "reviewRequired", "warnings"
+      ],
+      "properties": {
+        "decision": { "enum": ["none", "crop_reframe", "derived_media", "fallback_preserve"] },
+        "overlayTypes": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "foreign_title", "ranking_number", "symbol", "platform_sticker",
+              "watermark", "other_overlay"
+            ]
+          }
+        },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "method": {
+          "enum": ["none", "fcpxml_crop", "fcpxml_reframe", "ffmpeg_mask_blur", "preserve"]
+        },
+        "provider": {
+          "enum": ["none", "fcpxml", "ffmpeg-mask-blur", "inpainting", "unavailable"]
+        },
+        "zones": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/cleanupZone" }
+        },
+        "layout": { "type": "object" },
+        "fallback": { "enum": ["preserve", "crop_reframe"] },
+        "fallbackLayout": { "type": "object" },
+        "reviewRequired": { "type": "boolean" },
+        "warnings": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
       }
     },
     "marker": {

@@ -118,6 +118,15 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   timeline length changes from frame alignment are recorded as
   `frameAlignmentAdjusted`, not as content trims.
 - `assets[].status`: `adopt`, `candidate`, or `reject`.
+- `assets[].cleanup` / `timeline.shots[].cleanup`: optional but required whenever the
+  actual picture contains an unrelated burned-in overlay. Keep the visual decision
+  separate from HotIngest context. `decision` is `none`, `crop_reframe`,
+  `derived_media`, or `fallback_preserve`; record `overlayTypes`, `rationale`,
+  `method`, `provider`, normalized `zones`, `reviewRequired`, and `warnings`.
+  `crop_reframe` reuses the shot's existing `layout` and must prefer FCPXML-native
+  crop/reframe. `derived_media` is only truthful when the declared provider actually
+  succeeds; unsupported inpainting must be recorded as a fallback rather than
+  claimed as repaired.
 - `assets[].reason`: why it is adopted/candidate/rejected.
 - `assets[].ranges`: useful video intervals; use an empty list for still images or no reliable interval.
 - `confidence`: number from 0 to 1. Use lower values and `reviewRequired: true` for sparse evidence.
@@ -145,6 +154,12 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   concrete `durationException`; never invent a short single-demonstration target,
   and never silently cut protected video content or skip ordinary assets just to fit.
 - `fitMode`: `contain` or `cover`.
+- Source cleanup never changes the source snapshot. If pixels must be processed,
+  the build may create an internal clean version only under
+  `~/Library/Application Support/剪渡/projects/<project>/cache/clean-media/`.
+  This cache is not a user deliverable and is referenced by FCPXML only after a
+  successful provider result. Crop/reframe-only cleanup continues to reference the
+  original media directly.
 - `audioMode`: `keep` or `mute`. For videos with an audio stream, default to
   `keep`. FCPXML must not mute a clip whose `audioAnalysis.preserveOriginalAudio`
   is `true`. Do not mute because BGM, captions, or other videos exist.

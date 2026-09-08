@@ -58,6 +58,12 @@ const {
   summarizeMaterialCoverage,
 } = require('./editing-contract-service');
 const {
+  cleanupFingerprint,
+  materializeCleanMedia,
+  mergeCleanupLayout,
+  resolveCleanupPlan,
+} = require('./source-cleanup-service');
+const {
   GENERATED_ASSET_ID,
   addHyperframesAsset,
   inspectHyperframesEnvironment,
@@ -207,6 +213,101 @@ async function syncTimelineAssets(projectPath, manifest, analysis, options = {})
     });
   }
   return mappings;
+}
+
+async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
+  const mappingById = new Map(mappings.map((mapping) => [mapping.assetId, mapping]));
+  const analysisById = new Map((analysis.assets || []).map((asset) => [asset.assetId, asset]));
+  const effectiveAnalysis = structuredClone(analysis);
+  const cleanupReports = [];
+  const cleanMappingByFingerprint = new Map();
+  const cleanAssets = [];
+
+  for (const shot of effectiveAnalysis.timeline.shots) {
+    const sourceAnalysis = analysisById.get(shot.assetId);
+    const cleanup = resolveCleanupPlan(shot, sourceAnalysis);
+    if (!cleanup) continue;
+    const originalAssetId = shot.assetId;
+    const originalMapping = mappingById.get(originalAssetId);
+    if (!originalMapping) continue;
+    Object.assign(shot, mergeCleanupLayout(shot, cleanup));
+
+    if (cleanup.decision !== 'derived_media') {
+      cleanupReports.push({
+        shotId: shot.id,
+        assetId: originalAssetId,
+        decision: cleanup.decision,
+        method: cleanup.method,
+        provider: cleanup.provider,
+        status: cleanup.decision === 'fallback_preserve' ? 'preserved' : 'applied',
+        reason: cleanup.rationale,
+      });
+      continue;
+    }
+
+    const fingerprint = cleanupFingerprint(originalMapping, cleanup);
+    let result = cleanMappingByFingerprint.get(fingerprint);
+    if (!result) {
+      result = await materializeCleanMedia({ artifactRoot, mapping: originalMapping, cleanup });
+      cleanMappingByFingerprint.set(fingerprint, result);
+    }
+    if (result.status === 'generated') {
+      const cleanAssetId = `${originalAssetId}__clean_${fingerprint}`;
+      let cleanMapping = mappingById.get(cleanAssetId);
+      if (!cleanMapping) {
+        cleanMapping = {
+          ...result.mapping,
+          assetId: cleanAssetId,
+          sourceRelativePath: originalMapping.sourceRelativePath,
+        };
+        mappingById.set(cleanAssetId, cleanMapping);
+        mappings.push(cleanMapping);
+        cleanAssets.push({
+          ...(sourceAnalysis || {}),
+          assetId: cleanAssetId,
+          sourceAssetId: originalAssetId,
+          cleanup: {
+            decision: 'none',
+            overlayTypes: cleanup.overlayTypes,
+            rationale: '已由内部派生清理媒体完成像素级遮盖。',
+            method: 'none',
+            provider: 'none',
+            zones: [],
+            reviewRequired: cleanup.reviewRequired,
+            warnings: cleanup.warnings,
+          },
+        });
+      }
+      shot.assetId = cleanAssetId;
+      cleanupReports.push({
+        shotId: shot.id,
+        assetId: originalAssetId,
+        derivedAssetId: cleanAssetId,
+        decision: cleanup.decision,
+        method: cleanup.method,
+        provider: cleanup.provider,
+        status: 'generated',
+        path: result.outputPath,
+        reason: cleanup.rationale,
+      });
+      continue;
+    }
+
+    if (cleanup.fallback === 'crop_reframe' && cleanup.fallbackLayout) {
+      Object.assign(shot, mergeCleanupLayout(shot, { layout: cleanup.fallbackLayout }));
+    }
+    cleanupReports.push({
+      shotId: shot.id,
+      assetId: originalAssetId,
+      decision: cleanup.decision,
+      method: cleanup.method,
+      provider: cleanup.provider,
+      status: 'fallback',
+      reason: result.reason || '未生成派生媒体，保留原素材。',
+    });
+  }
+  if (cleanAssets.length) effectiveAnalysis.assets.push(...cleanAssets);
+  return { analysis: effectiveAnalysis, mappings, cleanupReports };
 }
 
 async function findArtifactRoot(projectPath) {
@@ -536,6 +637,7 @@ function buildHumanSummary({
   formats,
   sourceVerification,
   hyperframes = null,
+  cleanupReports = [],
 }) {
   const analysisById = new Map(analysis.assets.map((item) => [item.assetId, item]));
   const manifestById = new Map(manifest.items.map((item) => [item.assetId, item]));
@@ -633,6 +735,15 @@ function buildHumanSummary({
         : ''),
     );
   }
+  lines.push('', '## 源画面净化', '');
+  if (cleanupReports.length === 0) lines.push('- 本期没有记录需要净化的烧录覆盖物。');
+  else cleanupReports.forEach((item) => {
+    lines.push(
+      `- ${item.shotId}｜${item.assetId}｜${item.status}｜${item.method || 'preserve'}`
+        + `｜${item.reason || '无说明'}`
+        + (item.path ? `｜内部媒体 ${item.path}` : ''),
+    );
+  });
   lines.push('', '## 镜头顺序', '');
   timelineAnalysis.timeline.shots.forEach((shot, index) => {
     const source = manifestById.get(shot.assetId);
@@ -937,6 +1048,7 @@ async function verifyCodexVideoProject(projectPath, options = {}) {
     dtd,
     previewMetadata,
     hyperframes,
+    cleanupReports: status.cleanupReports || [],
     materialCoverage: {
       ...materialCoverage,
       expectedLightCaptionExportCount: expectedCaptionExports,
@@ -1063,7 +1175,13 @@ async function buildCodexVideoProject(options) {
         ? [writeJson(artifactFiles.assets, { schemaVersion: 1, assets: [] })]
         : []),
     ]);
-    let effectiveAnalysis = analysis;
+    const cleanupResult = await applySourceCleanup({
+      artifactRoot,
+      analysis,
+      mappings,
+    });
+    let effectiveAnalysis = cleanupResult.analysis;
+    const cleanupReports = cleanupResult.cleanupReports;
     let hyperframes = null;
     if (hyperframesOptions.reuseProjectPath) {
       await onStage('rendering_hyperframes', '正在复制并登记已验收 HyperFrames 独立素材。');
@@ -1079,7 +1197,7 @@ async function buildCodexVideoProject(options) {
       );
       mappings.push(mapping);
       effectiveAnalysis = addHyperframesAsset(
-        analysis,
+        effectiveAnalysis,
         mapping,
         rendered.format.durationSec,
         { flow: hyperframesFlow },
@@ -1152,7 +1270,7 @@ async function buildCodexVideoProject(options) {
       );
       mappings.push(mapping);
       effectiveAnalysis = addHyperframesAsset(
-        analysis,
+        effectiveAnalysis,
         mapping,
         rendered.format.durationSec,
         { flow: hyperframesFlow },
@@ -1218,6 +1336,7 @@ async function buildCodexVideoProject(options) {
       previewPath,
       formats,
       sourceVerification,
+      cleanupReports,
       hyperframes,
     }), 'utf8');
     status = {
@@ -1246,6 +1365,7 @@ async function buildCodexVideoProject(options) {
       previewMetadata: previewResult.metadata,
       formats,
       sourceVerification,
+      cleanupReports,
     };
     await writeJson(artifactFiles.status, status);
     await onStage('verifying', '正在执行素材、预览、FCPXML 与源快照完整验证。');
@@ -1263,6 +1383,7 @@ async function buildCodexVideoProject(options) {
       titles: analysis.titles,
       formats,
       assetMappings: mappings,
+      cleanupReports,
       artifacts: {
         fcpxmlPath,
         previewPath,
@@ -1295,6 +1416,7 @@ async function openFcpxml(fcpxmlPath) {
 }
 
 module.exports = {
+  applySourceCleanup,
   buildCodexVideoProject,
   buildHumanSummary,
   copyReusableHyperframes,

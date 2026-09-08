@@ -106,8 +106,11 @@ function assetNeedsLightCaption(asset, manifestItem = null) {
 function summarizeMaterialCoverage(analysis, manifest) {
   const eligible = listEligibleVisualItems(manifest);
   const shots = Array.isArray(analysis?.timeline?.shots) ? analysis.timeline.shots : [];
-  const usedIds = new Set(shots.map((shot) => shot.assetId));
   const analysisById = new Map((analysis?.assets || []).map((asset) => [asset.assetId, asset]));
+  const sourceAssetIdForShot = (shot) => (
+    analysisById.get(shot.assetId)?.sourceAssetId || shot.assetId
+  );
+  const usedIds = new Set(shots.map(sourceAssetIdForShot));
   const allowedOff = collectOffTimelineAllowIds(analysis);
   const unused = [];
   const fullUse = [];
@@ -138,7 +141,7 @@ function summarizeMaterialCoverage(analysis, manifest) {
       const preserveFull = asset?.videoPreservationPlan?.preserveFullClip !== false;
       if (preserveFull) fullUse.push(item.assetId);
       else trimmedUse.push(item.assetId);
-      const shot = shots.find((entry) => entry.assetId === item.assetId);
+      const shot = shots.find((entry) => sourceAssetIdForShot(entry) === item.assetId);
       const preserveAudio = asset?.audioAnalysis?.preserveOriginalAudio !== false
         && item.metadata?.hasAudio !== false;
       if (shot?.audioMode === 'mute') videosMuted += 1;

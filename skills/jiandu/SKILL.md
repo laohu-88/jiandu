@@ -33,6 +33,19 @@ The manifest contains `taskId`, `engine`, `kind` (`edit` or `revise`), `platform
 
 If the source is a HotIngest Selected package, read `.hotingest/manifest.json`, `.hotingest/items/*.json` (`original_item` + `translation_snapshot`), and `*.context.html`. Do not ignore translations, explanations, authors, comments, audio flags, or visible media. Keep original text, Chinese translation, and meaning separate. Do not modify source files.
 
+### 源画面净化（固定能力）
+
+对每段入选素材先检查与本期无关、已经烧录进画面的外文大标题、排行榜数字、无用符号、平台贴纸、水印或其他视觉覆盖物。该检查自动执行，不增加普通用户开关；具体处理由执行剪辑的 Agent 根据真实画面判断，并在 `assets[].cleanup` 或 `timeline.shots[].cleanup` 记录 `decision`、`overlayTypes`、`rationale`、`method`、`provider`、`zones`、`reviewRequired` 与 `warnings`。
+
+按下面的稳定性顺序选择方法：
+
+1. 黑边、顶部标题栏、边缘大字可安全去掉时，使用已有 FCPXML `layout` 的 crop / reframe / scale / position / tracking；`decision` 为 `crop_reframe`，`method` 为 `fcpxml_crop` 或 `fcpxml_reframe`。优先重新构图，不生成派生媒体。
+2. 覆盖物处于非关键背景时，可使用安全构图或内部 `ffmpeg-mask-blur` provider 的局部遮盖；区域用 0 到 1 的归一化 `zones` 表示。
+3. 文字压在真实有效画面上时，不得把简单裁切误报为修复成功。当前内置 provider 只提供明确标记的非关键背景局部模糊遮盖，不提供可靠的 AI inpainting；`inpainting` provider 必须走安全 fallback。provider 不可用、主体会受损或区域判断不可靠时，优先 `fallbackLayout` 重构，无法安全处理则 `fallback_preserve` 并标记 `reviewRequired`。
+4. 不得为了去字损害人物、动物、主体或关键内容；已有人工字幕和原视频中本身属于内容核心的信息不得误删。
+
+只有 `decision: derived_media` 且 `provider: ffmpeg-mask-blur` 实际成功时，才在剪渡 Application Support 的项目缓存 `cache/clean-media/` 生成内部派生媒体，并让 FCPXML 引用它。失败或不支持时保留原素材并写入 fallback；不得伪造像素级修复成功。只使用 FCPXML crop / reframe 时，直接引用原始素材。源素材始终不移动、不覆盖、不修改。
+
 ### Default main film (`platformMode: main`)
 
 Use every usable visual asset. Ordinary videos stay full clip with original audio. Only exceptionally long videos may be trimmed to highlights, still appearing on the timeline. Human-reviewed HotIngest captions, translations, and foreign explanations enter `lightCaptionPlan`. Original caption wording stays unchanged.
