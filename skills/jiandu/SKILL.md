@@ -35,16 +35,20 @@ If the source is a HotIngest Selected package, read `.hotingest/manifest.json`, 
 
 ### 源画面净化（固定能力）
 
-对每段入选素材先检查与本期无关、已经烧录进画面的外文大标题、排行榜数字、无用符号、平台贴纸、水印或其他视觉覆盖物。该检查自动执行，不增加普通用户开关；具体处理由执行剪辑的 Agent 根据真实画面判断，并在 `assets[].cleanup` 或 `timeline.shots[].cleanup` 记录 `decision`、`overlayTypes`、`rationale`、`method`、`provider`、`zones`、`reviewRequired` 与 `warnings`。
+源画面净化是每次 `$jiandu` 的默认闭环，不需要用户重复提出。对每个可用图片/视频，先实际查看 prepare 生成的 `imagePreview`、`storyboard` 和代表帧；视频至少覆盖开头、中段、结尾和明显镜头变化处，证据不足时用 `inspect-range` 生成密集帧。HotIngest HTML、文件名、OCR、旧 metadata 只能作上下文，不能证明画面里存在或不存在覆盖物。
+
+每个可用视觉素材必须在 `assets[].cleanup` 留下结构化审计记录。发现与本期无关、已经烧录进画面的外文大标题、排行榜数字、无用符号、平台贴纸、水印或其他视觉覆盖物时，记录 `timeRanges`、normalized `zones`（x/y/width/height）、`overlayTypes`、`isCoreContent`、`rationale`、推荐 `method`、`provider`、`confidence`、`reviewRequired` 与 `warnings`；实际检查后没有发现时也必须明确写 `decision: none`、检查帧和“检查后未发现”，不能因字段缺失静默跳过。对应的 `timeline.shots[].cleanup` 可覆盖某个镜头的时间段判断。
+
+完成处理后必须再次抽帧复检：crop/reframe 必须证明目标区域离开最终构图；`derived_media` 必须证明 clean-media 与原帧存在真实像素变化并确认最终 FCPXML 引用派生媒体；原始素材 digest 必须不变。没有可靠修复的复杂主体遮挡标为 `unresolved` / `fallback_preserve`，不得报告 cleaned 或净化完成。
 
 按下面的稳定性顺序选择方法：
 
 1. 黑边、顶部标题栏、边缘大字可安全去掉时，使用已有 FCPXML `layout` 的 crop / reframe / scale / position / tracking；`decision` 为 `crop_reframe`，`method` 为 `fcpxml_crop` 或 `fcpxml_reframe`。优先重新构图，不生成派生媒体。
-2. 覆盖物处于非关键背景时，可使用安全构图或内部 `ffmpeg-mask-blur` provider 的局部遮盖；区域用 0 到 1 的归一化 `zones` 表示。
-3. 文字压在真实有效画面上时，不得把简单裁切误报为修复成功。当前内置 provider 只提供明确标记的非关键背景局部模糊遮盖，不提供可靠的 AI inpainting；`inpainting` provider 必须走安全 fallback。provider 不可用、主体会受损或区域判断不可靠时，优先 `fallbackLayout` 重构，无法安全处理则 `fallback_preserve` 并标记 `reviewRequired`。
+2. 文字/数字固定压在普通背景且裁切会损失主体时，使用 `derived_media` + `ffmpeg_delogo` / `ffmpeg-delogo` 的局部周边插值；区域用 0 到 1 的归一化 `zones` 表示，并按 `timeRanges` 复检。旧的 `ffmpeg-mask-blur` 仅是低优先级 fallback，不能报告为高质量清理。
+3. 文字压在真实有效画面或复杂运动主体上时，不得把简单裁切误报为修复成功。当前没有可靠 AI inpainting；`inpainting` provider 必须走安全 fallback。provider 不可用、主体会受损或区域判断不可靠时，优先 `fallbackLayout` 重构，无法安全处理则 `fallback_preserve` 并标记 `reviewRequired` / `unresolved`。
 4. 不得为了去字损害人物、动物、主体或关键内容；已有人工字幕和原视频中本身属于内容核心的信息不得误删。
 
-只有 `decision: derived_media` 且 `provider: ffmpeg-mask-blur` 实际成功时，才在剪渡 Application Support 的项目缓存 `cache/clean-media/` 生成内部派生媒体，并让 FCPXML 引用它。失败或不支持时保留原素材并写入 fallback；不得伪造像素级修复成功。只使用 FCPXML crop / reframe 时，直接引用原始素材。源素材始终不移动、不覆盖、不修改。
+只有 `decision: derived_media` 且声明的 ffmpeg provider 实际成功、后处理复检通过时，才在剪渡 Application Support 的项目缓存 `cache/clean-media/` 生成内部派生媒体，并让 FCPXML 引用它。失败或不支持时保留原素材并写入 fallback；不得伪造像素级修复成功。只使用 FCPXML crop / reframe 时，直接引用原始素材。源素材始终不移动、不覆盖、不修改。
 
 ### Default main film (`platformMode: main`)
 

@@ -591,6 +591,9 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
     ],
     instruction: [
       '请用当前会话查看 imagePreview、storyboard 和单帧，并结合每个素材的 context 填写协议；不要调用外部模型 API。',
+      '源画面净化是默认闭环：必须实际查看每个可用视频的开头、中段、结尾和明显镜头变化处代表帧；必要时用 inspect-range 生成更密帧。不能用 HotIngest HTML、文件名、OCR 或旧 metadata 代替视觉检查。',
+      '每个可用图片/视频必须在 assets[].cleanup 写出实际检查记录；发现无关外文大标题、排行榜数字、符号、贴纸、水印或其他烧录覆盖物，必须写 timeRanges、normalized zones、overlayTypes、isCoreContent、method、confidence 和 reviewRequired；没有发现也必须写 decision=none、实际检查帧与“检查后未发现”，不得因字段缺失静默跳过。',
+      '处理后必须重新抽帧验证：crop/reframe 目标区域要离开最终构图，derived_media 必须有真实像素变化且最终 FCPXML 引用 clean-media；无法可靠清除复杂主体遮挡时标记 unresolved，不得报告 cleaned。',
       '必须区分“画面实际可见内容”、画面内文字、视频原声和“上下文文件提供的信息”；上下文不得冒充画面文字或 OCR。',
       '有 context 的素材必须填写 contextUsage，标明是否使用及实际使用的 sourceFiles。',
       '可用视觉素材（图片/视频）默认全部进入时间线，每一项至少使用一次；不得为控制总时长跳过普通素材。',

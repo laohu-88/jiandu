@@ -47,6 +47,7 @@ const {
   normalizeTracking,
   validateTracking,
 } = require('./subject-tracking-service');
+const { verifyCleanupResults } = require('./source-cleanup-service');
 
 const PLATFORM_VARIANT_SCHEMA_VERSION = 1;
 const DOUYIN_PLAN_SCHEMA_VERSION = 1;
@@ -1070,6 +1071,7 @@ async function createAutomaticDouyinPlan(bundle) {
           muteReason: shot.audioMode === 'mute'
             ? source?.audioAnalysis?.muteReason || '基础分析明确要求静音'
             : null,
+          cleanup: shot.cleanup || source?.cleanup || null,
           layout: defaultLayoutForItem(item, source),
         };
       });
@@ -1084,6 +1086,7 @@ async function createAutomaticDouyinPlan(bundle) {
             purpose: sourceShot.purpose || '展示画面',
             audioMode: item.type === 'video' && item.metadata?.hasAudio ? 'keep' : 'keep',
             muteReason: null,
+            cleanup: sourceShot.cleanup || baseById.get(item.assetId)?.cleanup || null,
             layout: defaultLayoutForItem(item, baseById.get(item.assetId)),
           });
         }
@@ -1359,6 +1362,7 @@ function cutAnalysis(bundle, variant, video, fps) {
       purpose: shot.purpose,
       confidence: 1,
       reviewRequired: false,
+      cleanup: shot.cleanup || baseById.get(shot.assetId)?.cleanup || null,
       layout: shot.layout,
     };
   });
@@ -1876,9 +1880,13 @@ async function validateGeneratedCut({
   previewResult,
   sourceVerification,
   protectedFilesUnchanged,
+  cleanupVerification = null,
 }) {
   const errors = [];
   const warnings = [];
+  if (cleanupVerification && !cleanupVerification.ok) {
+    errors.push('抖音变体源画面净化后处理验证失败；存在未解决或未证明发生变化的区域。');
+  }
   if (bundle.profile.format.width !== 1080
     || bundle.profile.format.height !== 1920
     || bundle.profile.format.aspectRatio !== '9:16') {
@@ -1953,13 +1961,17 @@ async function validateGeneratedCut({
       || previewResult.metadata.displayHeight !== 1920)) {
     errors.push('抖音预览分辨率不是 1080×1920。');
   }
-  const actualOrder = analysis.timeline.shots.map((shot) => shot.assetId);
+  const actualOrder = analysis.timeline.shots.map((shot) => {
+    const mapping = mappings.find((item) => item.assetId === shot.assetId);
+    return mapping?.sourceAssetId || shot.assetId;
+  });
   const approvedOrder = video.shots.map((shot) => shot.assetId);
   if (JSON.stringify(actualOrder) !== JSON.stringify(approvedOrder)) {
     errors.push('实际镜头顺序与已批准抖音计划不一致。');
   }
   const selectedWithAudio = video.shots.filter((shot) => {
-    const mapping = mappings.find((item) => item.assetId === shot.assetId);
+    const mapping = mappings.find((item) => item.assetId === shot.assetId
+      || item.sourceAssetId === shot.assetId);
     return mapping?.type === 'video' && mapping.metadata?.hasAudio;
   });
   for (const shot of selectedWithAudio) {
@@ -2064,6 +2076,7 @@ async function validateGeneratedCut({
     },
     sourceVerification,
     protectedFilesUnchanged,
+    cleanupVerification,
     fcpxml: {
       ...fcpxmlReport,
       writeReport: fcpxmlResult.report,
@@ -2116,9 +2129,9 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
       throw variantError('DOUYIN_OUTPUT_EXISTS', `抖音成片目录已存在且非空：${outputDirectory}`);
     }
     await fs.mkdir(outputDirectory, { recursive: true });
-    const analysis = cutAnalysis(bundle, { ...current, plan }, video, fps);
+    let analysis = cutAnalysis(bundle, { ...current, plan }, video, fps);
     const usedIds = [...new Set(video.shots.map((shot) => shot.assetId))];
-    const mappings = usedIds.map((assetId) => mappingById.get(assetId));
+    let mappings = usedIds.map((assetId) => mappingById.get(assetId));
     const missing = usedIds.filter((assetId, index) => !mappings[index]);
     if (missing.length) {
       throw variantError(
@@ -2127,6 +2140,16 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
         missing,
       );
     }
+    // Re-apply the shared source cleanup to each independent revision. The
+    // variant must not silently fall back to the unclean base mapping.
+    const { applySourceCleanup } = require('./codex-video-service');
+    const cleanupResult = await applySourceCleanup({
+      artifactRoot: bundle.artifactRoot,
+      analysis,
+      mappings,
+    });
+    analysis = cleanupResult.analysis;
+    mappings = cleanupResult.mappings;
     const editPlanPath = path.join(outputDirectory, 'edit-plan.json');
     const analysisPath = path.join(outputDirectory, 'analysis.json');
     const deliverableName = sanitizeFcpFilename(
@@ -2182,6 +2205,13 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
       assetMappings: mappings,
       managedCaptionTitles: titles,
     }, { expectedTitleCount: titles.length });
+    const cleanupVerification = await verifyCleanupResults({
+      artifactRoot: bundle.artifactRoot,
+      analysis,
+      mappings,
+      cleanupReports: cleanupResult.cleanupReports,
+      fcpxml: await fs.readFile(fcpxmlPath, 'utf8'),
+    });
     const previewResult = previewPath
       ? await previewImpl(previewPath, analysis, mappings, bundle.profile)
       : { metadata: null };
@@ -2202,6 +2232,7 @@ async function buildDouyinVariant(projectPath, variantId = 'douyin', options = {
       previewResult,
       sourceVerification,
       protectedFilesUnchanged: protectedChanges.length === 0,
+      cleanupVerification,
     });
     if (protectedChanges.length) validation.protectedFileChanges = protectedChanges;
     await atomicWriteJson(validationPath, validation);

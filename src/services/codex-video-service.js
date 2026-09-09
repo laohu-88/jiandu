@@ -62,6 +62,7 @@ const {
   materializeCleanMedia,
   mergeCleanupLayout,
   resolveCleanupPlan,
+  verifyCleanupResults,
 } = require('./source-cleanup-service');
 const {
   GENERATED_ASSET_ID,
@@ -239,7 +240,10 @@ async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
         decision: cleanup.decision,
         method: cleanup.method,
         provider: cleanup.provider,
-        status: cleanup.decision === 'fallback_preserve' ? 'preserved' : 'applied',
+        status: cleanup.decision === 'none'
+          ? 'inspected_no_overlay'
+          : cleanup.decision === 'fallback_preserve' ? 'preserved' : 'applied',
+        inspected: cleanup.decision === 'none',
         reason: cleanup.rationale,
       });
       continue;
@@ -307,7 +311,23 @@ async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
     });
   }
   if (cleanAssets.length) effectiveAnalysis.assets.push(...cleanAssets);
-  return { analysis: effectiveAnalysis, mappings, cleanupReports };
+  const selectedVideoAssetIds = new Set(effectiveAnalysis.timeline.shots
+    .map((shot) => shot.assetId)
+    .filter((assetId) => analysisById.get(assetId)?.type === 'video'));
+  const analyzedAssetIds = selectedVideoAssetIds;
+  const cleanupPlannedAssetIds = new Set((analysis.assets || [])
+    .filter((asset) => selectedVideoAssetIds.has(asset.assetId) && asset.cleanup)
+    .map((asset) => asset.assetId));
+  return {
+    analysis: effectiveAnalysis,
+    mappings,
+    cleanupReports,
+    cleanupCoverage: {
+      requiredAssetIds: [...analyzedAssetIds],
+      plannedAssetIds: [...cleanupPlannedAssetIds],
+      missingAssetIds: [...analyzedAssetIds].filter((assetId) => !cleanupPlannedAssetIds.has(assetId)),
+    },
+  };
 }
 
 async function findArtifactRoot(projectPath) {
@@ -638,6 +658,8 @@ function buildHumanSummary({
   sourceVerification,
   hyperframes = null,
   cleanupReports = [],
+  cleanupCoverage = null,
+  cleanupVerification = null,
 }) {
   const analysisById = new Map(analysis.assets.map((item) => [item.assetId, item]));
   const manifestById = new Map(manifest.items.map((item) => [item.assetId, item]));
@@ -744,6 +766,12 @@ function buildHumanSummary({
         + (item.path ? `｜内部媒体 ${item.path}` : ''),
     );
   });
+  if (cleanupCoverage?.missingAssetIds?.length) {
+    lines.push(`- 缺少实际检查记录的素材：${cleanupCoverage.missingAssetIds.join('、')}`);
+  }
+  if (cleanupVerification) {
+    lines.push(`- 后处理复检：${cleanupVerification.ok ? '通过' : '未通过'}（${cleanupVerification.results.length} 个记录）`);
+  }
   lines.push('', '## 镜头顺序', '');
   timelineAnalysis.timeline.shots.forEach((shot, index) => {
     const source = manifestById.get(shot.assetId);
@@ -824,6 +852,19 @@ async function verifyCodexVideoProject(projectPath, options = {}) {
   const effectiveAnalysis = status.effectiveAnalysis || analysis;
   const errors = [];
   const warnings = [];
+  const cleanupCoverage = status.cleanupCoverage || null;
+  const cleanupVerification = status.cleanupVerification || null;
+  if (cleanupCoverage?.missingAssetIds?.length) {
+    errors.push(
+      `有 ${cleanupCoverage.missingAssetIds.length} 个可用视觉素材没有记录 Agent 实际检查结果：`
+      + `${cleanupCoverage.missingAssetIds.join('、')}。`,
+    );
+  }
+  if (!cleanupVerification) {
+    warnings.push('未生成源画面净化后处理验证；不能将本项目报告为净化完成。');
+  } else if (!cleanupVerification.ok) {
+    errors.push('源画面净化后处理验证失败；存在未解决或未证明发生变化的区域。');
+  }
   if (project.projectPath !== resolved) {
     warnings.push('项目根目录已移动或改名；完整性检查已按当前目录和业务相对路径执行。');
   }
@@ -1049,6 +1090,8 @@ async function verifyCodexVideoProject(projectPath, options = {}) {
     previewMetadata,
     hyperframes,
     cleanupReports: status.cleanupReports || [],
+    cleanupCoverage,
+    cleanupVerification,
     materialCoverage: {
       ...materialCoverage,
       expectedLightCaptionExportCount: expectedCaptionExports,
@@ -1182,6 +1225,7 @@ async function buildCodexVideoProject(options) {
     });
     let effectiveAnalysis = cleanupResult.analysis;
     const cleanupReports = cleanupResult.cleanupReports;
+    const cleanupCoverage = cleanupResult.cleanupCoverage;
     let hyperframes = null;
     if (hyperframesOptions.reuseProjectPath) {
       await onStage('rendering_hyperframes', '正在复制并登记已验收 HyperFrames 独立素材。');
@@ -1318,6 +1362,13 @@ async function buildCodexVideoProject(options) {
       analysis: effectiveAnalysis,
       assetMappings: mappings,
     });
+    const cleanupVerification = await verifyCleanupResults({
+      artifactRoot,
+      analysis: effectiveAnalysis,
+      mappings,
+      cleanupReports,
+      fcpxml: await fs.readFile(fcpxmlPath, 'utf8'),
+    });
     const sourceCurrent = await snapshotSource(manifest.sourceDirectory);
     const sourceVerification = compareSourceSnapshots(manifest.sourceSnapshot, sourceCurrent);
     if (!sourceVerification.unchanged) {
@@ -1337,6 +1388,8 @@ async function buildCodexVideoProject(options) {
       formats,
       sourceVerification,
       cleanupReports,
+      cleanupCoverage,
+      cleanupVerification,
       hyperframes,
     }), 'utf8');
     status = {
@@ -1366,6 +1419,8 @@ async function buildCodexVideoProject(options) {
       formats,
       sourceVerification,
       cleanupReports,
+      cleanupCoverage,
+      cleanupVerification,
     };
     await writeJson(artifactFiles.status, status);
     await onStage('verifying', '正在执行素材、预览、FCPXML 与源快照完整验证。');
@@ -1384,6 +1439,8 @@ async function buildCodexVideoProject(options) {
       formats,
       assetMappings: mappings,
       cleanupReports,
+      cleanupCoverage,
+      cleanupVerification,
       artifacts: {
         fcpxmlPath,
         previewPath,

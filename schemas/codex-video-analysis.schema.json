@@ -716,16 +716,28 @@
         },
         "rationale": { "type": "string", "minLength": 1, "maxLength": 1000 },
         "method": {
-          "enum": ["none", "fcpxml_crop", "fcpxml_reframe", "ffmpeg_mask_blur", "preserve"]
+          "enum": ["none", "fcpxml_crop", "fcpxml_reframe", "ffmpeg_delogo", "ffmpeg_mask_blur", "preserve"]
         },
         "provider": {
-          "enum": ["none", "fcpxml", "ffmpeg-mask-blur", "inpainting", "unavailable"]
+          "enum": ["none", "fcpxml", "ffmpeg-delogo", "ffmpeg-mask-blur", "inpainting", "unavailable"]
         },
         "zones": {
           "type": "array",
           "maxItems": 8,
           "items": { "$ref": "#/$defs/cleanupZone" }
         },
+        "timeRanges": {
+          "type": "array",
+          "maxItems": 24,
+          "items": { "$ref": "#/$defs/timeRangeSec" }
+        },
+        "inspectedFrames": {
+          "type": "array",
+          "maxItems": 40,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "isCoreContent": { "type": "boolean" },
         "layout": { "type": "object" },
         "fallback": { "enum": ["preserve", "crop_reframe"] },
         "fallbackLayout": { "type": "object" },

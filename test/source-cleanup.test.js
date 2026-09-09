@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const { buildCodexVideoProject } = require('../src/services/codex-video-service');
 const {
@@ -11,6 +12,7 @@ const {
   mergeCleanupLayout,
   resolveCleanupPlan,
   validateCleanupPlan,
+  verifyCleanupResults,
 } = require('../src/services/source-cleanup-service');
 const { preparePendingMedia, snapshotSource } = require('../src/services/pending-media-service');
 const { resolveToolPath, runMediaTool } = require('../src/services/media-tool-service');
@@ -61,6 +63,7 @@ async function baseAnalysis(assetId, plan) {
       suggestedUse: ['画面验证'],
       status: 'adopt',
       reason: '用于验证清理路径。',
+      cleanup: plan,
       ranges: [{ startSec: 0, endSec: 1.2, confidence: 1, reviewRequired: false }],
       confidence: 1,
     }],
@@ -173,6 +176,90 @@ test('派生媒体进入 Application Support clean-media，FCPXML 引用派生�
   assert.equal((await fs.readFile(source)).equals(beforeBytes), true);
   assert.deepEqual(await fs.readdir(built.projectPath), ['清理后的画面.fcpxml']);
   assert.equal(built.verification.ok, true);
+});
+
+test('ffmpeg delogo 真实生成像素变化，并在后处理复检中被证明', async (t) => {
+  if (!(await resolveToolPath('ffmpeg')) || !(await resolveToolPath('ffprobe'))) {
+    t.skip('本机缺少 ffmpeg 或 ffprobe。');
+    return;
+  }
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jiandu-cleanup-delogo-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sourceDir = path.join(root, 'pending');
+  await fs.mkdir(sourceDir, { recursive: true });
+  const source = await createVideo(sourceDir);
+  const prepared = await preparePendingMedia(sourceDir, { cacheRoot: path.join(root, 'prepare-cache') });
+  const assetId = prepared.items[0].assetId;
+  const plan = cleanupPlan({
+    overlayTypes: ['watermark'],
+    rationale: '固定角落徽标位于非关键背景，使用 delogo 周边插值。',
+    method: 'ffmpeg_delogo',
+    provider: 'ffmpeg-delogo',
+    zones: [{ x: 0.72, y: 0.72, width: 0.2, height: 0.2 }],
+    timeRanges: [{ startSec: 0, endSec: 1.15, confidence: 0.95 }],
+    inspectedFrames: ['start.jpg', 'middle.jpg', 'end.jpg'],
+  });
+  const analysisPath = path.join(root, 'analysis.json');
+  await fs.writeFile(analysisPath, `${JSON.stringify(await baseAnalysis(assetId, plan))}\n`);
+  const built = await buildCodexVideoProject({
+    manifestPath: prepared.manifestPath,
+    analysisPath,
+    projectRoot: path.join(root, 'Desktop', '视频素材库'),
+    projectName: 'delogo-project',
+    internalRoot: path.join(root, 'Library', 'Application Support', '剪渡', 'projects', 'delogo'),
+    generatePreview: false,
+  });
+  assert.equal(built.cleanupReports[0].method, 'ffmpeg_delogo');
+  assert.equal(built.cleanupReports[0].status, 'generated');
+  assert.equal(built.cleanupVerification.ok, true);
+  const result = built.cleanupVerification.results[0];
+  assert.equal(result.checks.find((check) => check.type === 'pixel_change').ok, true);
+  assert.equal(built.verification.ok, true);
+  assert.ok(await fs.stat(built.assetMappings.find((mapping) => mapping.cleanupSourceAssetId)?.projectAbsolutePath));
+});
+
+test('后处理复检拒绝与原片没有像素变化的 clean-media', async (t) => {
+  if (!(await resolveToolPath('ffmpeg')) || !(await resolveToolPath('ffprobe'))) {
+    t.skip('本机缺少 ffmpeg 或 ffprobe。');
+    return;
+  }
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jiandu-cleanup-no-change-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const sourceDir = path.join(root, 'pending');
+  await fs.mkdir(sourceDir, { recursive: true });
+  const source = await createVideo(sourceDir);
+  const prepared = await preparePendingMedia(sourceDir, { cacheRoot: path.join(root, 'prepare-cache') });
+  const item = prepared.items[0];
+  const plan = cleanupPlan({
+    method: 'ffmpeg_delogo',
+    provider: 'ffmpeg-delogo',
+    inspectedFrames: ['start.jpg', 'middle.jpg', 'end.jpg'],
+    timeRanges: [{ startSec: 0, endSec: 1.1, confidence: 1 }],
+  });
+  const analysis = await baseAnalysis(item.assetId, plan);
+  const mapping = {
+    assetId: item.assetId,
+    type: item.type,
+    projectAbsolutePath: source,
+    sourceSha256: item.sha256,
+    metadata: item.metadata,
+  };
+  const result = await verifyCleanupResults({
+    artifactRoot: root,
+    analysis,
+    mappings: [mapping, { ...mapping, assetId: `${item.assetId}__clean` }],
+    cleanupReports: [{
+      shotId: 'cleanup-shot',
+      assetId: item.assetId,
+      derivedAssetId: `${item.assetId}__clean`,
+      decision: 'derived_media',
+      status: 'generated',
+    }],
+    fcpxml: pathToFileURL(source).href,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.results[0].status, 'unresolved');
+  assert.match(result.results[0].warnings[0], /没有真实像素变化/);
 });
 
 test('inpainting provider 不可用时使用安全 fallback，不伪造修复成功', async () => {
