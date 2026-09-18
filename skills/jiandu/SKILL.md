@@ -157,21 +157,22 @@ node /Users/example/Projects/jiandu/bin/jiandu.js handoff-update --handoff-task 
    `audioAnalysis`, `videoPreservationPlan`, and optional top-level
    `lightCaptionPlan`. Keep `sourceText` / `translatedText` / `meaning` separate.
    Merge adjacent duplicate subtitle frames into time ranges. Default videos to
-   `preserveFullClip: true` and `preserveOriginalAudio: true`. Do not auto-write
-   light-caption suggestions into Markers or FCP Titles. After build, human
-   review of explanations and light captions happens in the App Results Center
-   (“解释与轻字幕”); Stage 5D stores decisions in
-   剪渡 Application Support and must not silently overwrite locked
-   human approvals on re-analysis. Stage 5E exports only `approved` /
-   `edited_approved` captions into FCP native Titles via an explicit Result
-   Center action (“生成或更新 FCP 轻字幕”); never auto-write on save or open.
+   `preserveFullClip: true` and `preserveOriginalAudio: true`. Write required
+   Chinese light captions into `lightCaptionPlan`. `build` must automatically
+   export those captions as Final Cut Pro native editable Titles in the final
+   FCPXML. Do not wait for Results Center confirmation, do not burn text into
+   video, and do not turn HotIngest HTML itself into a single caption. Results
+   Center review remains optional: locked `approved` / `edited_approved` text
+   and times overlay the analysis wording, while `not_needed` / `rejected`
+   captions are skipped. Re-analysis must not silently overwrite locked
+   human approvals.
 
 6. If the folder name clearly conflicts with the media, set `folderNameConflict` to `true` and include this exact sentence in the user-facing reasoning: `文件夹名称与素材实际内容存在差异，本次主题以素材内容为准。`
 7. Design a visual story from the material itself. Treat detected first-level directories as ordered chapters and detected second-level directories as ordered subchapters. Root-brief order is a hard constraint; otherwise use numeric prefixes, natural directory order, and only then Codex inference. Do not interleave chapters unless the brief explicitly requests a non-linear structure. Context may improve relevance, chapter ownership, narrative role, and within-chapter order, but may not reorder top-level chapters. Favor meaningful result/change, necessary context, key operations, comparison, success evidence, final result, and a brief ending only when supported by the material. Do not force a fixed section count. Every usable visual asset (image/video) in the pending folder must enter the timeline at least once by default; only true duplicates (`duplicateAssetIds`) or unusable/non-visual files (`unusableAssetIds`) may stay off the timeline.
 8. Avoid obvious dead time, black frames, repeated operations, irrelevant desktop waits, wrong windows, and failures with no narrative value. Sparse frames cannot prove frame-accurate boundaries: lower confidence, use conservative cuts, and set `reviewRequired` when uncertain. Never invent a default finished-duration target or “keep it short” cap. Do not skip ordinary media to shorten the cut. Exceptionally long videos may be trimmed to highlights but must still appear on the timeline with an explicit trim reason and range; ordinary videos default to full clip. Keep original video audio enabled unless there is an explicit human `muteReason`.
 9. Generate 2–6 truthful title candidates and one recommended title. Do not copy the folder name as the title, exaggerate unfinished work, or claim “一键全自动”.
 10. Determine the main timeline orientation from the actual adopted media and the dominant video, not the folder name, first image, or preview size. Write `timeline.orientation`, `width`, `height`, and `fps` into the analysis. Use 1920×1080 for horizontal work and 1080×1920 for vertical work unless the material or user explicitly requires another production format. Prefer a reliable standard frame rate from the main video; otherwise use 30 fps. Keep screenshot-heavy shots on `contain` unless intentional cropping is justified.
-11. Generate zero or a few short markers. Do not create a voiceover script, narration, or full subtitles. HotIngest titles, bodies, translations, comments, and media descriptions are understanding context only and never create timeline text by themselves. When audienceNeedsExplanation requires explanation, or HotIngest foreign explanations / human-reviewed captions are present, you must fill `lightCaptionPlan`; omitting required light captions fails validation. Stage 5C `lightCaptionPlan` is suggestion-only for auto Markers/Titles in this stage, but missing required suggestions is not allowed. Keep plain `{timeSec, text}` markers by default. Only when the user explicitly requests release light subtitles, add the optional one-line `subtitle` metadata defined by the protocol; those markers may become editable FCP Title clips while the markers themselves remain present.
+11. Generate zero or a few short markers. Do not create a voiceover script, narration, or full subtitles. HotIngest titles, bodies, translations, comments, and media descriptions are understanding context only and never create timeline text by themselves. When audienceNeedsExplanation requires explanation, or HotIngest foreign explanations / human-reviewed captions are present, you must fill `lightCaptionPlan` with the existing Chinese translation, timed to the actual shot; omitting required light captions fails validation. `build`, Douyin variant, revision, and cleanup rebuild all export `lightCaptionPlan` as FCP native Titles automatically. Keep plain `{timeSec, text}` markers as bookmarks; do not rely on `marker.subtitle` as the delivery path.
 12. Validate before building:
 
     ```bash
@@ -219,7 +220,7 @@ node /Users/example/Projects/jiandu/bin/jiandu.js handoff-update --handoff-task 
 - Treat timeline and any optional preview formats independently: the formal FCPXML uses the production timeline format from the analysis; preview generation is opt-in.
 - Report theme, title candidates/recommendation, adopted/rejected assets, video ranges and confidence, shot order, markers, artifact paths, and verification result.
 - Distinguish generated/xmllint-validated FCPXML from an actual manual Final Cut Pro import. Never claim FCP import success unless it was performed.
-- When editable light subtitles are explicitly enabled, report Marker and native FCP Title counts separately; do not export SRT or burn text into the rough-cut preview.
+- Report Marker and native FCP Title counts separately. `lightCaptionPlan` must become FCP Titles in the final FCPXML; do not export SRT or burn text into the rough-cut preview. Missing required Titles is a failed delivery, not a Results Center reminder.
 
 ## Failure handling
 

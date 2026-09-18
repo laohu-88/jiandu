@@ -408,7 +408,7 @@ test('visualTextEvidence 与 contextEvidence 分离；context 不能伪装成画
   );
 });
 
-test('自解释素材可无需字幕；外文素材可生成轻字幕且不增加 FCP Title/Marker', () => {
+test('自解释素材可无需字幕；外文素材轻字幕自动写入 FCP Title，但不增加 Marker', () => {
   const selfItem = imageItem('self');
   const foreignItem = videoItem('foreign', 6);
   const selfAsset = imageAsset('self', {
@@ -519,9 +519,11 @@ test('自解释素材可无需字幕；外文素材可生成轻字幕且不增�
       },
     ],
   });
-  assert.equal((xml.match(/<title\b/g) || []).length, 0);
+  assert.equal((xml.match(/<title\b/g) || []).length, 1);
+  assert.match(xml, /他竟然赢了/);
+  assert.match(xml, /vcp-managed-caption:main:cap-foreign:s2/);
   assert.equal((xml.match(/<marker\b/g) || []).length, 0);
-  assert.doesNotMatch(xml, /subtitle|caption-track/i);
+  assert.doesNotMatch(xml, /caption-track|subtitle-track/i);
 });
 
 test('视频默认完整保留与原声；无理由极短区间与越界裁剪被拒绝', () => {

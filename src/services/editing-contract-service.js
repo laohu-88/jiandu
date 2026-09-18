@@ -109,7 +109,7 @@ function summarizeMaterialCoverage(analysis, manifest) {
   const shots = Array.isArray(analysis?.timeline?.shots) ? analysis.timeline.shots : [];
   const analysisById = new Map((analysis?.assets || []).map((asset) => [asset.assetId, asset]));
   const sourceAssetIdForShot = (shot) => (
-    analysisById.get(shot.assetId)?.sourceAssetId || shot.assetId
+    shot.sourceAssetId || analysisById.get(shot.assetId)?.sourceAssetId || shot.assetId
   );
   const usedIds = new Set(shots.map(sourceAssetIdForShot));
   const allowedOff = collectOffTimelineAllowIds(analysis);
@@ -158,6 +158,7 @@ function summarizeMaterialCoverage(analysis, manifest) {
   for (const item of eligible) {
     const asset = analysisById.get(item.assetId);
     if (!asset || asset.status === 'reject') continue;
+    if (!usedIds.has(item.assetId)) continue;
     if (assetNeedsLightCaption(asset, item)) requiredCaptionAssetIds.push(item.assetId);
   }
   const captionPlan = Array.isArray(analysis?.lightCaptionPlan) ? analysis.lightCaptionPlan : [];

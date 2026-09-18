@@ -4,6 +4,10 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { resolveTimelineFormat } = require('./video-format-service');
 const { fcpxmlShouldMuteShot } = require('./visual-explanation-service');
+const {
+  buildManagedCaptionTitlesFromAnalysis,
+  defaultCaptionTransform,
+} = require('./light-caption-export-service');
 
 const FCPXML_TIMESCALE = 60000;
 const FCPXML_DEFAULT_VERSION = '1.10';
@@ -642,13 +646,7 @@ function collectFcpTitles(analysis) {
       && subtitle.durationSec > 0
     ))
     .sort((left, right) => left.marker.timeSec - right.marker.timeSec);
-  const isVertical = analysis.timeline.orientation === 'vertical'
-    || Number(analysis.timeline.height) > Number(analysis.timeline.width);
-  const defaultTransformFor = (position) => {
-    if (position === 'center') return { x: 0, y: 0 };
-    if (position === 'top-safe') return { x: 0, y: isVertical ? 620 : 360 };
-    return { x: 0, y: isVertical ? -620 : -360 };
-  };
+  const defaultTransformFor = (position) => defaultCaptionTransform(analysis, position);
   return requested.map((item, index) => {
     const startSec = item.marker.timeSec;
     const nextStart = requested[index + 1]?.marker.timeSec ?? totalDuration;
@@ -915,6 +913,18 @@ function extractManagedCaptionTitles(xml) {
   return titles;
 }
 
+function resolveFcpxmlTitles(analysis, managedCaptionTitles = []) {
+  const provided = normalizeManagedCaptionTitles(managedCaptionTitles);
+  const auto = provided.length > 0
+    ? []
+    : normalizeManagedCaptionTitles(buildManagedCaptionTitlesFromAnalysis({ analysis }));
+  const managedTitles = provided.length > 0 ? provided : auto;
+  // lightCaptionPlan is the official Title source. Marker.subtitle remains a
+  // legacy opt-in only when the plan did not already produce managed Titles.
+  const markerTitles = managedTitles.length > 0 ? [] : collectFcpTitles(analysis);
+  return { markerTitles, managedTitles };
+}
+
 function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitles = [] }) {
   const manifest = {
     items: assetMappings.map((mapping) => ({
@@ -932,8 +942,7 @@ function buildFcpxml({ projectName, analysis, assetMappings, managedCaptionTitle
   const analysisById = new Map(
     (Array.isArray(analysis.assets) ? analysis.assets : []).map((asset) => [asset.assetId, asset]),
   );
-  const markerTitles = collectFcpTitles(analysis);
-  const managedTitles = normalizeManagedCaptionTitles(managedCaptionTitles);
+  const { markerTitles, managedTitles } = resolveFcpxmlTitles(analysis, managedCaptionTitles);
   const fcpTitles = [
     ...markerTitles,
     ...managedTitles.map((title, index) => ({
@@ -1925,13 +1934,13 @@ async function enrichAssetMappingsFrameMetadata(assetMappings = []) {
 }
 
 async function writeFcpxml(outputPath, payload, options = {}) {
-  const managedCaptionTitles = normalizeManagedCaptionTitles(payload.managedCaptionTitles);
   const assetMappings = await enrichAssetMappingsFrameMetadata(payload.assetMappings || []);
   const writePayload = { ...payload, assetMappings };
+  const resolvedTitles = resolveFcpxmlTitles(writePayload.analysis, payload.managedCaptionTitles);
   const xml = buildFcpxml(writePayload);
   const expectedTitleCount = Number.isInteger(options.expectedTitleCount)
     ? options.expectedTitleCount
-    : collectFcpTitles(writePayload.analysis).length + managedCaptionTitles.length;
+    : resolvedTitles.markerTitles.length + resolvedTitles.managedTitles.length;
   const report = validateFcpxmlStructure(xml, {
     shotCount: writePayload.analysis.timeline.shots.length,
     assetCount: assetMappings.length,
@@ -1959,7 +1968,7 @@ async function writeFcpxml(outputPath, payload, options = {}) {
     return {
       outputPath,
       report,
-      managedTitleCount: managedCaptionTitles.length,
+      managedTitleCount: resolvedTitles.managedTitles.length,
       timelinePlan: planFrameAlignedTimeline({
         analysis: writePayload.analysis,
         assetMappings,
@@ -1999,7 +2008,7 @@ async function writeFcpxml(outputPath, payload, options = {}) {
   return {
     outputPath,
     report,
-    managedTitleCount: managedCaptionTitles.length,
+    managedTitleCount: resolvedTitles.managedTitles.length,
     restoredOnFailure: false,
     timelinePlan: planFrameAlignedTimeline({
       analysis: writePayload.analysis,
@@ -2019,6 +2028,7 @@ module.exports = {
   assetUid,
   buildFcpxml,
   collectFcpTitles,
+  resolveFcpxmlTitles,
   escapeXml,
   isLegalFcpName,
   extractManagedCaptionTitles,

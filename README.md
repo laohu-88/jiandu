@@ -275,7 +275,7 @@ node bin/video-skill.js build \
 - 低可信度区间会保守裁剪或标记 `reviewRequired`，应在 FCP 中复核。
 - 空视频、损坏视频和无法解码素材会保留在清单中并给出降级说明，不会伪造内容。
 - 超长视频会限制代表帧数量；对关键区间使用 `inspect-range`。
-- marker 是少量轻字幕建议和定位信息，不是全程字幕；只有显式启用的 `marker.subtitle` 才会生成 FCP 原生 Title。
+- marker 是少量定位信息，不是全程字幕。需要中文字幕的入选外文素材必须写入 `lightCaptionPlan`，`build` 自动导出为 FCP 原生可编辑 Title；不要把整篇 HTML 塞成一条字幕，也不要烧录进视频。
 - 原生 Title 使用本机 Final Cut Pro 12.3 导出的“基本字幕”结构；无标题项目继续保持 FCPXML 1.10，带标题项目使用 FCPXML 1.14。
 - 生成并通过 `xmllint` 校验不等于已经在 Final Cut Pro 中人工导入验证。
 

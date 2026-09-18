@@ -10,7 +10,7 @@
 
 Write UTF-8 JSON matching `schemas/codex-video-analysis.schema.json`. The runtime validator also checks cross-file facts: every manifest asset needs one analysis record, asset IDs and types must match the manifest, Story Unit IDs and members must match the manifest, representative/supporting assets must belong to their Story Unit, every context-aware shot must trace to a real visual asset and Story Unit, video ranges/shots cannot exceed probed duration, rejected assets cannot appear in shots, recommended title must be a candidate, shot duration must equal `outSec - inSec`, markers must sit inside the final timeline, and chapter/subchapter order, duration policy, project brief constraints, chapter segments, and FCPXML clip order must remain consistent.
 
-Stage 5C optional fields (`visualTextAnalysis`, `explanationPlan`, `audioAnalysis`, `videoPreservationPlan`, top-level `lightCaptionPlan`, and `visualExplanationSummary`) are validated when present. Old analyses without them remain valid. When present, they must keep visual / visual-text / audio / context / inference evidence separated, preserve full video clips and original audio by default, and never turn light-caption suggestions into automatic FCP Titles, Markers, or subtitle tracks.
+Stage 5C optional fields (`visualTextAnalysis`, `explanationPlan`, `audioAnalysis`, `videoPreservationPlan`, top-level `lightCaptionPlan`, and `visualExplanationSummary`) are validated when present. Old analyses without them remain valid. When present, they must keep visual / visual-text / audio / context / inference evidence separated, preserve full video clips and original audio by default, and never turn HotIngest HTML or context files themselves into timeline text. `lightCaptionPlan` is the official Chinese caption source: every formal build path must export it as Final Cut Pro native editable Titles.
 
 The JSON is Codex's semantic decision record. Do not add source paths: identify source media only by stable `assetId` from the manifest.
 
@@ -78,32 +78,36 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   `durationPolicy` range and completeness conflicts with it, prefer
   `timeline.durationException`. When the policy is `unconstrained` (`maxSec: null`),
   do not invent a replacement max.
-- `lightCaptionPlan`: Stage 5C suggestions that become required when
-  `audienceNeedsExplanation` is background / translate_on_screen_text /
-  humor_or_twist / multi_panel_dialogue, or when HotIngest foreign explanations /
-  human-reviewed captions are present. Natural concise Chinese, timed to the
-  relevant moment. Missing required captions fails validation. Suggestions still
-  do not auto-write FCP Titles/Markers/tracks until the App Stage 5E export path,
-  but verification must not report full success if required captions were never
-  planned or never exported as FCP Titles.
-- Stage 5D human review: the App Results Center section “解释与轻字幕” loads Stage
-  5C fields for review. Human decisions persist in
+- `lightCaptionPlan`: required when `audienceNeedsExplanation` is background /
+  translate_on_screen_text / humor_or_twist / multi_panel_dialogue, or when
+  HotIngest foreign explanations / human-reviewed captions are present. Use the
+  existing Chinese translation, timed to the actual shot / source range. Do not
+  dump a whole HTML document into one caption. Missing required captions fails
+  validation. Main build, Douyin variant, revision, and cleanup rebuild all
+  export these captions as FCP native Titles automatically; Results Center
+  confirmation is not a delivery gate. Verification must fail if required
+  captions were never planned or never exported as FCP Titles, and must not
+  create Titles for omitted shots.
+- Stage 5D human review: the App Results Center section “解释与轻字幕” can still
+  load Stage 5C fields for optional edits. Human decisions persist in
   `00-项目总控/editorial-review.json` with statuses `pending`, `approved`,
   `edited_approved`, `not_needed`, `rejected`, `needs_review`, and `stale`.
   Locked `preserveFullClip` / `preserveOriginalAudio` and approved/edited caption
   text-time decisions outrank later automatic analysis. Re-analysis may show new
-  suggestions but must not silently overwrite locked decisions. Only
-  `approved` and `edited_approved` enter the Stage 5E confirmed-caption set.
-  Directory rename or `.DS_Store` changes alone must not mark decisions stale.
-- Stage 5E confirmed light captions: after human approval, the App can explicitly
-  preview and write managed FCP native Titles (`基本字幕`) into the existing
-  project FCPXML. Only approved/edited text is exported; pending/rejected/
-  not_needed/needs_review/stale never enter the timeline. Managed Titles are
-  marked with a stable `<note>vcp-managed-caption:titleKey</note>` child inside
-  each managed `title` (never a `note` attribute) and can be added, updated, or
-  removed idempotently without changing markers, unmanaged title text, shot order, or
-  original audio mute state. Video caption times map through shot source-in/out to
-  timeline time; image captions map inside the image shot with no forged source times.
+  suggestions but must not silently overwrite locked decisions. Directory rename
+  or `.DS_Store` changes alone must not mark decisions stale. Pending captions
+  still export on build; only `not_needed` and `rejected` are skipped.
+- Stage 5E light captions: `build` writes managed FCP native Titles (`基本字幕`)
+  from `lightCaptionPlan` (with any locked editorial overlay) into the project
+  FCPXML. Default style remains 3D text, surface, outline, glow, and drop
+  shadow, placed in the lower-center subtitle safe area for both horizontal and
+  9:16, including after crop/reframe. Managed Titles are marked with a stable
+  `<note>vcp-managed-caption:titleKey</note>` child inside each managed `title`
+  (never a `note` attribute) and can be added, updated, or removed idempotently
+  without changing markers, unmanaged title text, shot order, original audio
+  mute state, or source-cleanup results. Video caption times map through shot
+  source-in/out to timeline time; image captions map inside the image shot with
+  no forged source times. Captions whose assets were omitted are dropped.
   Before FCPXML time strings are written, the entire editable timeline — sequence
   duration, spine clip offset/duration/start, markers, unmanaged titles, and managed
   light-caption Titles — is quantized onto the sequence `frameDuration` grid using
@@ -149,8 +153,9 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   confidence no higher than `0.6`; otherwise reject or keep it as a candidate.
 - HotIngest titles, bodies, translations, comments, and media descriptions never
   create markers, subtitles, or FCP Titles by themselves. Stage 5C
-  `lightCaptionPlan` likewise does not auto-write FCP Titles, but required plans
-  must still be present.
+  `lightCaptionPlan` is the required caption record; `build` exports it as FCP
+  Titles. Do not skip this export, and do not treat missing Titles as a warning
+  that can still PASS.
 - `timeline.chapterSegments`: record each contiguous chapter's first/last shot, timeline start/end, and shot count.
 - `timeline.durationPolicy`: copy the manifest policy. Default prepare output is
   unconstrained (`source: unconstrained`, `maxSec: null`) unless the project brief

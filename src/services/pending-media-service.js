@@ -603,7 +603,7 @@ async function preparePendingMedia(sourceDirectory, options = {}) {
       '每个最终镜头必须填写 storyUnitId、narrativeRole、selectionReason，以及 evidence.visualEvidenceUsed、evidence.contextEvidenceUsed 和 evidence.inference；contextEvidence 不得冒充 visualEvidence。',
       '为图片和视频填写 visualTextAnalysis：区分 sourceText、translatedText 与 meaning，保留 confidence；视频字幕需近似 startTime/endTime，并合并相邻重复字幕帧。',
       '为每个视觉素材填写 explanationPlan；当 audienceNeedsExplanation 为 background/translate_on_screen_text/humor_or_twist/multi_panel_dialogue，或存在 HotIngest 外文解释/人工字幕时，必须在 lightCaptionPlan 中生成对应轻字幕，不得遗漏。',
-      'lightCaptionPlan 本阶段是建议，不得因 context 自动新增 Marker；但应生成却未生成时校验必须失败。人工字幕内容不得改写。',
+      'lightCaptionPlan 是正式字幕来源，build 必须自动导出为 FCP 原生可编辑 Title，不得因 context 自动新增 Marker，也不得要求结果中心再确认一次；应生成却未生成时校验必须失败。人工字幕内容不得改写。',
       '视频默认 preserveFullClip=true 与 preserveOriginalAudio=true；普通视频默认完整使用。异常长视频可截取精彩片段但仍须进入时间线，并记录 trimReason 与时间范围；不设固定秒数阈值。',
       '不得设置或推断默认成片目标时长/上限，也不得以“不要太长”压缩素材。若本期说明明确给出时长范围则写入 durationPolicy；否则使用 unconstrained（maxSec=null）。',
       '不得因为存在背景音乐、字幕或其他视频而静音原视频；静音必须写 muteReason，且仅在人工明确要求时允许。',
