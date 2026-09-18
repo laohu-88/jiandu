@@ -215,6 +215,12 @@ function contextualAnalysis() {
       suggestedUse: ['测试'],
       status: 'adopt',
       reason: '可用。',
+      cleanup: {
+        decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+        method: 'none', provider: 'none', zones: [],
+        inspectedFrames: ['preview.jpg'],
+        reviewRequired: false, warnings: [],
+      },
       ranges: [],
       confidence: 0.9,
       contextUsage: {

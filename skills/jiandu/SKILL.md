@@ -35,20 +35,23 @@ If the source is a HotIngest Selected package, read `.hotingest/manifest.json`, 
 
 ### 源画面净化（固定能力）
 
-源画面净化是每次 `$jiandu` 的默认闭环，不需要用户重复提出。对每个可用图片/视频，先实际查看 prepare 生成的 `imagePreview`、`storyboard` 和代表帧；视频至少覆盖开头、中段、结尾和明显镜头变化处，证据不足时用 `inspect-range` 生成密集帧。HotIngest HTML、文件名、OCR、旧 metadata 只能作上下文，不能证明画面里存在或不存在覆盖物。
+源画面净化是每次 `$jiandu` 的默认闭环，不需要用户重复提出。目标是最终成片干净可看，不是证明每条输入都能被算法擦干净。
 
-每个可用视觉素材必须在 `assets[].cleanup` 留下结构化审计记录。发现与本期无关、已经烧录进画面的外文大标题、排行榜数字、无用符号、平台贴纸、水印或其他视觉覆盖物时，记录 `timeRanges`、normalized `zones`（x/y/width/height）、`overlayTypes`、`isCoreContent`、`rationale`、推荐 `method`、`provider`、`confidence`、`reviewRequired` 与 `warnings`；实际检查后没有发现时也必须明确写 `decision: none`、检查帧和“检查后未发现”，不能因字段缺失静默跳过。对应的 `timeline.shots[].cleanup` 可覆盖某个镜头的时间段判断。
+对每个可用图片/视频，先实际查看 prepare 生成的 `imagePreview`、`storyboard` 和代表帧；视频至少覆盖开头、中段、结尾、明显镜头变化和 overlay 变化处，证据不足时用 `inspect-range` 生成密集帧。HotIngest HTML、文件名、OCR、旧 metadata 只能作上下文，不能证明画面里存在或不存在覆盖物。`inspectedFrames` 必须是真实帧路径，禁止 `storyboard.jpg`、`timed key frames` 这类占位词。
 
-完成处理后必须再次抽帧复检：crop/reframe 必须证明目标区域离开最终构图；`derived_media` 必须证明 clean-media 与原帧存在真实像素变化并确认最终 FCPXML 引用派生媒体；原始素材 digest 必须不变。没有可靠修复的复杂主体遮挡标为 `unresolved` / `fallback_preserve`，不得报告 cleaned 或净化完成。
+每个可用视觉素材必须在 `assets[].cleanup` 留下结构化审计记录，并给出最终状态之一：`clean`、`cleaned_by_reframe`、`cleaned_by_derived_media`、`unresolved`。发现与本期无关、已经烧录进画面的外文大标题、排行榜数字、无用符号、平台贴纸、水印或其他视觉覆盖物时，记录 `timeRanges`、normalized `zones`（x/y/width/height）、`overlayTypes`、`isCoreContent`、`rationale`、推荐 `method`、`provider`、`confidence`、`reviewRequired` 与 `warnings`。实际检查后没有发现时必须明确写 `decision: none`、真实检查帧和“检查后未发现”。有覆盖物却没有 cleanup plan 时，不得静默继续 build。对应的 `timeline.shots[].cleanup` 可覆盖某个镜头的时间段判断。
 
-按下面的稳定性顺序选择方法：
+频道编译标题、排行文字、表情贴纸、角标和水印不是“来源语境核心内容”。不要因为它们来自原片就写成 `decision: none`。只有画面叙事本身的笑话/对白才可标 `isCoreContent: true`。
 
-1. 黑边、顶部标题栏、边缘大字可安全去掉时，使用已有 FCPXML `layout` 的 crop / reframe / scale / position / tracking；`decision` 为 `crop_reframe`，`method` 为 `fcpxml_crop` 或 `fcpxml_reframe`。优先重新构图，不生成派生媒体。
-2. 文字/数字固定压在普通背景且裁切会损失主体时，使用 `derived_media` + `ffmpeg_delogo` / `ffmpeg-delogo` 的局部周边插值；区域用 0 到 1 的归一化 `zones` 表示，并按 `timeRanges` 复检。旧的 `ffmpeg-mask-blur` 仅是低优先级 fallback，不能报告为高质量清理。
-3. 文字压在真实有效画面或复杂运动主体上时，不得把简单裁切误报为修复成功。当前没有可靠 AI inpainting；`inpainting` provider 必须走安全 fallback。provider 不可用、主体会受损或区域判断不可靠时，优先 `fallbackLayout` 重构，无法安全处理则 `fallback_preserve` 并标记 `reviewRequired` / `unresolved`。
-4. 不得为了去字损害人物、动物、主体或关键内容；已有人工字幕和原视频中本身属于内容核心的信息不得误删。
+完成处理后必须再次抽取最终实际使用画面的代表帧复检：crop/reframe 必须证明目标外文、数字、符号已经离开最终可见画面，不能只稍微裁一点；`derived_media` 必须证明 FCPXML 引用 clean-media、目标覆盖物消失、主体没有被涂抹/模糊/马赛克破坏。`unresolved` 必须保持 unresolved，不能写成 cleaned。原始素材 digest 必须不变。
 
-只有 `decision: derived_media` 且声明的 ffmpeg provider 实际成功、后处理复检通过时，才在剪渡 Application Support 的项目缓存 `cache/clean-media/` 生成内部派生媒体，并让 FCPXML 引用它。失败或不支持时保留原素材并写入 fallback；不得伪造像素级修复成功。只使用 FCPXML crop / reframe 时，直接引用原始素材。源素材始终不移动、不覆盖、不修改。
+按下面的优先级选择方法：
+
+1. **无损构图去除（第一优先级）**：顶部、底部、左右边缘的大块外文、标题、排行榜、数字、符号、贴纸，优先用 FCPXML `layout` 的 crop / reframe / scale / position / 分镜头动态构图，让覆盖物在最终构图中真正不可见，同时保证人物、猫狗、车辆和核心事件仍完整可看。`decision` 为 `crop_reframe`。
+2. **换片段 / 缩短 / 不选（第二优先级）**：趣味合集中某段烧录文字严重覆盖画面，而清理会明显损坏主体时，优先使用没有覆盖物的时间段、换构图、缩短、换同组其他素材；必要时 `decision: omit` 且 `status: reject`，不把该条送进时间线。宁可少用一条素材，也不要生成难看的修补画面。HotIngest 趣味合集里，最终画面干净高于“每条下载素材都必须出现”。
+3. **高质量像素修复（第三优先级，受限）**：只有无法通过构图解决、又确实值得保留、且覆盖物是简单静态背景上的小边角时，才允许 `derived_media` + `ffmpeg_delogo`。当前项目没有可用的视频 inpainting；`inpainting` 必须走安全 fallback，不得伪造能力。`ffmpeg-mask-blur`、矩形模糊、简单遮盖不再作为自动成功路径。文字压在人物、猫狗、车辆、手脚、复杂纹理或运动背景上时，禁止用一块模糊区域硬盖。明显马赛克、大块模糊、涂抹、重影、背景扭曲、主体残缺一律失败，不得因为“像素有变化”判定成功。
+
+不能高质量净化的素材标 `unresolved`；若它仍要求无外文覆盖物，该 shot 不能通过最终质量门。失败或不支持时保留原素材并写入 fallback；不得伪造像素级修复成功。只使用 FCPXML crop / reframe 时，直接引用原始素材。确需派生媒体时只放 `~/Library/Application Support/剪渡/projects/<项目>/cache/clean-media/`，最终 FCPXML 必须引用它。源素材始终不移动、不覆盖、不修改。自动测试通过但肉眼失败，整个 cleanup 仍判定 FAIL。
 
 ### Default main film (`platformMode: main`)
 
@@ -61,7 +64,7 @@ Select by content value, not a fixed duration cap. Selected videos keep original
 ### 固定剪辑硬规则
 
 剪辑硬规则（Cursor Agent 与 Codex 共用，不得削弱）：
-1. 放入「视频待处理」项目中的可用视觉素材，默认都需要进入时间线；每一项至少使用一次。
+1. 放入「视频待处理」项目中的可用视觉素材，默认都需要进入时间线；每一项至少使用一次。无法通过构图高质量去掉烧录覆盖物、且像素修复会明显损坏主体时，可以换时间段、换构图、缩短、换同类素材或不使用该条；不得为了“必须擦掉”生成模糊、马赛克或涂抹画面。不得以缩短成片为由淘汰普通干净素材。HotIngest 趣味合集里，最终画面干净高于“每条下载素材都必须出现”。
 2. 不得设置或推断默认成片目标时长、建议时长上限，也不得以“不要太长”为由压缩或淘汰普通素材。
 3. 不得为了缩短成片而跳过普通视频、图片或动画素材。
 4. 个别视频异常长时，可只选取精彩片段，但该素材仍必须进入时间线；是否异常长由 Agent 结合整体素材判断，不设固定秒数阈值；截取须在分析结果中记录原因与时间范围。普通视频默认完整使用。

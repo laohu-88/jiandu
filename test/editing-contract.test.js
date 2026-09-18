@@ -15,6 +15,7 @@ const {
   validateRequiredLightCaptions,
 } = require('../src/services/editing-contract-service');
 const { validateVideoAnalysis } = require('../src/services/video-analysis-schema');
+const { inspectedNoneCleanup } = require('../src/services/source-cleanup-service');
 const { buildAgentPrompt, AGENT_ENGINES } = require('../src/services/handoff-task-service');
 
 function baseAsset(assetId, type = 'image', extras = {}) {
@@ -26,6 +27,7 @@ function baseAsset(assetId, type = 'image', extras = {}) {
     suggestedUse: ['时间线'],
     status: 'adopt',
     reason: '推动叙事',
+    cleanup: inspectedNoneCleanup(),
     ranges: type === 'video' ? [{ startSec: 0, endSec: extras.durationSec || 5, confidence: 0.9 }] : [],
     confidence: 0.9,
     ...extras.asset,

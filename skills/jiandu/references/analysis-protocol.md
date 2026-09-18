@@ -118,22 +118,26 @@ For a visible v3 handoff, keep operational state and HyperFrames decision/qualit
   timeline length changes from frame alignment are recorded as
   `frameAlignmentAdjusted`, not as content trims.
 - `assets[].status`: `adopt`, `candidate`, or `reject`.
-- `assets[].cleanup` / `timeline.shots[].cleanup`: optional but required whenever the
-  actual picture contains an unrelated burned-in overlay. Keep the visual decision
-  separate from HotIngest context. `decision` is `none`, `crop_reframe`,
-  `derived_media`, or `fallback_preserve`; record `overlayTypes`, `rationale`,
-  `method`, `provider`, normalized `zones`, `reviewRequired`, and `warnings`.
-  `crop_reframe` reuses the shot's existing `layout` and must prefer FCPXML-native
-  crop/reframe. `derived_media` is only truthful when the declared provider actually
-  succeeds; unsupported inpainting must be recorded as a fallback rather than
-  claimed as repaired.
+- `assets[].cleanup` / `timeline.shots[].cleanup`: required on every visual asset.
+  Keep the visual decision separate from HotIngest context. `decision` is `none`,
+  `crop_reframe`, `derived_media`, `fallback_preserve`, or `omit`. Record
+  `overlayTypes`, `rationale`, `method`, `provider`, normalized `zones`, real
+  `inspectedFrames`, `reviewRequired`, and `warnings`. Channel titles, ranking
+  numbers, stickers and watermarks are not core content. Prefer lossless
+  crop/reframe so the overlay actually leaves the final frame; next, change the
+  time range, shorten, swap a sibling clip, or `omit` the asset; pixel repair is
+  only `ffmpeg_delogo` on a small static-background edge. Mask blur, mosaics and
+  smears are never `cleaned`. `resultStatus` is `clean`,
+  `cleaned_by_reframe`, `cleaned_by_derived_media`, or `unresolved`.
 - `assets[].reason`: why it is adopted/candidate/rejected.
 - `assets[].ranges`: useful video intervals; use an empty list for still images or no reliable interval.
 - `confidence`: number from 0 to 1. Use lower values and `reviewRequired: true` for sparse evidence.
 - `timeline.orientation`: `horizontal` or `vertical`, based on the actual adopted media and dominant video rather than the folder name, first image, or preview size.
 - `timeline.width`, `height`, `fps`: intended production sequence. Horizontal defaults to 1920×1080, vertical defaults to 1080×1920, and an unreliable or unavailable source frame rate defaults to 30 fps. Use even dimensions. The rough-cut preview is a separate lightweight artifact and does not set these values.
 - `shots`: ordered no-voiceover visual timeline. Every usable visual asset must appear
-  in at least one shot unless classified as `duplicateAssetIds` or `unusableAssetIds`.
+  in at least one shot unless classified as `duplicateAssetIds`, `unusableAssetIds`,
+  or omitted because burned-in overlays cannot be removed without destroying the
+  subject (`cleanup.decision: omit`).
   Every shot in a narrative-aware manifest must retain `chapterId` and `subchapterId`.
   Every context-aware shot must also record `storyUnitId`, `narrativeRole`,
   `selectionReason`, and separated `evidence`. Different chapters and ordered

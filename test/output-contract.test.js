@@ -29,6 +29,11 @@ function validAnalysis(assetId) {
       suggestedUse: ['时间线'],
       status: 'adopt',
       reason: '完整展示',
+      cleanup: {
+        decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+        method: 'none', provider: 'none', zones: [],
+        inspectedFrames: ['preview.jpg'], reviewRequired: false, warnings: [],
+      },
       ranges: [],
       confidence: 0.9,
     }],

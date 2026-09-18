@@ -8,6 +8,7 @@ const test = require('node:test');
 
 const { collectFcpTitles, buildFcpxml, validateFcpxmlStructure } = require('../src/services/fcpxml-service');
 const { validateVideoAnalysis } = require('../src/services/video-analysis-schema');
+const { inspectedNoneCleanup } = require('../src/services/source-cleanup-service');
 const {
   buildDefaultAudioAnalysis,
   buildDefaultVideoPreservationPlan,
@@ -105,6 +106,7 @@ function videoAsset(assetId, overrides = {}) {
     suggestedUse: ['过程'],
     status: 'adopt',
     reason: '关键过程。',
+    cleanup: inspectedNoneCleanup(),
     ranges: [{ startSec: 0, endSec: 10, confidence: 0.9, reviewRequired: false }],
     confidence: 0.9,
     audioAnalysis: buildDefaultAudioAnalysis(videoItem(assetId, 10)),
@@ -122,6 +124,7 @@ function imageAsset(assetId, overrides = {}) {
     suggestedUse: ['结果'],
     status: 'adopt',
     reason: '静态证据。',
+    cleanup: inspectedNoneCleanup(),
     ranges: [],
     confidence: 0.92,
     audioAnalysis: buildDefaultAudioAnalysis(imageItem(assetId)),

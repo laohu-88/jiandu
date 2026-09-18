@@ -92,6 +92,11 @@ test('真实 HyperFrames A/B：独立 MP4 登记进 v3 并作为独立镜头进�
       suggestedUse: ['结果确认'],
       status: 'adopt',
       reason: '用于建立真实 A/B 基线。',
+      cleanup: {
+        decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+        method: 'none', provider: 'none', zones: [],
+        inspectedFrames: ['preview.jpg'], reviewRequired: false, warnings: [],
+      },
       ranges: [],
       confidence: 0.98,
     }],

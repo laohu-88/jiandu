@@ -152,6 +152,11 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
         suggestedUse: ['结果确认', '收尾'],
         status: 'adopt',
         reason: '与动态过程形成结果落点。',
+        cleanup: {
+          decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+          method: 'none', provider: 'none', zones: [],
+          inspectedFrames: ['preview.jpg'], reviewRequired: false, warnings: [],
+        },
         ranges: [],
         confidence: 0.95,
       },
@@ -163,6 +168,11 @@ test('最小样例从中文空格素材目录完成 v3、FCPXML、marker、预�
         suggestedUse: [],
         status: 'reject',
         reason: '内容重复且没有可见结果价值。',
+        cleanup: {
+          decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+          method: 'none', provider: 'none', zones: [],
+          inspectedFrames: ['preview.jpg'], reviewRequired: false, warnings: [],
+        },
         ranges: [],
         confidence: 0.9,
       },

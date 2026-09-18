@@ -43,7 +43,7 @@ function validAnalysis(assetId) {
     schemaVersion: 1,
     theme: { summary: '主题', rationale: '可见素材', confidence: 0.9, folderNameConflict: false },
     titles: { candidates: ['假隧道撞上真车', '我向艺术家致敬'], recommended: '假隧道撞上真车', rationale: '与素材一致' },
-    assets: [{ assetId, type: 'image', semanticLabels: ['壁画'], contentSummary: '壁画假隧道与银色轿车', suggestedUse: ['时间线'], status: 'adopt', reason: '完整展示', ranges: [], confidence: 0.9 }],
+    assets: [{ assetId, type: 'image', semanticLabels: ['壁画'], contentSummary: '壁画假隧道与银色轿车', suggestedUse: ['时间线'], status: 'adopt', reason: '完整展示', cleanup: { decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。', method: 'none', provider: 'none', zones: [], inspectedFrames: ['preview.jpg'], reviewRequired: false, warnings: [] }, ranges: [], confidence: 0.9 }],
     timeline: { orientation: 'vertical', width: 1080, height: 1920, fps: 30, shots: [{ id: 'shot-001', assetId, inSec: 0, outSec: 2, durationSec: 2, fitMode: 'contain', audioMode: 'keep', purpose: '完整展示', confidence: 0.9, reviewRequired: false }], markers: [{ timeSec: 1, text: '我向艺术家致敬' }] },
   };
 }

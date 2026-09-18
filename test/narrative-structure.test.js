@@ -242,6 +242,12 @@ function narrativeAnalysis() {
       suggestedUse: ['测试'],
       status: 'adopt',
       reason: '测试',
+      cleanup: {
+        decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+        method: 'none', provider: 'none', zones: [],
+        inspectedFrames: ['start.jpg', 'middle.jpg', 'end.jpg'],
+        reviewRequired: false, warnings: [],
+      },
       ranges: [],
       confidence: 1,
     })),

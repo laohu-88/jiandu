@@ -702,7 +702,7 @@
         "zones", "reviewRequired", "warnings"
       ],
       "properties": {
-        "decision": { "enum": ["none", "crop_reframe", "derived_media", "fallback_preserve"] },
+        "decision": { "enum": ["none", "crop_reframe", "derived_media", "fallback_preserve", "omit"] },
         "overlayTypes": {
           "type": "array",
           "maxItems": 8,
@@ -734,13 +734,16 @@
         "inspectedFrames": {
           "type": "array",
           "maxItems": 40,
-          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+          "items": { "type": "string", "minLength": 1, "maxLength": 400 }
         },
         "confidence": { "$ref": "#/$defs/confidence" },
         "isCoreContent": { "type": "boolean" },
         "layout": { "type": "object" },
         "fallback": { "enum": ["preserve", "crop_reframe"] },
         "fallbackLayout": { "type": "object" },
+        "resultStatus": {
+          "enum": ["clean", "cleaned_by_reframe", "cleaned_by_derived_media", "unresolved"]
+        },
         "reviewRequired": { "type": "boolean" },
         "warnings": {
           "type": "array",

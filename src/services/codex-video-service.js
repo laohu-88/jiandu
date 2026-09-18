@@ -216,6 +216,10 @@ async function syncTimelineAssets(projectPath, manifest, analysis, options = {})
   return mappings;
 }
 
+function visualAssetNeedsCleanup(asset) {
+  return Boolean(asset && ['image', 'video'].includes(asset.type));
+}
+
 async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
   const mappingById = new Map(mappings.map((mapping) => [mapping.assetId, mapping]));
   const analysisById = new Map((analysis.assets || []).map((asset) => [asset.assetId, asset]));
@@ -223,14 +227,53 @@ async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
   const cleanupReports = [];
   const cleanMappingByFingerprint = new Map();
   const cleanAssets = [];
+  const processedSourceIds = new Set();
 
   for (const shot of effectiveAnalysis.timeline.shots) {
-    const sourceAnalysis = analysisById.get(shot.assetId);
+    const originalAssetId = shot.sourceAssetId || shot.assetId;
+    const sourceAnalysis = analysisById.get(originalAssetId);
     const cleanup = resolveCleanupPlan(shot, sourceAnalysis);
-    if (!cleanup) continue;
-    const originalAssetId = shot.assetId;
     const originalMapping = mappingById.get(originalAssetId);
-    if (!originalMapping) continue;
+    processedSourceIds.add(originalAssetId);
+    if (!cleanup) {
+      cleanupReports.push({
+        shotId: shot.id,
+        assetId: originalAssetId,
+        decision: null,
+        method: null,
+        provider: null,
+        status: 'missing',
+        resultStatus: 'unresolved',
+        reason: '入选素材缺少 cleanup plan，不能静默继续 build。',
+      });
+      continue;
+    }
+    if (!originalMapping) {
+      cleanupReports.push({
+        shotId: shot.id,
+        assetId: originalAssetId,
+        decision: cleanup.decision,
+        method: cleanup.method,
+        provider: cleanup.provider,
+        status: 'missing',
+        resultStatus: 'unresolved',
+        reason: '找不到入选素材的媒体映射，无法执行净化。',
+      });
+      continue;
+    }
+    if (cleanup.decision === 'omit') {
+      cleanupReports.push({
+        shotId: shot.id,
+        assetId: originalAssetId,
+        decision: cleanup.decision,
+        method: cleanup.method,
+        provider: cleanup.provider,
+        status: 'unresolved',
+        resultStatus: 'unresolved',
+        reason: cleanup.rationale || '覆盖物无法高质量净化，该镜头不应进入时间线。',
+      });
+      continue;
+    }
     Object.assign(shot, mergeCleanupLayout(shot, cleanup));
 
     if (cleanup.decision !== 'derived_media') {
@@ -243,6 +286,9 @@ async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
         status: cleanup.decision === 'none'
           ? 'inspected_no_overlay'
           : cleanup.decision === 'fallback_preserve' ? 'preserved' : 'applied',
+        resultStatus: cleanup.decision === 'none'
+          ? 'clean'
+          : cleanup.decision === 'crop_reframe' ? 'cleaned_by_reframe' : 'unresolved',
         inspected: cleanup.decision === 'none',
         reason: cleanup.rationale,
       });
@@ -262,6 +308,7 @@ async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
         cleanMapping = {
           ...result.mapping,
           assetId: cleanAssetId,
+          sourceAssetId: originalAssetId,
           sourceRelativePath: originalMapping.sourceRelativePath,
         };
         mappingById.set(cleanAssetId, cleanMapping);
@@ -273,16 +320,18 @@ async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
           cleanup: {
             decision: 'none',
             overlayTypes: cleanup.overlayTypes,
-            rationale: '已由内部派生清理媒体完成像素级遮盖。',
+            rationale: '已由内部派生清理媒体完成像素级修复。',
             method: 'none',
             provider: 'none',
             zones: [],
+            inspectedFrames: cleanup.inspectedFrames,
             reviewRequired: cleanup.reviewRequired,
             warnings: cleanup.warnings,
           },
         });
       }
       shot.assetId = cleanAssetId;
+      shot.sourceAssetId = originalAssetId;
       cleanupReports.push({
         shotId: shot.id,
         assetId: originalAssetId,
@@ -291,6 +340,7 @@ async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
         method: cleanup.method,
         provider: cleanup.provider,
         status: 'generated',
+        resultStatus: 'cleaned_by_derived_media',
         path: result.outputPath,
         reason: cleanup.rationale,
       });
@@ -299,6 +349,17 @@ async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
 
     if (cleanup.fallback === 'crop_reframe' && cleanup.fallbackLayout) {
       Object.assign(shot, mergeCleanupLayout(shot, { layout: cleanup.fallbackLayout }));
+      cleanupReports.push({
+        shotId: shot.id,
+        assetId: originalAssetId,
+        decision: 'crop_reframe',
+        method: 'fcpxml_crop',
+        provider: 'fcpxml',
+        status: 'applied',
+        resultStatus: 'cleaned_by_reframe',
+        reason: result.reason || '像素修复不可用，改用构图去除。',
+      });
+      continue;
     }
     cleanupReports.push({
       shotId: shot.id,
@@ -307,25 +368,46 @@ async function applySourceCleanup({ artifactRoot, analysis, mappings }) {
       method: cleanup.method,
       provider: cleanup.provider,
       status: 'fallback',
+      resultStatus: 'unresolved',
       reason: result.reason || '未生成派生媒体，保留原素材。',
     });
   }
   if (cleanAssets.length) effectiveAnalysis.assets.push(...cleanAssets);
-  const selectedVideoAssetIds = new Set(effectiveAnalysis.timeline.shots
-    .map((shot) => shot.assetId)
-    .filter((assetId) => analysisById.get(assetId)?.type === 'video'));
-  const analyzedAssetIds = selectedVideoAssetIds;
-  const cleanupPlannedAssetIds = new Set((analysis.assets || [])
-    .filter((asset) => selectedVideoAssetIds.has(asset.assetId) && asset.cleanup)
-    .map((asset) => asset.assetId));
+  const requiredAssetIds = (analysis.assets || [])
+    .filter((asset) => visualAssetNeedsCleanup(asset) && asset.status !== 'reject')
+    .map((asset) => asset.assetId);
+  const omittedAssetIds = (analysis.assets || [])
+    .filter((asset) => resolveCleanupPlan(null, asset)?.decision === 'omit')
+    .map((asset) => asset.assetId);
+  const plannedAssetIds = (analysis.assets || [])
+    .filter((asset) => visualAssetNeedsCleanup(asset) && asset.cleanup)
+    .map((asset) => asset.assetId);
+  const missingAssetIds = requiredAssetIds.filter((assetId) => !plannedAssetIds.includes(assetId));
+  for (const asset of analysis.assets || []) {
+    if (!visualAssetNeedsCleanup(asset) || processedSourceIds.has(asset.assetId)) continue;
+    if (asset.status === 'reject' && resolveCleanupPlan(null, asset)?.decision === 'omit') {
+      cleanupReports.push({
+        shotId: null,
+        assetId: asset.assetId,
+        decision: 'omit',
+        method: asset.cleanup?.method || 'preserve',
+        provider: asset.cleanup?.provider || 'none',
+        status: 'omitted',
+        resultStatus: 'unresolved',
+        reason: asset.cleanup?.rationale || '覆盖物无法高质量净化，未使用该素材。',
+      });
+    }
+  }
   return {
     analysis: effectiveAnalysis,
     mappings,
     cleanupReports,
     cleanupCoverage: {
-      requiredAssetIds: [...analyzedAssetIds],
-      plannedAssetIds: [...cleanupPlannedAssetIds],
-      missingAssetIds: [...analyzedAssetIds].filter((assetId) => !cleanupPlannedAssetIds.has(assetId)),
+      requiredAssetIds,
+      plannedAssetIds,
+      missingAssetIds,
+      omittedAssetIds,
+      processedSourceIds: [...processedSourceIds],
     },
   };
 }
@@ -761,8 +843,8 @@ function buildHumanSummary({
   if (cleanupReports.length === 0) lines.push('- 本期没有记录需要净化的烧录覆盖物。');
   else cleanupReports.forEach((item) => {
     lines.push(
-      `- ${item.shotId}｜${item.assetId}｜${item.status}｜${item.method || 'preserve'}`
-        + `｜${item.reason || '无说明'}`
+      `- ${item.shotId || 'off-timeline'}｜${item.assetId}｜${item.resultStatus || item.status}`
+        + `｜${item.method || 'preserve'}｜${item.reason || '无说明'}`
         + (item.path ? `｜内部媒体 ${item.path}` : ''),
     );
   });
@@ -861,9 +943,26 @@ async function verifyCodexVideoProject(projectPath, options = {}) {
     );
   }
   if (!cleanupVerification) {
-    warnings.push('未生成源画面净化后处理验证；不能将本项目报告为净化完成。');
+    errors.push('未生成源画面净化后处理验证；不能将本项目报告为净化完成。');
   } else if (!cleanupVerification.ok) {
-    errors.push('源画面净化后处理验证失败；存在未解决或未证明发生变化的区域。');
+    const unresolved = (cleanupVerification.results || [])
+      .filter((item) => !item.ok || item.resultStatus === 'unresolved')
+      .map((item) => item.shotId || item.assetId);
+    errors.push(
+      '源画面净化后处理验证失败；存在未解决或低质量处理的区域'
+      + (unresolved.length ? `：${unresolved.join('、')}` : '。'),
+    );
+  }
+  const unresolvedReports = (status.cleanupReports || []).filter((item) => (
+    item.resultStatus === 'unresolved'
+    || item.status === 'missing'
+    || item.status === 'fallback'
+    || item.status === 'preserved'
+  ) && item.shotId);
+  if (unresolvedReports.length) {
+    errors.push(
+      `时间线上仍有未高质量净化的镜头：${unresolvedReports.map((item) => item.shotId).join('、')}。`,
+    );
   }
   if (project.projectPath !== resolved) {
     warnings.push('项目根目录已移动或改名；完整性检查已按当前目录和业务相对路径执行。');
@@ -1226,6 +1325,18 @@ async function buildCodexVideoProject(options) {
     let effectiveAnalysis = cleanupResult.analysis;
     const cleanupReports = cleanupResult.cleanupReports;
     const cleanupCoverage = cleanupResult.cleanupCoverage;
+    if (cleanupCoverage?.missingAssetIds?.length) {
+      throw Object.assign(
+        new Error(`有可用视觉素材缺少 cleanup plan，不能静默继续 build：${cleanupCoverage.missingAssetIds.join('、')}`),
+        { code: 'CLEANUP_PLAN_MISSING' },
+      );
+    }
+    if (cleanupReports.some((item) => item.status === 'missing' && item.shotId)) {
+      throw Object.assign(
+        new Error('时间线镜头缺少 cleanup plan，不能静默继续 build。'),
+        { code: 'CLEANUP_PLAN_MISSING' },
+      );
+    }
     let hyperframes = null;
     if (hyperframesOptions.reuseProjectPath) {
       await onStage('rendering_hyperframes', '正在复制并登记已验收 HyperFrames 独立素材。');

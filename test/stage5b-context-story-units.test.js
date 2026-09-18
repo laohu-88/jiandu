@@ -79,6 +79,11 @@ function analysisFor(manifest) {
     reason: representativeIds.has(item.assetId)
       ? '作为代表素材。'
       : '与代表素材画面重复，不进入时间线。',
+    cleanup: {
+      decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+      method: 'none', provider: 'none', zones: [],
+      inspectedFrames: ['preview.jpg'], reviewRequired: false, warnings: [],
+    },
     ranges: [],
     confidence: 0.88,
     contextUsage: {

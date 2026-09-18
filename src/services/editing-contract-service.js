@@ -7,7 +7,7 @@
 
 const SHARED_EDITING_RULES_LINES = Object.freeze([
   '剪辑硬规则（Codex Agent 与 Codex 共用，不得削弱）：',
-  '1. 放入「视频待处理」项目中的可用视觉素材，默认都需要进入时间线；每一项至少使用一次。',
+  '1. 放入「视频待处理」项目中的可用视觉素材，默认都需要进入时间线；每一项至少使用一次。无法通过构图高质量去掉烧录覆盖物、且像素修复会明显损坏主体时，可以换时间段、换构图、缩短、换同类素材或不使用该条；不得为了“必须擦掉”生成模糊、马赛克或涂抹画面。不得以缩短成片为由淘汰普通干净素材。',
   '2. 不得设置或推断默认成片目标时长、建议时长上限，也不得以“不要太长”为由压缩或淘汰普通素材。',
   '3. 不得为了缩短成片而跳过普通视频、图片或动画素材。',
   '4. 个别视频异常长时，可只选取精彩片段，但该素材仍必须进入时间线；是否异常长由 Agent 结合整体素材判断，不设固定秒数阈值；截取须在分析结果中记录原因与时间范围。普通视频默认完整使用。',
@@ -37,6 +37,7 @@ const EXPLANATION_NEEDS_REQUIRING_CAPTION = new Set([
 
 const UNUSABLE_REJECT_PATTERN = /损坏|无法读取|无真实视觉|无效下载|图标|头像|corrupt|unreadable|unsupported|no.?visual/i;
 const DUPLICATE_REJECT_PATTERN = /重复|duplicate|相同画面|无补充.*叙事/i;
+const CLEANUP_OMIT_PATTERN = /无法高质量净化|无法安全去除|覆盖物.*损坏主体|不使用该素材|omit|unresolved overlay/i;
 
 function sharedEditingRulesText() {
   return SHARED_EDITING_RULES_LINES.join('\n');
@@ -124,9 +125,11 @@ function summarizeMaterialCoverage(analysis, manifest) {
     if (!onTimeline) {
       const rejectReason = String(asset?.reason || '');
       const allowed = allowedOff.has(item.assetId)
+        || asset?.cleanup?.decision === 'omit'
         || (asset?.status === 'reject' && (
           UNUSABLE_REJECT_PATTERN.test(rejectReason)
           || DUPLICATE_REJECT_PATTERN.test(rejectReason)
+          || CLEANUP_OMIT_PATTERN.test(rejectReason)
         ));
       unused.push({
         assetId: item.assetId,
@@ -184,7 +187,7 @@ function validateMaterialCoverage(analysis, manifest, errors) {
     if (unused.allowed) continue;
     errors.push(
       `可用视觉素材 ${unused.filename || unused.assetId} 未进入时间线；`
-      + '默认必须使用，仅真实重复（duplicateAssetIds）或不可用（unusableAssetIds）可例外。',
+      + '默认必须使用，仅真实重复、不可用，或无法高质量净化的烧录覆盖物素材（cleanup.omit）可例外。',
     );
   }
   return coverage;

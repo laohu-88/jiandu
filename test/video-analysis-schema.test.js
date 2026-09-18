@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { validateVideoAnalysis } = require('../src/services/video-analysis-schema');
+const { inspectedNoneCleanup } = require('../src/services/source-cleanup-service');
 
 const manifest = {
   items: [
@@ -33,6 +34,7 @@ function validAnalysis() {
         suggestedUse: ['过程'],
         status: 'adopt',
         reason: '过程清楚。',
+        cleanup: inspectedNoneCleanup(),
         ranges: [{ startSec: 1, endSec: 5, confidence: 0.8, reviewRequired: false }],
         confidence: 0.8,
       },
@@ -44,6 +46,7 @@ function validAnalysis() {
         suggestedUse: ['结果'],
         status: 'adopt',
         reason: '结果明确。',
+        cleanup: inspectedNoneCleanup(),
         ranges: [],
         confidence: 0.95,
       },

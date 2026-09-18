@@ -75,6 +75,11 @@ function baseAnalysis() {
         suggestedUse: ['独立开场'],
         status: 'adopt',
         reason: '竖屏表现好、原声有解释价值。',
+        cleanup: {
+          decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+          method: 'none', provider: 'none', zones: [],
+          inspectedFrames: ['start.jpg', 'middle.jpg', 'end.jpg'], reviewRequired: false, warnings: [],
+        },
         ranges: [{ startSec: 0, endSec: 3, confidence: 0.95, reviewRequired: false }],
         confidence: 0.95,
         warnings: ['右上角可能存在水印'],
@@ -93,6 +98,11 @@ function baseAnalysis() {
         suggestedUse: ['开发过程'],
         status: 'adopt',
         reason: '视觉变化和主题一致性较强。',
+        cleanup: {
+          decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+          method: 'none', provider: 'none', zones: [],
+          inspectedFrames: ['start.jpg', 'middle.jpg', 'end.jpg'], reviewRequired: false, warnings: [],
+        },
         ranges: [{ startSec: 0, endSec: 4, confidence: 0.9, reviewRequired: false }],
         confidence: 0.9,
         audioAnalysis: {
@@ -107,6 +117,11 @@ function baseAnalysis() {
         suggestedUse: ['另拆补充'],
         status: 'candidate',
         reason: '独立成立但与当前开场主题不同。',
+        cleanup: {
+          decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+          method: 'none', provider: 'none', zones: [],
+          inspectedFrames: ['preview.jpg'], reviewRequired: false, warnings: [],
+        },
         ranges: [],
         confidence: 0.8,
       },
@@ -118,6 +133,11 @@ function baseAnalysis() {
         suggestedUse: [],
         status: 'reject',
         reason: '真实重复画面，没有新的叙事信息。',
+        cleanup: {
+          decision: 'none', overlayTypes: [], rationale: '检查后未发现无关覆盖物。',
+          method: 'none', provider: 'none', zones: [],
+          inspectedFrames: ['preview.jpg'], reviewRequired: false, warnings: [],
+        },
         ranges: [],
         confidence: 0.97,
       },
