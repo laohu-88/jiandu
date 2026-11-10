@@ -1,0 +1,15 @@
+{
+  "name": "video-cut-planner-v3",
+  "version": "3.0.0-stage3",
+  "private": true,
+  "description": "视频剪辑编排器 v3 - 第 3 阶段",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0"
+  }
+}

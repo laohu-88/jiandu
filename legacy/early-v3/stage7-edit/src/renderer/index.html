@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    >
+    <title>视频剪辑编排器 v3</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="app-header">
+        <div>
+            <p class="eyebrow">Stage 7 · 正式 App 化</p>
+            <h1>视频剪辑编排器 v3</h1>
+          </div>
+        <span id="version" class="version">v3.0.0-stage7</span>
+      </header>
+
+      <section class="card setup-card">
+        <div class="section-heading">
+          <div>
+            <h2>开始一个视频项目</h2>
+            <p>创建新项目，或打开已有项目文件夹。所有项目文件都会保存在你选择的项目目录中。</p>
+          </div>
+          <button id="openProjectButton" class="button secondary">打开已有项目</button>
+        </div>
+
+        <ol class="quick-start">
+          <li>创建项目后，把素材放进 01-精选素材。</li>
+          <li>扫描素材并生成素材简报。</li>
+          <li>拿素材简报给 GPT 生成视频方案。</li>
+          <li>导入方案、配音、编排素材并生成粗剪。</li>
+        </ol>
+
+        <div class="form-grid">
+          <label>
+            <span>项目名称</span>
+            <input id="projectName" type="text" placeholder="例如：小红书运营教程">
+          </label>
+          <label>
+            <span>项目根目录</span>
+            <div class="path-input">
+              <input id="projectRoot" type="text">
+              <button id="selectRootButton" class="button ghost" type="button">选择目录</button>
+            </div>
+          </label>
+        </div>
+        <button id="createProjectButton" class="button primary">创建新项目</button>
+
+        <div class="setup-subsection">
+          <div class="section-heading compact-heading">
+            <div>
+              <h3>最近项目</h3>
+              <p>最多保留 10 个最近打开或创建的项目。</p>
+            </div>
+          </div>
+          <div id="recentProjectsList" class="recent-projects"></div>
+          <div id="emptyRecentProjects" class="empty small-empty">
+            暂无最近项目。
+          </div>
+        </div>
+
+        <div class="setup-subsection">
+          <div class="section-heading compact-heading">
+            <div>
+              <h3>环境检测</h3>
+              <p>检查 ffmpeg、ffprobe 和字幕命令是否可用。</p>
+            </div>
+            <button id="detectEnvironmentButton" class="button secondary">
+              检测运行环境
+            </button>
+          </div>
+          <div id="environmentResult" class="environment-result hidden"></div>
+        </div>
+      </section>
+
+      <section id="currentProjectCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">当前项目</p>
+            <h2 id="currentProjectName"></h2>
+            <p id="currentProjectPath" class="project-path"></p>
+          </div>
+          <div class="actions">
+            <button id="scanButton" class="button primary">扫描精选素材</button>
+            <button id="briefButton" class="button secondary">生成素材简报</button>
+            <button id="openCurrentControlDirButton" class="button ghost">打开项目总控</button>
+          </div>
+        </div>
+
+        <div id="missingDirsBox" class="notice warning hidden">
+          <div>
+            <strong>项目目录不完整</strong>
+            <p id="missingDirsText"></p>
+          </div>
+          <button id="ensureDirsButton" class="button warning-button">补齐目录</button>
+        </div>
+
+        <div id="ffprobeWarning" class="notice warning hidden"></div>
+      </section>
+
+      <section id="videoPlanCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <h2>视频方案</h2>
+            <p>粘贴大模型生成的完整方案，解析为后续阶段可继续使用的分段状态。</p>
+          </div>
+        </div>
+
+        <textarea
+          id="videoPlanText"
+          class="plan-textarea"
+          placeholder="在这里粘贴视频方案。支持“第1段：标题”“01｜标题”“1. 标题”等分段格式。"
+        ></textarea>
+
+        <div class="plan-actions">
+          <button id="importPlanButton" class="button primary">导入并解析方案</button>
+          <button id="scanVoiceButton" class="button secondary">扫描配音</button>
+          <span id="planImportSummary" class="inline-summary">状态：未导入方案</span>
+        </div>
+
+        <div id="stage2Warning" class="notice warning hidden"></div>
+        <div id="voiceIssues" class="notice neutral hidden"></div>
+      </section>
+
+      <section id="segmentsCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <h2>分段列表</h2>
+            <p id="segmentSummary">尚未导入方案</p>
+          </div>
+          <div class="actions">
+            <button id="syncPackagesButton" class="button secondary">
+              同步分段素材包
+            </button>
+            <button id="generateAllRoughcutsButton" class="button primary">
+              生成全部分段粗剪
+            </button>
+          </div>
+        </div>
+        <div id="roughcutBatchSummary" class="notice neutral hidden"></div>
+        <p class="audio-explainer">
+          原素材会完整保留在分段素材包中；这里的原声设置只影响后续粗剪输出。
+        </p>
+        <div id="segmentsList" class="segments-list"></div>
+        <div id="emptySegments" class="empty segment-empty">
+          <strong>未导入方案</strong>
+          <p>粘贴方案并点击“导入并解析方案”后，这里会显示分段。</p>
+        </div>
+      </section>
+
+      <section id="finalRoughcutCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <h2>总粗剪</h2>
+            <p>所有分段粗剪成功后，合并为一个便于预览和交接的总粗剪。</p>
+          </div>
+          <div class="actions">
+            <button id="generateFinalRoughcutButton" class="button primary">
+              生成总粗剪
+            </button>
+            <button id="generateFcpChecklistButton" class="button secondary">
+              生成 FCP 交接清单
+            </button>
+          </div>
+        </div>
+
+        <div class="final-grid">
+          <div>
+            <p class="meta-label">状态</p>
+            <p id="finalRoughcutStatusText" class="meta-value">待生成</p>
+          </div>
+          <div>
+            <p class="meta-label">输出路径</p>
+            <p id="finalRoughcutOutputPath" class="meta-value path-text">—</p>
+          </div>
+          <div>
+            <p class="meta-label">总时长</p>
+            <p id="finalRoughcutDuration" class="meta-value">—</p>
+          </div>
+          <div>
+            <p class="meta-label">分段数量</p>
+            <p id="finalRoughcutSegmentCount" class="meta-value">—</p>
+          </div>
+          <div>
+            <p class="meta-label">生成时间</p>
+            <p id="finalRoughcutGeneratedAt" class="meta-value">—</p>
+          </div>
+        </div>
+
+        <div id="finalRoughcutSummary" class="notice neutral hidden"></div>
+        <div id="fcpChecklistSummary" class="notice neutral hidden"></div>
+
+        <div class="final-actions">
+          <button id="showFinalRoughcutButton" class="button secondary" disabled>
+            在 Finder 中显示总粗剪
+          </button>
+          <button id="openControlDirButton" class="button ghost">
+            打开 00-项目总控
+          </button>
+          <button id="openRoughcutDirButton" class="button ghost">
+            打开 04-分段粗剪
+          </button>
+          <button id="openFinalRoughcutDirButton" class="button ghost">
+            打开 05-总粗剪
+          </button>
+        </div>
+      </section>
+
+      <section id="subtitleCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <h2>整片字幕收口</h2>
+            <p>
+              请先在 FCP 中完成精剪并导出整片视频到 06-FCP导出，然后在这里生成整片字幕。
+              v3 不生成分段字幕，也不烧录字幕。
+            </p>
+          </div>
+          <div class="actions">
+            <button id="chooseSubtitleVideoButton" class="button secondary">
+              选择最终视频
+            </button>
+            <button id="generateSubtitleButton" class="button primary">
+              生成整片字幕
+            </button>
+            <button id="organizeSrtButton" class="button secondary">
+              整理已有 SRT
+            </button>
+          </div>
+        </div>
+
+        <div class="subtitle-command-row">
+          <label>
+            <span>字幕命令</span>
+            <input id="subtitleCommandInput" type="text" value="ww">
+          </label>
+          <button id="openSubtitleDirButton" class="button ghost">
+            打开 07-字幕
+          </button>
+        </div>
+
+        <div class="final-grid subtitle-grid">
+          <div>
+            <p class="meta-label">当前选择视频</p>
+            <p id="subtitleVideoPath" class="meta-value path-text">—</p>
+          </div>
+          <div>
+            <p class="meta-label">raw.srt</p>
+            <p id="rawSrtStatus" class="meta-value">—</p>
+          </div>
+          <div>
+            <p class="meta-label">final-cn.srt</p>
+            <p id="finalSrtStatus" class="meta-value">—</p>
+          </div>
+          <div>
+            <p class="meta-label">字幕状态</p>
+            <p id="subtitleStatusText" class="meta-value">待处理</p>
+          </div>
+          <div>
+            <p class="meta-label">原始条数</p>
+            <p id="subtitleRawCount" class="meta-value">—</p>
+          </div>
+          <div>
+            <p class="meta-label">整理后条数</p>
+            <p id="subtitleFinalCount" class="meta-value">—</p>
+          </div>
+          <div>
+            <p class="meta-label">拆分长字幕</p>
+            <p id="subtitleSplitCount" class="meta-value">—</p>
+          </div>
+        </div>
+
+        <div id="subtitleSummary" class="notice neutral hidden"></div>
+      </section>
+
+      <section id="assetsCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <h2>素材列表</h2>
+            <p id="assetSummary">共 0 个素材</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>编号</th>
+                <th>文件名</th>
+                <th>类型</th>
+                <th>尺寸</th>
+                <th>方向</th>
+                <th>时长</th>
+                <th>文件大小</th>
+                <th>已用于</th>
+              </tr>
+            </thead>
+            <tbody id="assetsTableBody"></tbody>
+          </table>
+          <div id="emptyAssets" class="empty">还没有扫描素材。</div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden" role="status"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
-const PROJECT_FORMAL = '/Users/example/Desktop/视频素材库/意外、动物与机灵反应合集-正式';
-const PROJECT_STAGE8 = '/Users/example/Desktop/视频素材库/Stage 8 验收副本-HotIngest 与动态主体跟踪';
+const PROJECT_FORMAL = process.env.JIANDU_ACCEPT_SOURCE;
+const PROJECT_STAGE8 = process.env.JIANDU_ACCEPT_OUTPUT;
 const CDP_PORT = Number(process.env.PLANNER_CDP_PORT || 9333);
 
 async function connect() {

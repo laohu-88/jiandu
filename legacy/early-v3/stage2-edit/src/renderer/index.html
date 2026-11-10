@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    >
+    <title>视频剪辑编排器 v3</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Stage 2 · 方案与配音</p>
+          <h1>视频剪辑编排器 v3</h1>
+        </div>
+        <span id="version" class="version">v3.0.0-stage2</span>
+      </header>
+
+      <section class="card setup-card">
+        <div class="section-heading">
+          <div>
+            <h2>项目</h2>
+            <p>创建新项目，或打开已有项目文件夹。</p>
+          </div>
+          <button id="openProjectButton" class="button secondary">打开已有项目</button>
+        </div>
+
+        <div class="form-grid">
+          <label>
+            <span>项目名称</span>
+            <input id="projectName" type="text" placeholder="例如：小红书运营教程">
+          </label>
+          <label>
+            <span>项目根目录</span>
+            <div class="path-input">
+              <input id="projectRoot" type="text">
+              <button id="selectRootButton" class="button ghost" type="button">选择目录</button>
+            </div>
+          </label>
+        </div>
+        <button id="createProjectButton" class="button primary">创建项目</button>
+      </section>
+
+      <section id="currentProjectCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">当前项目</p>
+            <h2 id="currentProjectName"></h2>
+            <p id="currentProjectPath" class="project-path"></p>
+          </div>
+          <div class="actions">
+            <button id="scanButton" class="button primary">扫描精选素材</button>
+            <button id="briefButton" class="button secondary">生成素材简报</button>
+          </div>
+        </div>
+
+        <div id="missingDirsBox" class="notice warning hidden">
+          <div>
+            <strong>项目目录不完整</strong>
+            <p id="missingDirsText"></p>
+          </div>
+          <button id="ensureDirsButton" class="button warning-button">补齐目录</button>
+        </div>
+
+        <div id="ffprobeWarning" class="notice warning hidden"></div>
+      </section>
+
+      <section id="videoPlanCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <h2>视频方案</h2>
+            <p>粘贴大模型生成的完整方案，解析为后续阶段可继续使用的分段状态。</p>
+          </div>
+        </div>
+
+        <textarea
+          id="videoPlanText"
+          class="plan-textarea"
+          placeholder="在这里粘贴视频方案。支持“第1段：标题”“01｜标题”“1. 标题”等分段格式。"
+        ></textarea>
+
+        <div class="plan-actions">
+          <button id="importPlanButton" class="button primary">导入并解析方案</button>
+          <button id="scanVoiceButton" class="button secondary">扫描配音</button>
+          <span id="planImportSummary" class="inline-summary">状态：未导入方案</span>
+        </div>
+
+        <div id="stage2Warning" class="notice warning hidden"></div>
+        <div id="voiceIssues" class="notice neutral hidden"></div>
+      </section>
+
+      <section id="segmentsCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <h2>分段列表</h2>
+            <p id="segmentSummary">尚未导入方案</p>
+          </div>
+        </div>
+        <div id="segmentsList" class="segments-list"></div>
+        <div id="emptySegments" class="empty segment-empty">
+          <strong>未导入方案</strong>
+          <p>粘贴方案并点击“导入并解析方案”后，这里会显示分段。</p>
+        </div>
+      </section>
+
+      <section id="assetsCard" class="card hidden">
+        <div class="section-heading">
+          <div>
+            <h2>素材列表</h2>
+            <p id="assetSummary">共 0 个素材</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>编号</th>
+                <th>文件名</th>
+                <th>类型</th>
+                <th>尺寸</th>
+                <th>方向</th>
+                <th>时长</th>
+                <th>文件大小</th>
+              </tr>
+            </thead>
+            <tbody id="assetsTableBody"></tbody>
+          </table>
+          <div id="emptyAssets" class="empty">还没有扫描素材。</div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden" role="status"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

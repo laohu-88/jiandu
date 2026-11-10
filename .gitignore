@@ -10,3 +10,11 @@ coverage/
 install-backups/
 work/
 handoff-*-analysis.json
+
+.env
+.env.*
+!.env.example
+*-analysis.json
+*-analysis-rev*.json
+*.pem
+*.key

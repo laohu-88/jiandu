@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 
 const {
+  DEFAULT_PENDING_ROOT,
   VIDEO_MANIFEST_FILE,
   VIDEO_STATUS_FILE,
 } = require('../constants');
@@ -14,7 +15,6 @@ const {
   summarizeChapters,
 } = require('./narrative-structure-service');
 
-const DEFAULT_PENDING_ROOT = '/Users/example/Desktop/视频待处理';
 const IMAGE_EXTENSIONS = new Set([
   '.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.tif', '.tiff', '.bmp',
 ]);

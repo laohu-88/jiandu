@@ -9,9 +9,11 @@ Use Codex's current-session image understanding for semantic decisions and the j
 
 ## Core paths
 
-- CLI: `/Users/example/Projects/jiandu/bin/jiandu.js`
-- Default pending root: `/Users/example/Desktop/视频待处理/`
-- Default project root: `/Users/example/Desktop/视频素材库/`
+Set `JIANDU_HOME` to the absolute clone directory when it is not `~/Projects/jiandu`. Resolve the CLI path before running commands.
+
+- CLI: `${JIANDU_HOME:-$HOME/Projects/jiandu}/bin/jiandu.js`
+- Default pending root: `~/Desktop/视频待处理/`
+- Default project root: `~/Desktop/视频素材库/`
 - Internal state root: `~/Library/Application Support/剪渡/projects/<本期项目名>/`
 - User project root contains only independently editable `.fcpxml` deliverables; never create stage subdirectories or copy source media.
 - Protocol: [references/analysis-protocol.md](references/analysis-protocol.md)
@@ -110,8 +112,8 @@ When the prompt contains a handoff task ID and an absolute task JSON path, this 
 Example semantic updates:
 
 ```bash
-node /Users/example/Projects/jiandu/bin/jiandu.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage analyzing_media --message "正在查看全部图片预览和视频故事板" --json
-node /Users/example/Projects/jiandu/bin/jiandu.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage deciding_hyperframes --hyperframes-decision disabled --hyperframes-reason "真实素材与一条轻字幕已能清楚表达流程" --hyperframes-gap "无必须由动画补足的表达缺口" --json
+node ${JIANDU_HOME:-$HOME/Projects/jiandu}/bin/jiandu.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage analyzing_media --message "正在查看全部图片预览和视频故事板" --json
+node ${JIANDU_HOME:-$HOME/Projects/jiandu}/bin/jiandu.js handoff-update --handoff-task "<task.json>" --attempt-id "<attemptId>" --stage deciding_hyperframes --hyperframes-decision disabled --hyperframes-reason "真实素材与一条轻字幕已能清楚表达流程" --hyperframes-gap "无必须由动画补足的表达缺口" --json
 ```
 
 ## Workflow
@@ -120,14 +122,14 @@ node /Users/example/Projects/jiandu/bin/jiandu.js handoff-update --handoff-task 
 2. Run:
 
    ```bash
-   node /Users/example/Projects/jiandu/bin/jiandu.js prepare --source "$HOME/Desktop/视频待处理/<一期素材目录>" --json
+   node ${JIANDU_HOME:-$HOME/Projects/jiandu}/bin/jiandu.js prepare --source "$HOME/Desktop/视频待处理/<一期素材目录>" --json
    ```
 
 3. Read `analysisRequestPath` and `manifestPath`, including `projectBrief`, `contextDocuments`, `contextIngestion`, `storyUnits`, `contextBudget`, `analysisBudget`, `chapters`, `narrative.durationPolicy`, and every asset's `relativePath`, `chapterId`, `subchapterId`, optional `semanticProfile`, and optional HotIngest `context`. View every image preview and every available video storyboard with `view_image`. Use individual scene/timed frames when the storyboard is unclear. Treat bound title/body/translation/source data as contextual evidence, never as proof of what is visibly present or as OCR. Do not infer content from filenames alone.
 4. For an important or low-confidence video interval, request denser frames:
 
    ```bash
-   node /Users/example/Projects/jiandu/bin/jiandu.js inspect-range --manifest "<manifest.json>" --asset-id "<assetId>" --start <秒> --end <秒> --interval 0.5 --json
+   node ${JIANDU_HOME:-$HOME/Projects/jiandu}/bin/jiandu.js inspect-range --manifest "<manifest.json>" --asset-id "<assetId>" --start <秒> --end <秒> --interval 0.5 --json
    ```
 
 5. Produce one analysis JSON following the protocol reference. Base decisions on this priority:
@@ -176,13 +178,13 @@ node /Users/example/Projects/jiandu/bin/jiandu.js handoff-update --handoff-task 
 12. Validate before building:
 
     ```bash
-    node /Users/example/Projects/jiandu/bin/jiandu.js validate-analysis --manifest "<manifest.json>" --analysis "<analysis.json>" --json
+    node ${JIANDU_HOME:-$HOME/Projects/jiandu}/bin/jiandu.js validate-analysis --manifest "<manifest.json>" --analysis "<analysis.json>" --json
     ```
 
 13. Fix every validation error. Then create the formal flat project. The CLI writes all machine files to Application Support, writes no MP4 by default, and places each generated FCPXML directly in the user project root:
 
     ```bash
-    node /Users/example/Projects/jiandu/bin/jiandu.js build --manifest "<manifest.json>" --analysis "<analysis.json>" --project-root "$HOME/Desktop/视频素材库" --project-name "<项目名>" --json
+    node ${JIANDU_HOME:-$HOME/Projects/jiandu}/bin/jiandu.js build --manifest "<manifest.json>" --analysis "<analysis.json>" --project-root "$HOME/Desktop/视频素材库" --project-name "<项目名>" --json
     ```
 
 14. When the user explicitly requests HyperFrames, or a handoff task uses `force-attempt`, first run

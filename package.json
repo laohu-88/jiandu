@@ -1,7 +1,7 @@
 {
   "name": "jiandu",
   "version": "3.1.0-stage1",
-  "private": true,
+  "private": false,
   "description": "剪渡：AI 视频 → Final Cut Pro 的 Skill / CLI 工作台",
   "main": "src/main.js",
   "bin": {
@@ -26,5 +26,13 @@
   "devDependencies": {
     "electron": "^37.0.0",
     "electron-builder": "^26.0.12"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/laohu-88/jiandu.git"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

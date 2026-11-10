@@ -1,0 +1,2 @@
+v2.8.1：修复 Mac 提示“应用程序视频控制台v2无法打开”。
+本版重新设置 视频控制台v2.app/Contents/MacOS/launcher 的可执行权限。

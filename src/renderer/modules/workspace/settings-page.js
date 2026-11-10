@@ -25,8 +25,8 @@
 
       const library = root.PlannerDom.createResultSection('素材库位置');
       library.appendChild(root.PlannerDom.createDefinitionGrid([
-        ['待处理', snap.config?.pendingRoot || '/Users/example/Desktop/视频待处理'],
-        ['项目库', snap.config?.projectRoot || '/Users/example/Desktop/视频素材库'],
+        ['待处理', snap.config?.pendingRoot || '~/Desktop/视频待处理'],
+        ['项目库', snap.config?.projectRoot || '~/Desktop/视频素材库'],
       ]));
       view.appendChild(library);
 

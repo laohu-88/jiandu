@@ -1,0 +1,7 @@
+{
+  "source": "/absolute/path/to/media",
+  "manifest": "/absolute/path/to/manifest.json",
+  "analysis": "/absolute/path/to/analysis.json",
+  "project-root": "/absolute/path/to/projects",
+  "project-name": "Demo"
+}
