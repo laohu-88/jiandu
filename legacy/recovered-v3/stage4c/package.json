@@ -1,0 +1,47 @@
+{
+  "name": "video-cut-planner-v3",
+  "version": "3.1.0-stage1",
+  "private": true,
+  "description": "视频剪辑编排器 v3",
+  "main": "src/main.js",
+  "bin": {
+    "video-skill": "bin/video-skill.js"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check-js.js",
+    "video-skill": "node bin/video-skill.js",
+    "hyperframes:doctor": "node bin/video-skill.js hyperframes-doctor",
+    "build:mac": "electron-builder --mac dir --arm64"
+  },
+  "build": {
+    "appId": "com.laohu.video-cut-planner-v3",
+    "productName": "视频剪辑编排器 v3",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.video",
+      "identity": null
+    }
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.12"
+  }
+}

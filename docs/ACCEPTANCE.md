@@ -23,7 +23,7 @@ The repository `https://github.com/laohu-88/jiandu` was confirmed Public using G
 - `npm test`: 241 tests, 240 passed, 1 skipped, 0 failed.
 - CLI help: passed.
 - Skill installation and installed-copy digest check in an isolated target: passed.
-- 368 tracked files (before this documentation-only follow-up), including source, Skill, bilingual README, MIT license, examples, lockfile and predecessor code, were present.
+- The complete tracked current source, Skill, bilingual README, MIT license, examples, lockfile and predecessor sources were present. Additional archival V3 snapshots were then preserved; these are not current runtime dependencies.
 - Reachable Git objects were inspected for personal home paths, author email addresses and common credential/private-key patterns. No personal home paths or credential-pattern hits remained. Original identities were anonymized; public third-party package-author notices were retained.
 
 The 37 original commits remain represented by the sanitized commit sequence. Source-history SHA values changed due to privacy sanitization. The private original, generated media, app state and working caches were not pushed.

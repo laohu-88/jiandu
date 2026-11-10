@@ -1,0 +1,28 @@
+{
+  "name": "video-cut-planner-v3",
+  "version": "3.1.0-stage1",
+  "private": true,
+  "description": "视频剪辑编排器 v3",
+  "main": "src/main.js",
+  "bin": {
+    "video-skill": "bin/video-skill.js"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check-js.js",
+    "video-skill": "node bin/video-skill.js",
+    "hyperframes:doctor": "node bin/video-skill.js hyperframes-doctor",
+    "icon:mac": "node scripts/generate-mac-icon.js",
+    "package:mac": "node scripts/package-mac.js",
+    "build:mac": "npm run package:mac",
+    "verify:package": "node scripts/verify-package.js",
+    "install:mac:local": "node scripts/install-mac-local.js",
+    "launch:installed": "node scripts/launch-installed.js"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.12"
+  }
+}
